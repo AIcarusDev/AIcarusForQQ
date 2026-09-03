@@ -61,7 +61,7 @@ def test_round_runner_discards_repeated_cognition_before_action(monkeypatch):
     )
 
     result = runner.call_one_round(
-        lambda activated_names=None, latent_names=None: "system",
+        lambda activated_names=None, latent_names=None, **_kwargs: "system",
         "<world>current</world>",
         {"duplicate_model_response_guard": {"prefill_guidance": {"enabled": True, "min_chars": 20}}},
         _ToolCollection(),
@@ -141,7 +141,7 @@ def test_round_runner_persists_motive_and_cycle_boundaries(monkeypatch):
     monkeypatch.setattr("llm.core.round_runner.ToolExecutor", FakeExecutor)
 
     result = runner.call_one_round(
-        lambda activated_names=None, latent_names=None: "system",
+        lambda activated_names=None, latent_names=None, **_kwargs: "system",
         "<world>current</world>",
         {},
         _ToolCollection(),
@@ -156,3 +156,130 @@ def test_round_runner_persists_motive_and_cycle_boundaries(monkeypatch):
     assert saved_round.motive == result.motive
     assert saved_round.request_started_at == result.request_started_at
     assert saved_round.timestamp == result.action_finished_at
+
+
+def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkeypatch):
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(
+            name="runtime_manage",
+            args={"action": "wait", "seconds": 1},
+            call_id="call_previous",
+        )],
+        [ToolResponse(
+            name="runtime_manage",
+            response={"ok": True},
+            call_id="call_previous",
+        )],
+        cognition="上一轮内部思考。",
+        motive="继续观察。",
+    )
+    runner = object.__new__(LLMRoundRunner)
+    runner.provider = "deepseek"
+    runner.model = "deepseek-v4-flash"
+    runner._vision_enabled = True
+    runner._prompt_snapshot_cfg = {"enabled": False}
+    runner._discarded_response_log_cfg = {"enabled": False}
+    runner._last_main_stable_prompt_prefix = None
+    normalized_generation = {}
+
+    def normalize_generation(gen):
+        normalized_generation.update(gen)
+        return dict(gen)
+
+    monkeypatch.setattr(runner, "_normalize_generation_for_transport", normalize_generation)
+    monkeypatch.setattr("llm.core.round_runner._record_usage_event", lambda **_kwargs: None)
+
+    response = SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(
+            finish_reason="stop",
+            message=SimpleNamespace(
+                reasoning_content="API 返回的原生思考。",
+                content=(
+                    "<cognition>旧 prompt 仍要求输出的认知。</cognition>"
+                    "<motive>等待外部事件。</motive>"
+                    '<action><tool_call>{"namespace":"core","name":"runtime_manage",'
+                    '"arguments":{"action":"wait","seconds":1}}</tool_call></action>'
+                ),
+            ),
+        )],
+    )
+    request_messages = []
+
+    def fake_completion(**kwargs):
+        request_messages.extend(kwargs["all_messages"])
+        return response
+
+    monkeypatch.setattr(runner, "_create_chat_completion", fake_completion)
+
+    class FakeExecutor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def execute(self, _tool_calls, *, inner_state):
+            assert inner_state == {
+                "cognition": "API 返回的原生思考。",
+                "think": "API 返回的原生思考。",
+            }
+            return ToolExecutionOutcome(
+                round_calls=[ToolCall(
+                    namespace="core",
+                    name="runtime_manage",
+                    args={"action": "wait", "seconds": 1},
+                    call_id="call_1",
+                )],
+                round_responses=[ToolResponse(
+                    namespace="core",
+                    name="runtime_manage",
+                    response={"ok": True},
+                    call_id="call_1",
+                )],
+            )
+
+    monkeypatch.setattr("llm.core.round_runner.ToolExecutor", FakeExecutor)
+
+    prompt_route = {}
+
+    def build_system_prompt(
+        activated_names=None,
+        latent_names=None,
+        *,
+        native_reasoning_as_cognition=False,
+    ):
+        prompt_route["native_reasoning_as_cognition"] = (
+            native_reasoning_as_cognition
+        )
+        return "system"
+
+    result = runner.call_one_round(
+        build_system_prompt,
+        "<world>current</world>",
+        {
+            "enable_thinking": False,
+            "native_reasoning_as_cognition": True,
+        },
+        _ToolCollection(),
+        flow,
+    )
+
+    assert normalized_generation["enable_thinking"] is True
+    assert prompt_route["native_reasoning_as_cognition"] is True
+    previous_assistant = next(
+        message
+        for message in request_messages
+        if message["role"] == "assistant"
+    )
+    assert "<cognition>" not in previous_assistant["content"]
+    assert previous_assistant["content"].startswith(
+        "<thinking>上一轮内部思考。</thinking>"
+    )
+    assert result.cognition == "API 返回的原生思考。"
+    assert flow.recent_rounds(1)[0].cognition == "API 返回的原生思考。"
+
+    legacy_history = flow.to_xml_messages(native_reasoning_as_cognition=False)
+    assert any(
+        message["role"] == "assistant"
+        and "<cognition>API 返回的原生思考。</cognition>" in message["content"]
+        for message in legacy_history
+    )

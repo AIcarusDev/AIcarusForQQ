@@ -75,6 +75,7 @@ generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 10000 # 最大输出 token 数
   enable_thinking: true # 统一思维链开关（请求参数会按模型供应商自动转换）
+  native_reasoning_as_cognition: false # 将 API reasoning_content 作为 cognition；开启后会强制启用思维链
   advanced_sampling:
     top_p:
       enabled: false

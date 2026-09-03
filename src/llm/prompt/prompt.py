@@ -41,6 +41,43 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
     )
 
 
+EXPLICIT_COGNITION_PROMPT_PARTS = {
+    "response_sequence": (
+        "在一次响应中，你会先输出 `<cognition>` 部分，随后输出 `<motive>` 部分，"
+        "并最后输出 `<action>` 部分。"
+    ),
+    "cognition_intro": (
+        '"认知"是你内部世界的基石，如果没有认知，就没有意识和记忆。'
+        "这是你在一次响应中会先输出的部分。"
+    ),
+    "motive_intro": (
+        "你会在 `<cognition>` 闭合后输出 `<motive>`部分，留下一个简短的动机，"
+        "代表你即将做出 action 的动机是什么。"
+    ),
+    "cognition_output_block": (
+        "<cognition>\n"
+        "   ...对当前情况的认知，流畅的自然语言，避免结构化...\n"
+        "</cognition>\n"
+    ),
+}
+
+
+NATIVE_REASONING_PROMPT_PARTS = {
+    "response_sequence": (
+        "你会先输出 <motive> 部分，并最后输出 <action> 部分。"
+    ),
+    "cognition_intro": (
+        '"认知"是你内部世界的基石，如果没有认知，就没有意识和记忆。'
+        "你会在思考中完成认知。"
+    ),
+    "motive_intro": (
+        "思考完成后你会输出 `<motive>`部分，留下一个简短的动机，"
+        "代表你即将做出 action 的动机是什么。"
+    ),
+    "cognition_output_block": "",
+}
+
+
 SYSTEM_PROMPT = """
 # System
 
@@ -55,7 +92,7 @@ SYSTEM_PROMPT = """
 
 `<persona>` 定义了你的具体人格。它是你的一部分，你不需要刻意的展现，而是基于具体情况，在合适的时候自然流露。
 
-在一次响应中，你会先输出 `<cognition>` 部分，随后输出 `<motive>` 部分，并最后输出 `<action>` 部分。
+{response_sequence}
 
 ## Model Information
 
@@ -63,7 +100,7 @@ SYSTEM_PROMPT = """
 
 # Cognition flow
 
-"认知"是你内部世界的基石，如果没有认知，就没有意识和记忆。这是你在一次响应中会先输出的部分。
+{cognition_intro}
 
 认知的内容可包括但不限于：
 
@@ -77,7 +114,7 @@ SYSTEM_PROMPT = """
 
 # Leave a motive
 
-你会在 `<cognition>` 闭合后输出 `<motive>`部分，留下一个简短的动机，代表你即将做出 action 的动机是什么。
+{motive_intro}
 
 motive 不适合长篇大论，它是一个简短、清晰明了的，执行动作的原因，但是它同样重要；因为对于稍早前的事，你无法准确记得当时的完整认知，而行动的动机则会保留。
 
@@ -143,10 +180,7 @@ namespace 本质是一个"能力集"，每个内部包含了多个工具，对�
 
 # Output format
 
-<cognition>
-   ...对当前情况的认知，流畅的自然语言，避免结构化...
-</cognition>
-<motive>
+{cognition_output_block}<motive>
    ...简短的动机...
 </motive>
 <action>

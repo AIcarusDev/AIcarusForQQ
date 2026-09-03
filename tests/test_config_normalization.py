@@ -103,6 +103,10 @@ def test_generation_config_bounds_context_and_image_limits():
     assert cfg["llm_contents_max_rounds"] == 6
     assert cfg["cognition_compression_trigger_rounds"] == 5
     assert cfg["world_multimodal_image_limit"] == 0
+    assert cfg["native_reasoning_as_cognition"] is False
+    assert normalize_generation_config(
+        {"native_reasoning_as_cognition": 1}
+    )["native_reasoning_as_cognition"] is True
 
 
 def test_qq_platform_config_and_access_control_are_normalized_in_place():

@@ -379,9 +379,16 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     tool_collection = _build_tool_collection(session)
 
-    def system_prompt_builder(activated_names=None, latent_names=None):
+    def system_prompt_builder(
+        activated_names=None,
+        latent_names=None,
+        *,
+        native_reasoning_as_cognition=False,
+    ):
         return session.build_system_prompt(
-            activated_names=activated_names, latent_names=latent_names
+            activated_names=activated_names,
+            latent_names=latent_names,
+            native_reasoning_as_cognition=native_reasoning_as_cognition,
         )
 
     duplicate_retry_count = 0

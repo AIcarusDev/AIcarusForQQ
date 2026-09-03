@@ -1323,6 +1323,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   class="slider"
                 ></span></label>
             </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>原生 reasoning 接管 cognition</strong>
+                <span>将 API 返回的 reasoning_content 作为 cognition 保存和消费，并以 thinking 历史回灌主模型。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="native_reasoning_as_cognition" /><span
+                  class="slider"
+                ></span></label>
+            </div>
             <details class="advanced-sampling">
               <summary>高级采样参数</summary>
               <div class="advanced-sampling-body">
@@ -4422,6 +4432,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       data.tools?.send_message?.message_shape || "array",
     );
     setChecked("enable_thinking", generationThinkingEnabled(gen));
+    setChecked(
+      "native_reasoning_as_cognition",
+      gen.native_reasoning_as_cognition === true,
+    );
     hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
     setValue("self_name", data.self_name || "");
@@ -5089,6 +5103,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           },
         },
         enable_thinking: checked("enable_thinking"),
+        native_reasoning_as_cognition: checked(
+          "native_reasoning_as_cognition",
+        ),
       },
       tools: {
         send_message: {

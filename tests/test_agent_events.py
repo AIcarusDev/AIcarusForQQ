@@ -30,6 +30,34 @@ def test_agent_aic_action_stream_projector_hides_action_tags():
     )
 
 
+def test_agent_stream_projects_native_reasoning_as_cognition_only_once():
+    clear_agent_events_for_test()
+    projector = AgentActionStreamProjector(
+        round_id="r-native",
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        project_cognition=False,
+    )
+
+    projector.feed_cognition_delta("原生思考。")
+    projector.feed(
+        "<cognition>正文里的兼容认知。</cognition>"
+        '<action><tool_call>{"name":"runtime_manage","arguments":{"action":"wait"}}</tool_call></action>'
+    )
+    projector.finish()
+
+    events = snapshot_events()
+    cognition_text = "".join(
+        event.get("text", "")
+        for event in events
+        if event["type"] == "cognition_delta"
+    )
+    assert cognition_text == "原生思考。"
+    assert [event["type"] for event in events].count("cognition_start") == 1
+    assert [event["type"] for event in events].count("cognition_end") == 1
+    assert any(event["type"] == "tool_planned" for event in events)
+
+
 def test_agent_aic_action_stream_projector_assigns_parser_style_call_ids():
     clear_agent_events_for_test()
     projector = AgentActionStreamProjector(round_id="r-call-ids", provider="test", model="m")

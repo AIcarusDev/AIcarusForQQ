@@ -229,12 +229,14 @@ class LLMRoundRunner:
         all_messages: list,
         create_kwargs: dict,
         on_text_delta=None,
+        on_reasoning_delta=None,
         on_chunk=None,
     ) -> Any:
         return self._get_transport().create_chat_completion(
             all_messages=all_messages,
             create_kwargs=create_kwargs,
             on_text_delta=on_text_delta,
+            on_reasoning_delta=on_reasoning_delta,
             on_chunk=on_chunk,
         )
 
@@ -258,8 +260,17 @@ class LLMRoundRunner:
         prefill_exclusions: list[str] | tuple[str, ...] | None = None,
     ) -> RoundResult:
         """跑一轮 AIC Action：1 次 LLM 调用 + 本轮工具执行。"""
+        gen = normalize_generation_config(gen)
+        native_reasoning_as_cognition = bool(
+            gen.get("native_reasoning_as_cognition", False)
+        )
         assistant_prefill = str(assistant_prefill or "")
-        if assistant_prefill:
+        if native_reasoning_as_cognition:
+            # Native reasoning cannot be guided through the visible
+            # ``<cognition>`` assistant-prefill compatibility path.
+            assistant_prefill = ""
+            gen["enable_thinking"] = True
+        elif assistant_prefill:
             gen = dict(gen or {})
             gen["enable_thinking"] = False
         gen = self._normalize_generation_for_transport(gen)
@@ -282,7 +293,6 @@ class LLMRoundRunner:
             result.aborted_by_runtime_reset = True
             return result
 
-        gen = normalize_generation_config(gen)
         max_rounds: int = gen["llm_contents_max_rounds"]
         duplicate_guard_cfg = normalize_duplicate_model_response_guard_config(
             (gen or {}).get("duplicate_model_response_guard")
@@ -295,6 +305,7 @@ class LLMRoundRunner:
         full_system = system_prompt_builder(
             tool_collection.active_names(),
             tool_collection.latent_names(),
+            native_reasoning_as_cognition=native_reasoning_as_cognition,
         )
         log_prompt(self.provider, full_system, user_content)
 
@@ -352,7 +363,10 @@ class LLMRoundRunner:
         if flow:
             flow.promote_ready_compression_summary(max_rounds)
         flow_messages = (
-            flow.to_xml_messages(reference_time=request_started_at)
+            flow.to_xml_messages(
+                reference_time=request_started_at,
+                native_reasoning_as_cognition=native_reasoning_as_cognition,
+            )
             if flow
             else []
         )
@@ -383,6 +397,7 @@ class LLMRoundRunner:
                 round_id=agent_run_id,
                 provider=self.provider,
                 model=self.model,
+                project_cognition=not native_reasoning_as_cognition,
             )
             if agent_run_id
             else None
@@ -390,7 +405,8 @@ class LLMRoundRunner:
         visible_cognitions: tuple[str, ...] = ()
         cognition_repeat_guard: CognitionRepeatStreamGuard | None = None
         prefill_supported = (
-            bool(getattr(self, "_assistant_prefill_supported", True))
+            not native_reasoning_as_cognition
+            and bool(getattr(self, "_assistant_prefill_supported", True))
             and cognition_prefill_provider_supported(self.provider, self.model)
         )
         if (
@@ -414,20 +430,29 @@ class LLMRoundRunner:
             if cognition_repeat_guard is not None:
                 cognition_repeat_guard.feed(text)
 
+        def _observe_reasoning_delta(text: str) -> None:
+            if native_reasoning_as_cognition and stream_projector is not None:
+                stream_projector.feed_cognition_delta(text)
+
         if assistant_prefill and (
             stream_projector is not None or cognition_repeat_guard is not None
         ):
             _observe_text_delta(assistant_prefill)
 
         try:
-            response = self._create_chat_completion(
-                all_messages=all_messages,
-                create_kwargs=create_kwargs,
-                on_text_delta=(
+            completion_kwargs = {
+                "all_messages": all_messages,
+                "create_kwargs": create_kwargs,
+                "on_text_delta": (
                     _observe_text_delta
                     if stream_projector is not None or cognition_repeat_guard is not None
                     else None
                 ),
+            }
+            if native_reasoning_as_cognition and stream_projector is not None:
+                completion_kwargs["on_reasoning_delta"] = _observe_reasoning_delta
+            response = self._create_chat_completion(
+                **completion_kwargs,
             )
         except CognitionPrefillRetrySignal as retry_exc:
             prefill_body = choose_cognition_prefill(
@@ -609,6 +634,9 @@ class LLMRoundRunner:
 
         msg = response.choices[0].message
         raw_response_text = _message_content_to_text(getattr(msg, "content", None))
+        native_reasoning = _message_content_to_text(
+            getattr(msg, "reasoning_content", None)
+        ).strip()
         if assistant_prefill:
             raw_stripped = raw_response_text.lstrip()
             if raw_response_text.startswith(assistant_prefill):
@@ -618,9 +646,13 @@ class LLMRoundRunner:
         result.raw_response = raw_response_text
         log_response(self.provider, raw_response_text)
         parsed_action = parse_aic_action_calls(raw_response_text)
-        result.cognition = parsed_action.cognition
+        result.cognition = (
+            native_reasoning
+            if native_reasoning_as_cognition and native_reasoning
+            else parsed_action.cognition
+        )
         result.motive = parsed_action.motive
-        result.inner_state = _inner_state_from_cognition(parsed_action.cognition)
+        result.inner_state = _inner_state_from_cognition(result.cognition)
         log_cognition(self.provider, result.cognition)
         if agent_run_id and result.cognition:
             emit_agent_event(

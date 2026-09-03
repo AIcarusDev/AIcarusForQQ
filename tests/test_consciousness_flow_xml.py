@@ -132,6 +132,49 @@ def test_visible_cognitions_excludes_compressed_rounds():
     assert flow.visible_cognitions(limit=8) == ["visible cognition"]
 
 
+def test_native_reasoning_route_reuses_cognition_retention_without_cognition_xml():
+    flow = ConsciousnessFlow()
+    for index in range(1, 4):
+        flow.append_round(
+            [ToolCall(
+                name="runtime_manage",
+                args={"action": "wait", "seconds": index},
+                call_id=f"call_{index}",
+            )],
+            [ToolResponse(
+                name="runtime_manage",
+                response={"ok": True},
+                call_id=f"call_{index}",
+            )],
+            cognition=f"thought {index}",
+            motive=f"motive {index}",
+        )
+
+    dumped, timestamps = flow.dump()
+    restored = ConsciousnessFlow()
+    restored.restore(dumped, timestamps)
+
+    native_messages = restored.to_xml_messages(native_reasoning_as_cognition=True)
+    native_assistant = [
+        message for message in native_messages if message["role"] == "assistant"
+    ]
+    assert all("<cognition>" not in message["content"] for message in native_assistant)
+    assert native_assistant[0]["content"].startswith("<thinking>thought 2</thinking>")
+    assert native_assistant[1]["content"].startswith("<thinking>thought 3</thinking>")
+    assert "thought 1" not in str(native_messages)
+
+    cognition_messages = restored.to_xml_messages(native_reasoning_as_cognition=False)
+    cognition_assistant = [
+        message for message in cognition_messages if message["role"] == "assistant"
+    ]
+    assert cognition_assistant[0]["content"].startswith(
+        "<cognition>thought 2</cognition>"
+    )
+    assert cognition_assistant[1]["content"].startswith(
+        "<cognition>thought 3</cognition>"
+    )
+
+
 def test_flow_round_memory_candidates_survive_dump_restore(monkeypatch):
     formatted_times = {
         None: "2026-07-14T15:42:18+08:00",

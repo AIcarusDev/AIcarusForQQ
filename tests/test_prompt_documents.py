@@ -151,3 +151,51 @@ def test_session_reloads_complete_agent_prompt_snapshot_and_uses_last_good_on_er
 
     (tmp_path / "config" / "drive" / "drive.md").write_bytes(b"\xff")
     assert conversation.build_system_prompt() == second
+
+
+def test_system_prompt_selects_native_reasoning_contract_from_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_prompt_root(tmp_path)
+    _use_prompt_root(monkeypatch, tmp_path)
+    initial = load_agent_prompt_docs({})
+    prompt_template = "|".join(
+        (
+            "{response_sequence}",
+            "{cognition_intro}",
+            "{motive_intro}",
+            "{cognition_output_block}",
+        )
+    )
+    explicit_parts = {
+        "response_sequence": "explicit-sequence",
+        "cognition_intro": "explicit-cognition",
+        "motive_intro": "explicit-motive",
+        "cognition_output_block": "explicit-output",
+    }
+    native_parts = {
+        "response_sequence": "native-sequence",
+        "cognition_intro": "native-cognition",
+        "motive_intro": "native-motive",
+        "cognition_output_block": "",
+    }
+    monkeypatch.setattr(session_module, "SYSTEM_PROMPT", prompt_template)
+    monkeypatch.setattr(
+        session_module,
+        "EXPLICIT_COGNITION_PROMPT_PARTS",
+        explicit_parts,
+    )
+    monkeypatch.setattr(
+        session_module,
+        "NATIVE_REASONING_PROMPT_PARTS",
+        native_parts,
+    )
+    conversation = session_module.ConversationSession(
+        _agent_prompt_docs=dict(initial),
+    )
+
+    assert conversation.build_system_prompt() == "|".join(explicit_parts.values())
+    assert conversation.build_system_prompt(
+        native_reasoning_as_cognition=True
+    ) == "|".join(native_parts.values())

@@ -28,12 +28,28 @@ CONSOLE_GO_UPSTREAM_ERROR = (
 )
 
 
-def _chunk(*, content=None, finish_reason=None, tool_calls=None, usage=None):
+def _chunk(
+    *,
+    content=None,
+    reasoning_content=None,
+    finish_reason=None,
+    tool_calls=None,
+    usage=None,
+):
     choices = []
-    if content is not None or finish_reason is not None or tool_calls is not None:
+    if (
+        content is not None
+        or reasoning_content is not None
+        or finish_reason is not None
+        or tool_calls is not None
+    ):
         choices.append(
             SimpleNamespace(
-                delta=SimpleNamespace(content=content, tool_calls=tool_calls),
+                delta=SimpleNamespace(
+                    content=content,
+                    reasoning_content=reasoning_content,
+                    tool_calls=tool_calls,
+                ),
                 finish_reason=finish_reason,
             )
         )
@@ -66,6 +82,28 @@ def test_aggregate_chat_completion_stream_collects_content_usage_and_finish_reas
     assert response.choices[0].message.content == "你好"
     assert response.choices[0].finish_reason == "stop"
     assert response.usage == usage
+
+
+def test_aggregate_chat_completion_stream_preserves_native_reasoning_separately():
+    reasoning_deltas = []
+    text_deltas = []
+
+    response = aggregate_chat_completion_stream_with_callbacks(
+        [
+            _chunk(reasoning_content="先判断"),
+            _chunk(reasoning_content="当前情况。"),
+            _chunk(content="<motive>等待</motive>"),
+            _chunk(content="<action></action>", finish_reason="stop"),
+        ],
+        on_reasoning_delta=reasoning_deltas.append,
+        on_text_delta=text_deltas.append,
+    )
+
+    message = response.choices[0].message
+    assert message.reasoning_content == "先判断当前情况。"
+    assert message.content == "<motive>等待</motive><action></action>"
+    assert reasoning_deltas == ["先判断", "当前情况。"]
+    assert text_deltas == ["<motive>等待</motive>", "<action></action>"]
 
 
 def test_aggregate_chat_completion_stream_observer_errors_are_non_fatal():

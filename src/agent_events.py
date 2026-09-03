@@ -259,10 +259,13 @@ class AgentActionStreamProjector:
         round_id: str,
         provider: str = "",
         model: str = "",
+        project_cognition: bool = True,
     ) -> None:
         self.round_id = round_id
         self.provider = provider
         self.model = model
+        self._project_cognition = bool(project_cognition)
+        self._direct_cognition_open = False
         self._mode = "outside"
         self._tag_buf = ""
         self._text_buf: list[str] = []
@@ -270,6 +273,9 @@ class AgentActionStreamProjector:
         self._tool_index = 0
 
     def feed(self, text: str) -> None:
+        if text and self._direct_cognition_open:
+            self._direct_cognition_open = False
+            emit_agent_event("cognition_end", round_id=self.round_id)
         for ch in text or "":
             if self._tag_buf:
                 self._tag_buf += ch
@@ -293,6 +299,24 @@ class AgentActionStreamProjector:
         self._flush_text()
         if self._tag_buf:
             self._tag_buf = ""
+        if self._direct_cognition_open:
+            self._direct_cognition_open = False
+            emit_agent_event("cognition_end", round_id=self.round_id)
+
+    def feed_cognition_delta(self, text: str) -> None:
+        """Project native reasoning deltas through the cognition UI contract."""
+        if not text:
+            return
+        if not self._direct_cognition_open:
+            self._direct_cognition_open = True
+            emit_agent_event("cognition_start", round_id=self.round_id)
+        emit_agent_event(
+            "cognition_delta",
+            round_id=self.round_id,
+            text=text,
+            provider=self.provider,
+            model=self.model,
+        )
 
     def _handle_tag(self, raw_tag: str) -> None:
         normalized = raw_tag.strip().lower()
@@ -301,6 +325,9 @@ class AgentActionStreamProjector:
         is_close = normalized.startswith("</")
 
         if name == "cognition":
+            if not self._project_cognition:
+                self._mode = "outside"
+                return
             if is_close:
                 self._mode = "outside"
                 emit_agent_event("cognition_end", round_id=self.round_id)

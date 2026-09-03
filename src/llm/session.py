@@ -23,7 +23,12 @@ from memory.recall.activation import (
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm
+from .prompt.prompt import (
+    EXPLICIT_COGNITION_PROMPT_PARTS,
+    NATIVE_REASONING_PROMPT_PARTS,
+    SYSTEM_PROMPT,
+    get_formatted_time_for_llm,
+)
 from .prompt.goals import build_active_goals_xml
 
 logger = logging.getLogger("AICQ.llm.session")
@@ -554,6 +559,8 @@ class ConversationSession:
         self,
         activated_names: list[str] | None = None,
         latent_names: list[str] | None = None,
+        *,
+        native_reasoning_as_cognition: bool = False,
     ) -> str:
         """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
         try:
@@ -571,6 +578,11 @@ class ConversationSession:
         else:
             self._agent_prompt_docs = dict(agent_prompt_docs)
 
+        prompt_parts = (
+            NATIVE_REASONING_PROMPT_PARTS
+            if native_reasoning_as_cognition
+            else EXPLICIT_COGNITION_PROMPT_PARTS
+        )
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             self_name=self._self_name,
@@ -579,6 +591,7 @@ class ConversationSession:
             qq_name=self._qq_name,
             qq_id=self._qq_id,
             guardian_info=self._guardian_info if self._guardian_info is not None else "null",
+            **prompt_parts,
             **agent_prompt_docs,
         )
 

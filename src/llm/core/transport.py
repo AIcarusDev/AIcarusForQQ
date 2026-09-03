@@ -153,12 +153,14 @@ def aggregate_chat_completion_stream_with_callbacks(
     stream: Any,
     *,
     on_text_delta=None,
+    on_reasoning_delta=None,
     on_chunk=None,
 ) -> Any:
-    """Consume chat completion chunks, optionally observing text deltas."""
+    """Consume chat completion chunks, preserving visible and reasoning text."""
     chunks_seen = 0
     choices_seen = False
     content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     finish_reason = None
     usage = None
     response_id = ""
@@ -193,6 +195,12 @@ def aggregate_chat_completion_stream_with_callbacks(
             if on_text_delta is not None:
                 _observe_stream_callback(on_text_delta, content)
 
+        reasoning_content = getattr(delta, "reasoning_content", None)
+        if isinstance(reasoning_content, str):
+            reasoning_parts.append(reasoning_content)
+            if on_reasoning_delta is not None:
+                _observe_stream_callback(on_reasoning_delta, reasoning_content)
+
         _merge_delta_tool_calls(tool_call_parts, getattr(delta, "tool_calls", None))
         _merge_delta_function_call(tool_call_parts, getattr(delta, "function_call", None))
 
@@ -200,7 +208,7 @@ def aggregate_chat_completion_stream_with_callbacks(
         return SimpleNamespace(choices=[], usage=usage)
 
     tool_calls = _build_aggregated_tool_calls(tool_call_parts)
-    if not choices_seen and not content_parts and not tool_calls:
+    if not choices_seen and not content_parts and not reasoning_parts and not tool_calls:
         return SimpleNamespace(
             id=response_id,
             created=created,
@@ -211,6 +219,7 @@ def aggregate_chat_completion_stream_with_callbacks(
 
     message = SimpleNamespace(
         content="".join(content_parts),
+        reasoning_content="".join(reasoning_parts),
         tool_calls=tool_calls,
     )
     choice = SimpleNamespace(
@@ -412,6 +421,7 @@ def create_streamed_chat_completion(
     all_messages: list,
     create_kwargs: dict,
     on_text_delta=None,
+    on_reasoning_delta=None,
     on_chunk=None,
 ) -> Any:
     """Create a streaming chat completion and aggregate chunks into response shape."""
@@ -474,6 +484,7 @@ def create_streamed_chat_completion(
     return aggregate_chat_completion_stream_with_callbacks(
         stream,
         on_text_delta=on_text_delta,
+        on_reasoning_delta=on_reasoning_delta,
         on_chunk=on_chunk,
     )
 
@@ -528,6 +539,7 @@ class OpenAICompatClient:
         all_messages: list,
         create_kwargs: dict,
         on_text_delta=None,
+        on_reasoning_delta=None,
         on_chunk=None,
     ):
         """发起 streaming chat completion and return an aggregated response."""
@@ -537,6 +549,7 @@ class OpenAICompatClient:
             all_messages=all_messages,
             create_kwargs=create_kwargs,
             on_text_delta=on_text_delta,
+            on_reasoning_delta=on_reasoning_delta,
             on_chunk=on_chunk,
         )
 

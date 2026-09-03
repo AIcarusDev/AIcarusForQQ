@@ -530,12 +530,23 @@ class ConsciousnessFlow:
 
     # ── AIC Action 历史转换 ───────────────────────────────────────────────────
 
-    def to_xml_messages(self, reference_time: float | None = None) -> list[dict]:
+    def to_xml_messages(
+        self,
+        reference_time: float | None = None,
+        *,
+        native_reasoning_as_cognition: bool = False,
+    ) -> list[dict]:
         """转换为 AIC Action 历史 messages（不含 system / 当前 user）。
 
         最近 ``RAW_COGNITION_ROUNDS`` 个含 cognition 的轮次保持原始
         assistant/user 形态；更早且未被 summary 覆盖的轮次折叠为 user-role
         ``<old_cycles>``，不再暴露 cognition 原文。
+
+        ``native_reasoning_as_cognition`` 开启时，保留轮次的 cognition 文本
+        在 assistant 正文中写为 ``<thinking>``，不再声明 ``<cognition>``。
+        DeepSeek V4 在未传原生 tools 时会忽略历史 ``reasoning_content``，因此
+        不能依靠 API 扩展字段把这些历史真正放进模型上下文。其它裁剪、压缩
+        和持久化语义保持不变。
 
         当 ToolResponse 含有 multimodal_parts 时，响应文本作为 text part，图片紧随其后。
         """
@@ -577,7 +588,11 @@ class ConsciousnessFlow:
                 pending_old_rounds.append(rnd)
                 continue
             flush_old_rounds()
-            _append_raw_round_messages(messages, rnd)
+            _append_raw_round_messages(
+                messages,
+                rnd,
+                native_reasoning_as_cognition=native_reasoning_as_cognition,
+            )
         flush_old_rounds()
         return messages
 
@@ -742,7 +757,12 @@ def _raw_cognition_cutoff_seq(
     return cognition_rounds[-RAW_COGNITION_ROUNDS].seq if len(cognition_rounds) >= RAW_COGNITION_ROUNDS else cognition_rounds[0].seq
 
 
-def _append_raw_round_messages(messages: list[dict], rnd: FlowRound) -> None:
+def _append_raw_round_messages(
+    messages: list[dict],
+    rnd: FlowRound,
+    *,
+    native_reasoning_as_cognition: bool = False,
+) -> None:
     if not rnd.calls:
         if rnd.responses:
             messages.append({
@@ -753,13 +773,18 @@ def _append_raw_round_messages(messages: list[dict], rnd: FlowRound) -> None:
 
     assistant_blocks: list[str] = []
     if rnd.cognition:
-        assistant_blocks.append(_format_cognition_xml(rnd.cognition))
+        assistant_blocks.append(
+            _format_thinking_xml(rnd.cognition)
+            if native_reasoning_as_cognition
+            else _format_cognition_xml(rnd.cognition)
+        )
     assistant_blocks.append(_format_motive_xml(rnd.motive))
     assistant_blocks.append(_format_action_xml(rnd.calls))
-    messages.append({
+    assistant_message = {
         "role": "assistant",
         "content": "\n".join(assistant_blocks),
-    })
+    }
+    messages.append(assistant_message)
     if rnd.responses:
         messages.append({
             "role": "user",
@@ -1028,6 +1053,10 @@ def extract_structured_compression_summary(text: str) -> str:
 
 def _format_cognition_xml(cognition: str) -> str:
     return f"<cognition>{_escape_xml_text(cognition)}</cognition>"
+
+
+def _format_thinking_xml(cognition: str) -> str:
+    return f"<thinking>{_escape_xml_text(cognition)}</thinking>"
 
 
 def _format_motive_xml(motive: str) -> str:
