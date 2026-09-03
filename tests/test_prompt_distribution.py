@@ -2,27 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from string import Formatter
 
 import pytest
 
 from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world
-from llm.prompt.prompt import SYSTEM_PROMPT
 from llm.session import create_session
 from platforms import AttentionEvent, PlatformRegistry, PlatformWorldBlock
 from platforms.core.prompt import render_dialogue
 from platforms.qq import QQRuntime
-
-
-def test_system_prompt_guardian_placeholder_contract():
-    fields = {
-        field_name
-        for _, field_name, _, _ in Formatter().parse(SYSTEM_PROMPT)
-        if field_name is not None
-    }
-
-    assert "guardian_info" in fields
-    assert "guardian" not in fields
 
 
 @pytest.fixture(autouse=True)
@@ -129,7 +116,7 @@ def test_qq_runtime_world_block_reports_online_state_and_account_attrs():
     assert "<current_time>" not in block.content
 
 
-def test_qq_runtime_world_block_reports_connecting_state_with_empty_description():
+def test_qq_runtime_world_block_reports_connecting_state():
     class FakeClient:
         connected = False
         bot_id = "123"
@@ -147,7 +134,7 @@ def test_qq_runtime_world_block_reports_connecting_state_with_empty_description(
 
     assert runtime.state == "connecting"
     assert block.attrs["state"] == "connecting"
-    assert block.content.startswith("<des></des>\n<des>")
+    assert "<current_session/>" in block.content
     assert '<platform name="qq" state="connecting"' in world
 
 

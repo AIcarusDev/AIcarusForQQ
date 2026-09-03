@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
+from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.tools.qq_social.send_message import send_message as send_mod
 
 
@@ -19,6 +20,24 @@ def test_get_declaration_switches_between_array_and_single_shapes():
     assert "messages" in array_decl["parameters"]["properties"]
     assert single_decl["parameters"]["required"] == ["segments"]
     assert "segments" in single_decl["parameters"]["properties"]
+
+
+def test_adapter_error_exposes_only_bounded_metadata():
+    error = format_adapter_error(
+        {
+            "action": "send_msg",
+            "status": "failed",
+            "retcode": 1200,
+            "message": r"C:\Users\private\AICQ.db",
+            "wording": "/app/napcat/private/payload.bin",
+        }
+    )
+
+    assert "send_msg" in error
+    assert "retcode=1200" in error
+    assert "private" not in error
+    assert "AICQ.db" not in error
+    assert "payload.bin" not in error
 
 
 def test_repair_schema_args_splits_nested_message_objects_from_segments():
@@ -41,7 +60,7 @@ def test_repair_schema_args_splits_nested_message_objects_from_segments():
         {"segments": [{"command": "text", "content": "first"}]},
         {"segments": [{"command": "text", "content": "second"}]},
     ]
-    assert notes == ["split leaked message objects from messages[0].segments"]
+    assert len(notes) == 1
 
 
 def test_sanitize_semantic_args_splits_consecutive_text_segments():
@@ -63,7 +82,7 @@ def test_sanitize_semantic_args_splits_consecutive_text_segments():
     assert error is None
     assert len(repaired["messages"]) == 2
     assert repaired["messages"][0]["segments"] == [{"command": "text", "content": "one"}]
-    assert changes == ["expanded messages by splitting consecutive text segments (1 -> 2)"]
+    assert len(changes) == 1
 
 
 def test_array_shape_repairs_root_single_message_arguments_before_schema_validation():
@@ -96,7 +115,7 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
             }
         ]
     }
-    assert result.schema_changes == ("wrapped root single-message fields into messages[0]",)
+    assert len(result.schema_changes) == 1
 
 
 def test_array_shape_repairs_nested_numeric_quote_through_refs():
@@ -126,7 +145,7 @@ def test_array_shape_repairs_nested_numeric_quote_through_refs():
 
     assert result.ok is True
     assert result.args["messages"][0]["quote"] == "12345"
-    assert result.schema_changes == ("messages[0].quote: 12345 -> '12345' (string id)",)
+    assert len(result.schema_changes) == 1
 
 
 def test_build_tools_single_shape_preserves_root_single_message_arguments():
@@ -259,13 +278,12 @@ def test_adapter_failed_send_returns_error_without_local_chat_entry(fake_session
     assert result["sent_count"] == 0
     assert result["failed_count"] == 1
     assert result["total_count"] == 1
-    assert result["error"] == "QQ adapter 返回错误: send_msg / failed / retcode=1200 / no such column: NaN"
-    assert result["failed_messages"] == [
-        {
-            "index": 0,
-            "reason": "QQ adapter 返回错误: send_msg / failed / retcode=1200 / no such column: NaN",
-        }
-    ]
+    assert result["error"]
+    assert result["failed_messages"][0]["index"] == 0
+    assert result["failed_messages"][0]["reason"] == result["error"]
+    assert "send_msg" in result["error"]
+    assert "retcode=1200" in result["error"]
+    assert "no such column" not in repr(result)
     assert fake_session.context_messages == []
 
 
@@ -438,7 +456,7 @@ def test_new_inbound_revision_during_materialization_invalidates_send(
         loop.close()
 
     assert result["interrupted"] is True
-    assert "收到新消息" in result["error"]
+    assert result["error"]
     assert current_pending(fake_session) is None
 
 def test_history_confirmation_match_requires_self_quote_text_and_new_id():

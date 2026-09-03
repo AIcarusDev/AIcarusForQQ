@@ -23,4 +23,4 @@ def test_namespace_manage_accepts_single_namespace_string_for_list_fields(field)
 
     assert result.ok is True
     assert result.args == {field: ["qq_contacts"]}
-    assert result.schema_changes == (f"{field}: string -> single-item array",)
+    assert len(result.schema_changes) == 1

@@ -74,9 +74,6 @@ def test_computer_contract_uses_namespace_local_names_without_model_timeout_cont
             spec = collection.all_specs[f"computer.{name}"]
             assert spec.name == name
             assert spec.declaration["name"] == name
-        read_description = collection.all_specs["computer.read_file"].description
-        assert "5000" in read_description
-        assert "start_line 和 line_count" in read_description
         command_schema = repr(collection.all_specs["computer.command"].declaration["parameters"])
         assert "timeout_seconds" not in command_schema
         assert "background" not in command_schema

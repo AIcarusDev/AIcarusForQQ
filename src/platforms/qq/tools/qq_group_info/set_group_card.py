@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
@@ -149,8 +150,13 @@ async def _set_confirm_and_sync(
     if resp is None:
         return {"error": "修改群名片超时或 QQ adapter 未连接", "synced": False}
     if resp.get("status") != "ok":
-        msg = resp.get("message") or resp.get("msg") or "未知错误"
-        return {"error": f"修改群名片失败: {msg}", "synced": False}
+        return {
+            "error": format_adapter_error(
+                {**resp, "action": "set_group_card"},
+                "修改群名片失败",
+            ),
+            "synced": False,
+        }
 
     observed_card = ""
     for attempt in range(_POLL_ATTEMPTS):
@@ -229,9 +235,9 @@ def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) 
                 loop,
                 timeout=30,
             )
-        except Exception as exc:
+        except Exception:
             logger.warning("[set_group_card] 修改群名片异常 group=%s", current_group_id, exc_info=True)
-            return {"error": f"修改群名片失败: {exc}", "synced": False}
+            return {"error": "修改群名片失败", "synced": False}
 
     return execute
 

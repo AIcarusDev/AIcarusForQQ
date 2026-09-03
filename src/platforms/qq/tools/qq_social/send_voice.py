@@ -219,9 +219,9 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                 timeout=float((app_state.tts_cfg or {}).get("task_timeout", 60)) + 5,
             )
             duration_seconds = _wav_duration_seconds(wav_path)
-        except Exception as exc:
-            logger.warning("[send_voice] TTS 合成失败: %s", exc)
-            return {"error": f"TTS 合成失败: {exc}"}
+        except Exception:
+            logger.warning("[send_voice] TTS 合成失败", exc_info=True)
+            return {"error": "TTS 合成失败"}
 
         message = [{"type": "record", "data": {"file": str(wav_path)}}]
         try:

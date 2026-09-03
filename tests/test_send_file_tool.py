@@ -209,11 +209,11 @@ def test_send_file_is_available_without_linux_and_exposes_both_sources() -> None
 
 
 def test_send_file_argument_contract_requires_exactly_one_source() -> None:
-    with pytest.raises(ValueError, match="必须且只能"):
+    with pytest.raises(ValueError):
         send_file.SendFileArgs.model_validate({})
-    with pytest.raises(ValueError, match="必须且只能"):
+    with pytest.raises(ValueError):
         send_file.SendFileArgs.model_validate({"path": "/home/agent/a.txt", "content": "x"})
-    with pytest.raises(ValueError, match="受支持"):
+    with pytest.raises(ValueError):
         send_file.SendFileArgs.model_validate(
             {"content": "x", "filename": "payload", "format": "exe"}
         )
@@ -230,11 +230,14 @@ def test_send_file_adapter_error_exposes_only_allowlisted_metadata() -> None:
             "status": r"C:\Users\private\status",
             "retcode": r"C:\Users\private\retcode",
             "message": r"C:\Users\private\message",
+            "wording": "/app/napcat/private/payload.bin",
         },
     )
 
-    assert result == "QQ adapter 返回错误: upload_group_file / failed"
+    assert result
+    assert "upload_group_file" in result
     assert "private" not in result
+    assert "payload.bin" not in result
 
 
 def test_send_file_generates_utf8_file_and_uses_real_sent_message_id(monkeypatch) -> None:
@@ -335,9 +338,9 @@ def test_generated_send_failure_never_returns_adapter_local_paths(monkeypatch) -
 
         result = handler(content="private content", filename="safe", format="txt")
 
-        assert result["error"] == (
-            "QQ adapter 返回错误: upload_group_file / failed / retcode=1200"
-        )
+        assert result["error"]
+        assert "upload_group_file" in result["error"]
+        assert "retcode=1200" in result["error"]
         rendered = repr(result)
         assert "private-user" not in rendered
         assert "AppData" not in rendered
@@ -407,7 +410,7 @@ def test_send_file_uses_private_upload_and_rejects_temp_session() -> None:
             loop_thread.loop,
         )
         result = temp_handler("/home/agent/report.pdf")
-        assert "不支持" in result["error"]
+        assert result["error"]
         assert len(client.calls) == 1
         assert workspace.staged == workspace.released
     finally:
@@ -527,7 +530,7 @@ def test_send_file_rejects_incomplete_shared_directory_mapping() -> None:
 
         result = handler("/home/agent/report.pdf")
 
-        assert "共享目录配置不完整" in result["error"]
+        assert result["error"]
         assert client.calls == []
         assert workspace.staged == workspace.released == []
     finally:

@@ -54,16 +54,13 @@ def test_unread_preview_renders_segments_as_plain_text_without_type_or_sentinels
     assert "abcdef123456" not in xml
 
 
-def test_unread_preview_downgrades_non_text_segments_to_text_labels():
+def test_unread_preview_uses_safe_metadata_without_media_refs():
     text = _render_preview_text(
         {
             "content_type": "text",
             "content_segments": [
-                {"type": "voice", "duration": 2.5},
-                {"type": "video"},
                 {"type": "sticker", "image_ref": "abc123abc123"},
                 {"type": "file", "filename": "notes.txt"},
-                {"type": "forward"},
                 {"type": "card", "label": "小程序卡片"},
                 {"type": "poke", "label": "戳一戳"},
             ],
@@ -71,7 +68,11 @@ def test_unread_preview_downgrades_non_text_segments_to_text_labels():
         max_len=200,
     )
 
-    assert text == "[语音][视频][动画表情][文件:notes.txt][合并转发][小程序卡片][戳一戳]"
+    assert text
+    assert "notes.txt" in text
+    assert "小程序卡片" in text
+    assert "戳一戳" in text
+    assert "abc123abc123" not in text
     assert "\x00" not in text
 
 

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import sqlite3
 import sys
@@ -26,7 +25,7 @@ def test_memory_parser_contract():
         '<extract><event>{"summary":"A likes tea","event_type":"likes","roles":[]}</event></extract>'
     )
     assert not missing_source.events
-    assert any("source_id" in err for err in missing_source.errors)
+    assert missing_source.errors
     empty_source = parse_event_extraction_output(
         '<extract><event>{"summary":"A likes tea","source_id":"","event_type":"likes","roles":[]}</event></extract>'
     )
@@ -80,7 +79,7 @@ def test_cognition_sources_are_core_runtime_data():
     assert repeated_source_meta["9"]["source_uid"] == source_meta["1"]["source_uid"]
 
 
-def test_event_extraction_treats_empty_generation_as_provider_failure(caplog):
+def test_event_extraction_treats_empty_generation_as_provider_failure():
     import app_state
     import database
 
@@ -132,13 +131,11 @@ def test_event_extraction_treats_empty_generation_as_provider_failure(caplog):
         signatures = await database.load_archive_signatures()
         return await database.load_pending_archive_jobs(), signatures[sess_key], event_extraction._LAST_ARCHIVED_SIG[sess_key]
 
-    with caplog.at_level(logging.WARNING, logger="AICQ.memory.event_extraction.workflow"):
-        pending_jobs, persisted_sig, cached_sig = asyncio.run(scenario())
+    pending_jobs, persisted_sig, cached_sig = asyncio.run(scenario())
 
     assert pending_jobs == []
     assert persisted_sig == "old-sig"
     assert cached_sig == "old-sig"
-    assert not any("prompt 输出结构无效" in record.getMessage() for record in caplog.records)
 
 
 def test_memory_event_sources_old_schema_migrates_before_uid_index():

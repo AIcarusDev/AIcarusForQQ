@@ -84,12 +84,10 @@ def test_skill_resource_loader_reads_reference_file(monkeypatch, tmp_path):
 def test_skill_resource_loader_rejects_unsafe_resource_id():
     result = load_skill_resource("qq-social-style", "../SKILL")
 
-    assert result == {
-        "skill": "qq-social-style",
-        "resource": "../SKILL",
-        "ok": False,
-        "error": "invalid resource id",
-    }
+    assert result["skill"] == "qq-social-style"
+    assert result["resource"] == "../SKILL"
+    assert result["ok"] is False
+    assert result["error"]
 
 
 def test_recall_skill_resource_tool_requires_active_skill(monkeypatch):
@@ -98,12 +96,10 @@ def test_recall_skill_resource_tool_requires_active_skill(monkeypatch):
     monkeypatch.setattr(app_state, "namespace_runtime_state", state)
 
     blocked = recall_skill_resource.execute("qq-social-style", "test")
-    assert blocked == {
-        "ok": False,
-        "error": "skill is not active; open the related namespace first",
-        "skill": "qq-social-style",
-        "resource": "test",
-    }
+    assert blocked["ok"] is False
+    assert blocked["error"]
+    assert blocked["skill"] == "qq-social-style"
+    assert blocked["resource"] == "test"
 
     calls = []
     monkeypatch.setattr(

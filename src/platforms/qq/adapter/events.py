@@ -23,7 +23,14 @@ from .segments import (
     get_reply_message_id,
     _determine_content_type,
 )
-from .conversation import event_group_id, event_sender_id, is_temp_private_event, make_session_key, make_temp_session_key
+from .conversation import (
+    event_group_id,
+    event_sender_id,
+    format_adapter_error,
+    is_temp_private_event,
+    make_session_key,
+    make_temp_session_key,
+)
 from database import get_display_name
 
 logger = logging.getLogger("AICQ.qq_adapter.events")
@@ -305,7 +312,7 @@ async def expand_forward_previews(entry: dict, client) -> None:
 
         if result is None:
             api_error = getattr(client, "last_api_error", None) or {}
-            error_message = api_error.get("message") or "QQ adapter 返回空结果"
+            error_message = format_adapter_error(api_error, "QQ adapter 返回空结果")
             seg.update({"title": "合并转发", "preview": [], "total": 0, "error": error_message})
             logger.warning("get_forward_msg 失败: forward_id=%s", fwd_id)
             continue

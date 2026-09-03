@@ -5,12 +5,16 @@
 """
 
 import asyncio
+import logging
 from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.adapter.conversation import format_adapter_error
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
+
+logger = logging.getLogger("AICQ.tools")
 
 class SetQQSignatureArgs(ToolArgsModel):
     signature: str = Field(
@@ -53,8 +57,9 @@ def make_handler(qq_client: Any) -> Callable:
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            return {"error": f"获取当前昵称失败，无法修改签名: {e}"}
+        except Exception:
+            logger.warning("[tools] set_qq_signature: 获取当前昵称异常", exc_info=True)
+            return {"error": "获取当前昵称失败，无法修改签名"}
 
         if info is None:
             return {"error": "获取当前昵称失败，无法修改签名"}
@@ -70,14 +75,19 @@ def make_handler(qq_client: Any) -> Callable:
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            return {"error": f"修改签名失败: {e}"}
+        except Exception:
+            logger.warning("[tools] set_qq_signature: 修改签名异常", exc_info=True)
+            return {"error": "修改签名失败"}
 
         if resp is None:
             return {"error": "修改签名超时或 QQ adapter 未连接"}
         if resp.get("status") != "ok":
-            msg = resp.get("message") or resp.get("msg") or "未知错误"
-            return {"error": f"修改签名失败: {msg}"}
+            return {
+                "error": format_adapter_error(
+                    {**resp, "action": "set_qq_profile"},
+                    "修改签名失败",
+                )
+            }
 
         return {
             "success": True,

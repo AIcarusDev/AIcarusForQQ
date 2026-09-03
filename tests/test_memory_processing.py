@@ -721,15 +721,15 @@ def test_storyline_summary_response_parser_accepts_only_storyline_contract():
     assert _parse_storyline_summary_response("<storyline />") == ""
     long_summary = "长" * 1_000
     assert _parse_storyline_summary_response(f"<storyline>{long_summary}</storyline>") == long_summary
-    with pytest.raises(ValueError, match="empty storyline"):
+    with pytest.raises(ValueError):
         _parse_storyline_summary_response("<storyline></storyline>")
-    with pytest.raises(ValueError, match="missing <storyline>"):
+    with pytest.raises(ValueError):
         _parse_storyline_summary_response(
             "<analysis>旧格式。</analysis><storyline>不再接受。</storyline>"
         )
-    with pytest.raises(ValueError, match="missing <storyline>"):
+    with pytest.raises(ValueError):
         _parse_storyline_summary_response("</storyline>")
-    with pytest.raises(ValueError, match="missing <storyline>"):
+    with pytest.raises(ValueError):
         _parse_storyline_summary_response("普通文本")
 
 

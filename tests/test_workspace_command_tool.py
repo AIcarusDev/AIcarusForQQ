@@ -48,14 +48,12 @@ def test_command_result_exposes_spill_metadata_only_when_present() -> None:
             content="head\n...!![Content too long; truncated]!!...\ntail",
             content_file="/home/agent/.aicq/command-output/abc/0-4096.log",
             content_chars=4096,
-            note="The content is too long to be fully displayed; the complete content has been saved as a local file.",
+            note="SENTINEL_NOTE",
         )
     )
     assert spilled["content_file"] == "/home/agent/.aicq/command-output/abc/0-4096.log"
     assert spilled["content_chars"] == 4096
-    assert spilled["note"] == (
-        "The content is too long to be fully displayed; the complete content has been saved as a local file."
-    )
+    assert spilled["note"] == "SENTINEL_NOTE"
 
 
 def test_command_run_returns_running_immediately_on_attention(monkeypatch) -> None:
@@ -136,22 +134,18 @@ def test_computer_not_built_uses_stable_nested_tool_error(monkeypatch) -> None:
 
     def fail(coro, _loop, timeout=None):
         coro.close()
-        raise WorkspaceError(
-            WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-            "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
-        )
+        raise WorkspaceError(WorkspaceErrorCode.WORKSPACE_NOT_BUILT, "SENTINEL_ERROR")
 
     monkeypatch.setattr(_common, "run_coroutine_sync", fail)
-    assert _common.run_on_main_loop(operation(), Loop()) == {
-        "ok": False,
-        "error": {
-            "code": "computer_not_built",
-            "message": "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
-        },
+    result = _common.run_on_main_loop(operation(), Loop())
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": "computer_not_built",
+        "message": "SENTINEL_ERROR",
     }
 
 
-def test_content_too_large_uses_stable_nested_english_tool_error(monkeypatch) -> None:
+def test_content_too_large_preserves_error_code_and_message(monkeypatch) -> None:
     async def operation():
         return None
 
@@ -159,11 +153,7 @@ def test_content_too_large_uses_stable_nested_english_tool_error(monkeypatch) ->
         def is_running(self):
             return True
 
-    message = (
-        "Content too large: a single read cannot exceed 5,000 characters "
-        "(excluding added line numbers). Retry with a smaller, more precise range "
-        "using start_line and line_count."
-    )
+    message = "SENTINEL_CONTENT_TOO_LARGE"
 
     def fail(coro, _loop, timeout=None):
         coro.close()

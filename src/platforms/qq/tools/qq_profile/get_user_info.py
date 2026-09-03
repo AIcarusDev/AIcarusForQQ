@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.adapter.conversation import format_adapter_error
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 
@@ -109,14 +110,17 @@ def make_handler(qq_client: Any) -> Callable:
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            logger.warning("[tools] get_user_info: 查询失败 user_id=%s - %s", target_id, e)
-            return {"error": f"查询用户资料失败: {e}"}
+        except Exception:
+            logger.warning("[tools] get_user_info: 查询失败 user_id=%s", target_id, exc_info=True)
+            return {"error": "查询用户资料失败"}
 
         if not data:
-            last_error = getattr(qq_client, "last_api_error", None) or {}
-            message = last_error.get("message") or "API 返回为空，可能权限不足或 QQ 号有误"
-            return {"error": message}
+            return {
+                "error": format_adapter_error(
+                    getattr(qq_client, "last_api_error", None),
+                    "API 返回为空，可能权限不足或 QQ 号有误",
+                )
+            }
 
         return _format_user_info(data, target_id)
 

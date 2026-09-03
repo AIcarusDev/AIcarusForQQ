@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Callable
 
@@ -14,6 +15,8 @@ from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
+
+logger = logging.getLogger("AICQ.tools")
 
 class RecallMessageArgs(ToolArgsModel):
     message_id: str = Field(
@@ -156,17 +159,22 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            err_str = str(e)
+        except Exception as exc:
+            err_str = str(exc)
             if "recallMsg" in err_str and ("Timeout" in err_str or "decode failed" in err_str):
                 return {"error": "撤回失败：只能撤回 2 分钟内自己发送的消息。"}
-            return {"error": f"撤回消息失败: {e}"}
+            logger.warning("[tools] recall_message: 撤回异常", exc_info=True)
+            return {"error": "撤回消息失败"}
 
         if resp is None:
             return {"error": "撤回消息超时或 QQ adapter 未连接"}
         if resp.get("status") != "ok":
-            msg = resp.get("message") or resp.get("msg") or "未知错误"
-            return {"error": f"撤回消息失败: {msg}"}
+            return {
+                "error": format_adapter_error(
+                    {**resp, "action": "delete_msg"},
+                    "撤回消息失败",
+                )
+            }
 
         result = {
             "success": True,
@@ -186,8 +194,9 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            result["edited_message_error"] = f"编辑文本发送失败: {e}"
+        except Exception:
+            logger.warning("[tools] recall_message: 编辑文本发送异常", exc_info=True)
+            result["edited_message_error"] = "编辑文本发送失败"
             return result
 
         if not send_result or send_result.get("message_id") is None:

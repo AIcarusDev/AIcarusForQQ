@@ -6,12 +6,16 @@
 """
 
 import asyncio
+import logging
 from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.adapter.conversation import format_adapter_error
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
+
+logger = logging.getLogger("AICQ.tools")
 
 class GetQQSignatureArgs(ToolArgsModel):
     user_id: str | None = Field(
@@ -61,11 +65,17 @@ def make_handler(qq_client: Any) -> Callable:
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            return {"error": f"查询签名失败: {e}"}
+        except Exception:
+            logger.warning("[tools] get_qq_signature: 查询异常", exc_info=True)
+            return {"error": "查询签名失败"}
 
         if data is None:
-            return {"error": "API 返回为空，可能权限不足或 QQ 号有误"}
+            return {
+                "error": format_adapter_error(
+                    getattr(qq_client, "last_api_error", None),
+                    "API 返回为空，可能权限不足或 QQ 号有误",
+                )
+            }
 
         signature = data.get("longNick") or data.get("sign") or ""
 

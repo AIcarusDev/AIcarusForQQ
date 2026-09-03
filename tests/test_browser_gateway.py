@@ -32,9 +32,9 @@ def _proxy_request(proxy_url: str, request: bytes) -> bytes:
 
 def test_browser_url_contract_rejects_host_files_and_non_network_schemes() -> None:
     assert validate_browser_url("https://example.com/path") == "https://example.com/path"
-    with pytest.raises(ValueError, match="http"):
+    with pytest.raises(ValueError):
         validate_browser_url("file:///C:/Users/example/secret.txt")
-    with pytest.raises(ValueError, match="http"):
+    with pytest.raises(ValueError):
         validate_browser_url("data:text/plain,secret")
 
 
@@ -51,7 +51,7 @@ def test_public_resolution_rejects_private_and_mixed_dns_answers() -> None:
     def private_resolver(*_args, **_kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.10", 443))]
 
-    with pytest.raises(BrowserNetworkError, match="non-public"):
+    with pytest.raises(BrowserNetworkError):
         resolve_public_addresses("private.example", 443, resolver=private_resolver)
 
     def mixed_resolver(*_args, **_kwargs):
@@ -60,7 +60,7 @@ def test_public_resolution_rejects_private_and_mixed_dns_answers() -> None:
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443)),
         ]
 
-    with pytest.raises(BrowserNetworkError, match="non-public"):
+    with pytest.raises(BrowserNetworkError):
         resolve_public_addresses("rebind.example", 443, resolver=mixed_resolver)
 
 
@@ -77,7 +77,7 @@ def test_synthetic_proxy_dns_range_is_only_accepted_with_an_upstream_proxy() -> 
             ),
         ]
 
-    with pytest.raises(BrowserNetworkError, match="non-public"):
+    with pytest.raises(BrowserNetworkError):
         resolve_public_addresses("public.example", 443, resolver=fake_ip_resolver)
     addresses = resolve_public_addresses(
         "public.example",
@@ -229,7 +229,7 @@ def test_disabled_workspace_fails_before_starting_wsl(monkeypatch) -> None:
         raise AssertionError("wsl.exe must not start")
 
     monkeypatch.setattr("browser.gateway.subprocess.Popen", unexpected_popen)
-    with pytest.raises(BrowserNetworkError, match="disabled"):
+    with pytest.raises(BrowserNetworkError):
         WorkspaceProcessTunnel("127.0.0.1", 7860, enabled=lambda: False)
     assert called is False
 

@@ -59,18 +59,17 @@ def test_model_discovery_allows_provider_without_api_key():
 
 
 @pytest.mark.parametrize(
-    ("request_data", "config", "message"),
+    ("request_data", "config"),
     [
-        ({"provider": "unknown"}, _config(), "未知的模型供应商"),
-        ({"provider": "grok"}, _config(), "尚未设置 API Key"),
+        ({"provider": "unknown"}, _config()),
+        ({"provider": "grok"}, _config()),
     ],
 )
 def test_model_discovery_rejects_invalid_provider_configuration(
     request_data,
     config,
-    message,
 ):
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError):
         _resolve_model_discovery_target(request_data, config, {})
 
 

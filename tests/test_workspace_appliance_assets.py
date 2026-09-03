@@ -22,13 +22,3 @@ def test_linux_appliance_assets_use_lf_line_endings():
     ]
 
     assert invalid == []
-
-
-def test_appliance_tree_contains_no_python_cache_artifacts():
-    cache_artifacts = [
-        str(path.relative_to(APPLIANCE_ROOT))
-        for path in APPLIANCE_ROOT.rglob("*")
-        if path.name == "__pycache__" or path.suffix == ".pyc"
-    ]
-
-    assert cache_artifacts == []

@@ -12,6 +12,7 @@ from typing import Any, Callable, cast
 
 from pydantic import Field, field_validator, model_validator
 
+from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.files.logical import normalized_filename, sanitize_filename
 from platforms.qq.files.service import QQFileError, get_qq_file_service
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
@@ -36,7 +37,7 @@ _RECONCILE_TASKS: set[asyncio.Task[Any]] = set()
 
 
 class FileTransferConfigError(ValueError):
-    """A controlled configuration error whose message is safe for the model."""
+    """A controlled configuration error."""
 
 
 class SendFileArgs(ToolArgsModel):
@@ -108,19 +109,9 @@ REQUIRES_CONTEXT: list[str] = [
 def _adapter_error(action: str, response: dict[str, Any] | None) -> str:
     """Return only stable adapter metadata that is safe to expose to the model."""
 
-    if not response:
-        return f"QQ adapter 未响应: {action}"
-    raw_status = str(response.get("status") or "failed")
-    status = raw_status if raw_status in {"failed", "error", "timeout"} else "failed"
-    parts = [action, status]
-    raw_retcode = response.get("retcode")
-    if isinstance(raw_retcode, int) or (
-        isinstance(raw_retcode, str)
-        and raw_retcode.removeprefix("-").isdigit()
-        and len(raw_retcode) <= 12
-    ):
-        parts.append(f"retcode={raw_retcode}")
-    return "QQ adapter 返回错误: " + " / ".join(parts)
+    if response is None:
+        return format_adapter_error(None, f"QQ adapter 未响应: {action}")
+    return format_adapter_error({**response, "action": action})
 
 
 def _file_transfer_config(qq_client: Any) -> tuple[str, str]:
@@ -520,8 +511,9 @@ def make_handler(
 
             try:
                 prepared, response = run_coroutine_sync(_upload_path(), main_loop, timeout=None)
-            except FileTransferConfigError as exc:
-                return {"error": str(exc)}
+            except FileTransferConfigError:
+                logger.warning("QQ 文件共享目录配置无效", exc_info=True)
+                return {"error": "QQ 文件共享目录配置无效。"}
             except Exception:
                 logger.exception("已有 QQ 文件发送失败")
                 return {"error": "文件发送失败，请检查 QQ 文件传输配置或 Adapter 状态。"}

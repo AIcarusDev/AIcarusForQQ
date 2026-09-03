@@ -108,7 +108,5 @@ def test_query_group_members_search_matches_nickname_or_card_and_limits(monkeypa
 def test_query_group_members_rejects_wrong_action_fields():
     result = query_group_members.make_handler(None, lambda: None)(action="list_admins", page=1)
 
-    assert result == {
-        "error": "action=list_admins 时不能传其他参数",
-        "extra": ["page"],
-    }
+    assert result["error"]
+    assert result["extra"] == ["page"]

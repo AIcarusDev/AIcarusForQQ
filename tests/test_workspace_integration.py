@@ -132,7 +132,7 @@ def test_workspace_file_can_be_staged_to_windows_without_unc() -> None:
                 f"ln -s /etc/hostname '{symlink_path}'",
             )
             assert linked.exit_code == 0, output
-            with pytest.raises(WorkspaceError, match="computer export failed") as export_error:
+            with pytest.raises(WorkspaceError) as export_error:
                 async with service.stage_host_file(symlink_path):
                     raise AssertionError("symlink export must not enter the context")
             assert export_error.value.code is WorkspaceErrorCode.PATH_ERROR

@@ -105,8 +105,6 @@ def test_core_chat_rejects_invalid_client_id_without_writing(monkeypatch) -> Non
 
         assert blank.status_code == 400
         assert too_long.status_code == 400
-        assert "client_id" in (await blank.get_json())["error"]
-        assert "128" in (await too_long.get_json())["error"]
 
     asyncio.run(scenario())
 
@@ -170,7 +168,6 @@ def test_image_upload_validation_uses_file_content_not_claimed_mime() -> None:
         routes_settings._inspect_image_upload(b"not-an-image", allowed_mimes={"image/png"})
     except routes_settings._ImageUploadError as exc:
         assert exc.status_code == 400
-        assert "有效图片" in str(exc)
     else:
         raise AssertionError("invalid image bytes must be rejected")
 

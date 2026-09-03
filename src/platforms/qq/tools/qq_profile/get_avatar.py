@@ -56,9 +56,9 @@ def execute(**kwargs) -> dict:
             data: bytes = resp.read()
             content_type: str = resp.headers.get("Content-Type", "image/jpeg")
             mime = content_type.split(";")[0].strip() or "image/jpeg"
-    except Exception as e:
-        logger.warning("[tools] get_avatar: 获取失败 qq=%s — %s", qq, e)
-        return {"error": f"获取头像失败：{e}"}
+    except Exception:
+        logger.warning("[tools] get_avatar: 获取失败 qq=%s", qq, exc_info=True)
+        return {"error": "获取头像失败"}
 
     if not data:
         logger.warning("[tools] get_avatar: 服务器返回为空 qq=%s", qq)

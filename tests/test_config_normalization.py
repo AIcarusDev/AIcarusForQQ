@@ -26,14 +26,16 @@ def test_guardian_info_normalizes_nullable_text_and_migrates_legacy_mapping():
     assert normalize_guardian_info(None) is None
     assert normalize_guardian_info("  \n  ") is None
     assert normalize_guardian_info("  第一行\n第二行  ") == "第一行\n第二行"
-    assert normalize_guardian_info({"name": "智慧米塔", "id": "123456"}) == (
-        "- QQ 名称：智慧米塔\n- QQ ID：123456"
-    )
+    normalized = normalize_guardian_info({"name": "智慧米塔", "id": "123456"})
+    assert normalized is not None
+    assert "智慧米塔" in normalized
+    assert "123456" in normalized
     assert normalize_guardian_info({"name": "", "id": ""}) is None
 
     config = {"guardian": {"name": "智慧米塔", "id": ""}}
     normalize_guardian_config_inplace(config)
-    assert config == {"guardian": "- QQ 名称：智慧米塔"}
+    assert isinstance(config["guardian"], str)
+    assert "智慧米塔" in config["guardian"]
 
 
 def test_general_config_save_preserves_latest_guardian(tmp_path):

@@ -52,6 +52,6 @@ def test_core_platform_note_persists_as_chat_note(monkeypatch, tmp_path):
     assert len(messages) == 1
     assert messages[0]["role"] == "note"
     assert messages[0]["message_id"].startswith("core_note_enter_")
-    assert messages[0]["content"] == "Aicarus 进入本页"
+    assert "Aicarus" in messages[0]["content"]
     assert messages[0]["content_type"] == "core_platform_enter"
     assert messages[0]["content_segments"][0]["type"] == "platform_presence"

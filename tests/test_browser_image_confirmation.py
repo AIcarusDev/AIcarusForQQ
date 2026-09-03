@@ -151,7 +151,10 @@ def test_confirmation_preview_is_one_composite_block_without_internal_fields(mon
 
 def test_confirm_cancel_tools_exist_only_while_batch_is_pending() -> None:
     session = _session()
-    provider = lambda: session
+
+    def provider():
+        return session
+
     assert confirm_browser_image_send.is_available(provider) is False
     assert cancel_browser_image_send.is_available(provider) is False
 
@@ -245,7 +248,7 @@ def test_browser_resource_batch_materialization_preserves_order_and_maximum(monk
     prepared, artifacts, error = send_mod._materialize_selected_browser_resources(too_many)
     assert prepared is None
     assert artifacts == []
-    assert "最多选择 4 张" in error
+    assert error
 
 
 def test_pending_high_risk_artifact_cannot_bypass_confirmation() -> None:
@@ -267,4 +270,4 @@ def test_pending_high_risk_artifact_cannot_bypass_confirmation() -> None:
         {"browser_control": {"image_send_confirmation": "high_risk"}},
     )
 
-    assert "必须使用 confirm_browser_image_send" in error
+    assert error

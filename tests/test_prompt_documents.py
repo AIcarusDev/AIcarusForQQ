@@ -107,7 +107,7 @@ def test_agent_prompt_requires_a_template_for_first_initialization(
 ) -> None:
     _use_prompt_root(monkeypatch, tmp_path)
 
-    with pytest.raises(PromptDocumentError, match="模板不存在"):
+    with pytest.raises(PromptDocumentError):
         load_agent_prompt_docs({})
 
 

@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import Field
 from platforms.qq.adapter.conversation import (
     TEMP_CONV_TYPE,
+    format_adapter_error,
     make_session_key,
     make_temp_session_key,
     parse_session_key,
@@ -173,9 +174,9 @@ def _infer_missing_enter_type(target_id: str) -> tuple[str | None, str | None]:
             loop,
             timeout=15,
         )
-    except Exception as exc:
-        logger.warning("[enter_qq_session] 类型推断异常: %s", exc)
-        return None, f"类型推断异常: {exc}"
+    except Exception:
+        logger.warning("[enter_qq_session] 类型推断异常", exc_info=True)
+        return None, "类型推断失败"
 
     if len(candidates) == 1:
         return next(iter(candidates)), None
@@ -253,9 +254,11 @@ async def _validate_group_member(client: Any, group_id: str, user_id: str) -> st
     )
     if data:
         return None
-    api_error = getattr(client, "last_api_error", None) or {}
-    message = api_error.get("message") or api_error.get("msg") or "目标不在当前群，或 adapter 不允许查询该群成员"
-    return f"无法从当前群 {group_id} 打开与用户 {user_id} 的临时会话: {message}"
+    adapter_error = format_adapter_error(
+        getattr(client, "last_api_error", None),
+        "目标不在当前群，或 adapter 不允许查询该群成员",
+    )
+    return f"无法从当前群 {group_id} 打开与用户 {user_id} 的临时会话: {adapter_error}"
 
 
 async def _current_group_source() -> tuple[str, str] | None:
@@ -352,9 +355,9 @@ def execute(type: str, id: str, **kwargs) -> dict:
             loop,
             timeout=15,
         )
-    except Exception as e:
-        logger.warning("[enter_qq_session] 校验异常: %s", e)
-        return {"ok": False, "error": f"校验异常: {e}"}
+    except Exception:
+        logger.warning("[enter_qq_session] 校验异常", exc_info=True)
+        return {"ok": False, "error": "会话校验失败"}
 
     if not isinstance(resolved, dict):
         return {"ok": False, "error": "校验返回值无效"}

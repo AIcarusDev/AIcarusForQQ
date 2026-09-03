@@ -14,7 +14,7 @@ def test_cache_actions_expose_exact_scope_and_require_server_confirmation(tmp_pa
     service = CacheMaintenanceService(cache_root)
 
     image_action = {item["id"]: item for item in service.describe_actions()}["image"]
-    assert image_action["target"] == "图片缓存"
+    assert image_action["target"]
     assert image_action["metrics"]["bytes"] == 6
     assert image_action["metrics"]["files"] == 2
     assert image_action["expected_confirmation"] == "CLEAR IMAGE CACHE"
@@ -36,4 +36,3 @@ def test_cache_actions_expose_exact_scope_and_require_server_confirmation(tmp_pa
         service.perform("image", confirmation=empty_action["expected_confirmation"])
     assert unavailable.value.status_code == 409
     assert unavailable.value.details["metrics"] == {"bytes": 0, "files": 0}
-

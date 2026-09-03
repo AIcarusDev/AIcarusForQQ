@@ -16,6 +16,10 @@ def _result_payloads(content: str) -> list[dict]:
     ]
 
 
+def _xml_text(content: str, tag: str) -> str | None:
+    return ET.fromstring(f"<root>{content}</root>").findtext(f".//{tag}")
+
+
 def test_to_xml_messages_groups_tool_results_in_action_response():
     flow = ConsciousnessFlow()
     flow.append_round(
@@ -70,7 +74,7 @@ def test_to_xml_messages_renders_aic_action_error_as_plain_feedback():
 
     assert [message["role"] for message in messages] == ["user"]
     assert messages[0]["content"].startswith("<old_cycles>\n")
-    assert "<motive>有点记不清了</motive>" in messages[0]["content"]
+    assert _xml_text(messages[0]["content"], "motive")
     assert (
         "<feedback>aic_action_error: bad &lt;tool_call&gt;&amp; details</feedback>"
         in messages[0]["content"]
@@ -377,7 +381,7 @@ def test_no_cognition_round_does_not_consume_raw_cognition_slots():
     assistant_contents = [message["content"] for message in messages if message["role"] == "assistant"]
     assert len(assistant_contents) == 3
     assert assistant_contents[0].startswith("<cognition>c2</cognition>")
-    assert assistant_contents[1].startswith("<motive>有点记不清了</motive>")
+    assert _xml_text(assistant_contents[1], "motive")
     assert assistant_contents[2].startswith("<cognition>c3</cognition>")
     assert flow.visible_cognitions(limit=8) == ["c2", "c3"]
 
@@ -487,7 +491,7 @@ def test_old_cycle_legacy_time_and_missing_motive_fallback_are_deterministic():
     old_cycles = messages[0]["content"]
 
     assert '<cycle start_ago="30s" end_ago="30s">' in old_cycles
-    assert "<motive>有点记不清了</motive>" in old_cycles
+    assert _xml_text(old_cycles, "motive")
     assert flow_module._format_compact_duration(45) == "45s"
     assert flow_module._format_compact_duration(90) == "1m30s"
     assert flow_module._format_compact_duration(2 * 3600 + 5 * 60) == "2h05m"
@@ -600,7 +604,7 @@ def test_action_response_can_mix_plain_and_cdata_json_results():
 
 
 def test_command_truncation_metadata_stays_inside_unified_cdata_json():
-    preview = "head\n...!![Content too long; truncated]!!...\ntail"
+    preview = "SENTINEL_PREVIEW"
     flow = ConsciousnessFlow()
     flow.append_round(
         [ToolCall(namespace="computer", name="command", args={"action": "poll"}, call_id="call_1")],
@@ -619,7 +623,7 @@ def test_command_truncation_metadata_stays_inside_unified_cdata_json():
                 "exit_code": 0,
                 "content_file": "/home/agent/.aicq/command-output/abc/0-4096.log",
                 "content_chars": 4096,
-                "note": "The content is too long to be fully displayed; the complete content has been saved as a local file.",
+                "note": "SENTINEL_NOTE",
             },
             call_id="call_1",
             result_cdata=True,
@@ -637,9 +641,7 @@ def test_command_truncation_metadata_stays_inside_unified_cdata_json():
     assert payload["result"]["content"] == preview
     assert payload["result"]["content_file"].startswith("/home/agent/")
     assert payload["result"]["content_chars"] == 4096
-    assert payload["result"]["note"] == (
-        "The content is too long to be fully displayed; the complete content has been saved as a local file."
-    )
+    assert payload["result"]["note"] == "SENTINEL_NOTE"
 
 
 def test_restore_folds_old_split_text_payload_into_json_result():

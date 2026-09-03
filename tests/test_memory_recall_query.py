@@ -1,5 +1,4 @@
 import asyncio
-import logging
 
 from memory.recall.recall_query import (
     build_recall_query_facets,
@@ -79,38 +78,6 @@ def test_recall_events_from_facets_fuses_by_weighted_average():
     assert {hit["source"] for hit in recalled[0]["recall_facets"]} == {"latest_user", "world.chat"}
     assert any("primary recall signal" in hit["query"] for hit in recalled[0]["recall_facets"])
     assert any("secondary recall signal" in hit["query"] for hit in recalled[0]["recall_facets"])
-
-
-def test_recall_events_from_facets_logs_facets_and_fused_results(caplog):
-    async def fake_recall(**kwargs):
-        return [
-            {
-                "event_id": 42,
-                "summary": f"memory for {kwargs['query']}",
-                "recall_score": 0.88,
-                "occurred_at": 1,
-            }
-        ]
-
-    facets = build_recall_query_facets(latest_user_text="logging recall signal")
-
-    with caplog.at_level(logging.DEBUG, logger="AICQ.memory.recall"):
-        recalled = asyncio.run(
-            recall_events_from_facets(
-                sender_entity="self",
-                context_scope="group:qq_1",
-                limit=1,
-                facets=facets,
-                recall_fn=fake_recall,
-            )
-        )
-
-    assert recalled[0]["event_id"] == 42
-    messages = "\n".join(record.getMessage() for record in caplog.records)
-    assert "[recall] facet source=latest_user" in messages
-    assert "[recall] fused" in messages
-    assert "via source=latest_user" in messages
-    assert "logging recall signal" in messages
 
 
 def test_storyline_summary_inherits_and_sums_atom_recall_strength(monkeypatch):

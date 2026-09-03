@@ -167,9 +167,9 @@ def make_handler(qq_client: Any, config: dict) -> Callable:
                     }
                 temp_by_uid.update(_collect_live_temp_sessions(qq_adapter_cfg))
                 result["temps"] = list(temp_by_uid.values())
-            except Exception as e:
-                logger.warning("[tools] list_contact: 获取临时会话列表异常 — %s", e)
-                result["temp_error"] = f"获取临时会话列表失败: {e}"
+            except Exception:
+                logger.warning("[tools] list_contact: 获取临时会话列表异常", exc_info=True)
+                result["temp_error"] = "获取临时会话列表失败"
 
         logger.info(
             "[tools] list_contact: 查询完成 type=%s friends=%s groups=%s temps=%s",

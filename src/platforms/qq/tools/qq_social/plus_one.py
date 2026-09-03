@@ -97,8 +97,9 @@ def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) 
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            return {"error": f"获取消息失败: {e}"}
+        except Exception:
+            logger.warning("[tools] plus_one: 获取消息异常", exc_info=True)
+            return {"error": "获取消息失败"}
 
         if not msg_data:
             return {"error": f"未找到消息 ID={message_id}，可能已过期或不存在"}
@@ -131,8 +132,9 @@ def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) 
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            return {"error": f"发送复读消息失败: {e}"}
+        except Exception:
+            logger.warning("[tools] plus_one: 发送消息异常", exc_info=True)
+            return {"error": "发送复读消息失败"}
 
         if not send_result:
             return {"error": "复读消息发送失败（QQ adapter 无响应）"}

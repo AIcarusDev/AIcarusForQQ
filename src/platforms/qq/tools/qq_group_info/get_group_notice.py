@@ -13,6 +13,7 @@ TLS 握手失败，无法访问。因此本工具仅返回图片元数据，不�
 
 import asyncio
 import html
+import logging
 from datetime import datetime
 from typing import Any, Callable, Literal
 
@@ -21,6 +22,8 @@ from pydantic import Field, RootModel
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
+
+logger = logging.getLogger("AICQ.tools")
 
 class GroupNoticeListArgs(ToolArgsModel):
     action: Literal["list"] = Field(description="列出公告摘要。")
@@ -169,8 +172,9 @@ def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) 
                 loop,
                 timeout=_FETCH_TIMEOUT_SECONDS,
             )
-        except Exception as e:
-            return {"error": f"获取群公告失败: {e}"}
+        except Exception:
+            logger.warning("[tools] get_group_notice: 查询异常", exc_info=True)
+            return {"error": "获取群公告失败"}
 
         if raw is None:
             return {"error": "API 返回为空（可能群号有误或权限不足）"}

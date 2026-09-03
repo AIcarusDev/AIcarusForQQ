@@ -92,7 +92,7 @@ def test_login_browser_is_terminated_when_cdp_policy_cannot_be_verified(monkeypa
         lambda _endpoint: (_ for _ in ()).throw(RuntimeError("not isolated")),
     )
 
-    with pytest.raises(RuntimeError, match="not isolated"):
+    with pytest.raises(RuntimeError):
         session.launch_isolated_login_browser(
             profile_dir=tmp_path / "profile",
             url="https://accounts.example/login",

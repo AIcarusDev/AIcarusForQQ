@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
@@ -74,16 +75,15 @@ def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) 
                 loop,
                 timeout=15,
             )
-        except Exception as e:
-            return {"error": f"戳一戳失败: {e}"}
+        except Exception:
+            logger.warning("[tools] poke: 调用异常", exc_info=True)
+            return {"error": "戳一戳失败"}
 
         if not poke_result or poke_result.get("status") != "ok":
             return {
-                "error": (
-                    f"戳一戳失败（QQ adapter 响应异常）: "
-                    f"{poke_result.get('message', '未知错误')}"
-                    if poke_result
-                    else "戳一戳失败（QQ adapter 无响应）"
+                "error": format_adapter_error(
+                    {**poke_result, "action": api_action} if poke_result else None,
+                    "戳一戳失败（QQ adapter 无响应）",
                 )
             }
 

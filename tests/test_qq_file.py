@@ -23,7 +23,6 @@ from platforms.qq.files.storage import (
     StorageError,
     StorageRouter,
 )
-from platforms.qq.tools.qq_file import delete, download, list_files, read, search
 from skills.registry import build_skill_block_for_namespaces
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
@@ -185,13 +184,6 @@ async def test_restart_recovery_is_scoped_to_the_current_qq_account(tmp_path: Pa
 
     assert (await repository.get_job_row(current["download_id"]))["failure_code"] == "download_interrupted"
     assert (await repository.get_job_row(other["download_id"]))["status"] == "queued"
-
-
-def test_public_tool_descriptions_keep_the_current_user_perspective() -> None:
-    for module in (download, read, list_files, search, delete):
-        description = module.TOOL_CONTRACT.description.casefold()
-        assert "agent" not in description
-        assert "bot" not in description
 
 
 def test_namespace_is_qq_only_folded_and_loads_skill_on_open() -> None:

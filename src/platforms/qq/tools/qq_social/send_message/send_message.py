@@ -649,8 +649,9 @@ def _materialize_selected_browser_resources(
         from browser import materialize_browser_resources
 
         artifacts = materialize_browser_resources(selected)
-    except Exception as exc:
-        return None, [], f"浏览器原图固化失败，未发送且不会降级为截图：{exc}"
+    except Exception:
+        logger.warning("[send_message] 浏览器原图固化失败", exc_info=True)
+        return None, [], "浏览器原图固化失败，未发送且不会降级为截图。"
     if len(artifacts) != len(selected):
         return None, [], "浏览器原图固化结果数量不一致，未发送。"
 
@@ -1046,11 +1047,15 @@ def make_handler(
                     reply_message_id=reply_id,
                     adapter=getattr(qq_client, "adapter", ""),
                 )
-            except qq_adapter.ImageLoadError as img_err:
-                logger.warning("[send_message] 图片加载失败，终止本次发送 conv=%s — %s", conversation_id, img_err)
+            except qq_adapter.ImageLoadError:
+                logger.warning(
+                    "[send_message] 图片加载失败，终止本次发送 conv=%s",
+                    conversation_id,
+                    exc_info=True,
+                )
                 return {
                     "to": target,
-                    "error": str(img_err),
+                    "error": "图片加载失败，消息未发送。",
                     "sent_count": sent_count,
                     "failed_count": failed_count + 1,
                     "total_count": len(send_messages),

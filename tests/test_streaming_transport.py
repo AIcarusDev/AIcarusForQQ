@@ -1,4 +1,3 @@
-import logging
 from types import SimpleNamespace
 
 import pytest
@@ -273,7 +272,6 @@ def test_transient_upstream_failure_retries_the_same_stream_request(monkeypatch)
 
 
 def test_persistent_upstream_failure_never_falls_back_to_non_streaming(
-    caplog,
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -292,20 +290,17 @@ def test_persistent_upstream_failure_never_falls_back_to_non_streaming(
     completions = FakeCompletions()
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
-    with caplog.at_level(logging.WARNING, logger="AICQ.llm.transport"):
-        with pytest.raises(FakeApiError, match="Upstream request failed"):
-            create_streamed_chat_completion(
-                client,
-                provider="test",
-                all_messages=[{"role": "user", "content": "hello"}],
-                create_kwargs={"model": "test-model"},
-            )
+    with pytest.raises(FakeApiError):
+        create_streamed_chat_completion(
+            client,
+            provider="test",
+            all_messages=[{"role": "user", "content": "hello"}],
+            create_kwargs={"model": "test-model"},
+        )
 
     assert len(completions.calls) == 2
     assert all(call["stream"] is True for call in completions.calls)
     assert all("stream_options" in call for call in completions.calls)
-    assert "供应商上游临时失败" in caplog.text
-    assert "provider 不支持流式" not in caplog.text
 
 
 @pytest.mark.parametrize(

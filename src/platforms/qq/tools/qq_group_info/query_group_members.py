@@ -162,9 +162,9 @@ def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) 
                 loop,
                 timeout=_FETCH_TIMEOUT_SECONDS,
             )
-        except Exception as exc:
-            logger.warning("[tools] query_group_members: API 调用异常 group_id=%s - %s", group_id, exc)
-            return {"error": f"查询群成员失败: {exc}"}
+        except Exception:
+            logger.warning("[tools] query_group_members: API 调用异常 group_id=%s", group_id, exc_info=True)
+            return {"error": "查询群成员失败"}
 
         if raw is None:
             logger.warning("[tools] query_group_members: API 返回为空 group_id=%s", group_id)

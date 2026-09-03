@@ -74,22 +74,23 @@ def set_temp_source(
 
 
 def format_adapter_error(api_error: dict[str, Any] | None, fallback: str = "QQ adapter 调用失败") -> str:
+    """Expose only bounded adapter metadata, never adapter-provided prose."""
+
     if not api_error:
         return fallback
-    action = str(api_error.get("action") or "").strip()
-    status = str(api_error.get("status") or "").strip()
-    retcode = api_error.get("retcode")
-    message = str(api_error.get("message") or api_error.get("msg") or api_error.get("wording") or "").strip()
-    wording = str(api_error.get("wording") or "").strip()
+    raw_action = str(api_error.get("action") or "").strip()
+    action = raw_action if raw_action.replace("_", "").isalnum() and len(raw_action) <= 64 else ""
+    raw_status = str(api_error.get("status") or "failed").strip().lower()
+    status = raw_status if raw_status in {"failed", "error", "timeout", "disconnected"} else "failed"
     parts = []
     if action:
         parts.append(action)
-    if status:
-        parts.append(status)
-    if retcode not in (None, ""):
+    parts.append(status)
+    retcode = api_error.get("retcode")
+    if (isinstance(retcode, int) and not isinstance(retcode, bool)) or (
+        isinstance(retcode, str)
+        and retcode.removeprefix("-").isdigit()
+        and len(retcode) <= 12
+    ):
         parts.append(f"retcode={retcode}")
-    if message:
-        parts.append(message)
-    if wording and wording != message:
-        parts.append(wording)
     return "QQ adapter 返回错误: " + " / ".join(parts) if parts else fallback

@@ -177,8 +177,8 @@ def make_handler(qq_session_provider: Callable[[], Any | None]) -> Callable:
                     "results": results,
                 }
 
-        except Exception as e:
-            logger.warning("[tools] search_history: 查询异常 — %s", e)
-            return {"error": f"搜索失败: {e}"}
+        except Exception:
+            logger.warning("[tools] search_history: 查询异常", exc_info=True)
+            return {"error": "搜索失败"}
 
     return execute

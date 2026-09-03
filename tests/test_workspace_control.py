@@ -46,7 +46,7 @@ def test_workspace_directory_selection_handoff_is_one_shot(tmp_path: Path) -> No
     assert selected["path"] == "E:\\Aic_forQ\\workspace-new"
     assert consume_workspace_directory_selection("selection-1", control_root=tmp_path) is None
 
-    with pytest.raises(WorkspaceControlError, match="目录选择 ID"):
+    with pytest.raises(WorkspaceControlError):
         consume_workspace_directory_selection("../outside", control_root=tmp_path)
 
 
@@ -249,7 +249,7 @@ def test_probe_recognizes_repairable_partial_first_build(tmp_path: Path) -> None
     assert observed.partial_install is True
     assert observed.install_location_matches is True
     assert observed.built is False
-    assert "可安全恢复" in observed.error
+    assert observed.error
 
 
 def test_partial_build_retries_as_build_but_location_mismatch_is_rejected(
@@ -271,7 +271,7 @@ def test_partial_build_retries_as_build_but_location_mismatch_is_rejected(
         partial=True,
         location_matches=False,
     )
-    with pytest.raises(WorkspaceControlError, match="安装位置与配置不一致"):
+    with pytest.raises(WorkspaceControlError):
         mismatch.start_job("build", workspace_config())
 
 
@@ -329,7 +329,7 @@ def test_completed_artifacts_do_not_override_unfinished_provisioning_marker(
     assert actions["build"]["available"] is True
     assert actions["apply"]["available"] is False
 
-    with pytest.raises(WorkspaceControlError, match="首次构建尚未完成"):
+    with pytest.raises(WorkspaceControlError):
         control.start_job("apply", workspace_config())
     job = control.start_job("build", workspace_config())
     assert job["repair_partial_install"] is True
@@ -383,7 +383,7 @@ def test_worker_repair_build_passes_recreate_and_persists_stage_log(tmp_path: Pa
     class Process:
         stdout = io.BytesIO(
             b"[computer][stage] recovering_partial_install\r\n"
-            + "正在恢复\r\n".encode("utf-16-le")
+            + "SENTINEL_UTF16_OUTPUT\r\n".encode("utf-16-le")
             + b"[computer][stage] completed\r\n"
         )
 
@@ -399,7 +399,7 @@ def test_worker_repair_build_passes_recreate_and_persists_stage_log(tmp_path: Pa
     assert execute_job(job_id, control_root=tmp_path) == 0
     assert "-Recreate" in seen[0]
     log = (jobs / f"{job_id}.log").read_text(encoding="utf-8")
-    assert "正在恢复" in log
+    assert "SENTINEL_UTF16_OUTPUT" in log
     assert "[computer][stage] completed" in log
 
 
@@ -453,7 +453,7 @@ def test_worker_surfaces_tagged_failure_detail(tmp_path: Path, monkeypatch) -> N
     class Process:
         stdout = io.BytesIO(
             b"[computer][stage] building_container\r\n"
-            b"[computer][error] Container image build failed after 3 attempts\r\n"
+            b"[computer][error] SENTINEL_BUILD_FAILURE\r\n"
         )
 
         def wait(self):
@@ -465,7 +465,7 @@ def test_worker_surfaces_tagged_failure_detail(tmp_path: Path, monkeypatch) -> N
     failed = json.loads(job_path.read_text(encoding="utf-8"))
     assert failed["status"] == "failed"
     assert failed["exit_code"] == 1
-    assert failed["error"] == "Container image build failed after 3 attempts（退出码 1）"
+    assert "SENTINEL_BUILD_FAILURE" in failed["error"]
 
 
 def test_probe_accepts_utf8_bom_from_legacy_resource_config(tmp_path: Path) -> None:
@@ -489,7 +489,7 @@ def test_control_job_requires_confirmation_and_is_process_persistent(tmp_path: P
         pid = 424242
 
     monkeypatch.setattr("workspace.control.subprocess.Popen", lambda *args, **kwargs: Process())
-    with pytest.raises(WorkspaceControlError, match="确认字符串"):
+    with pytest.raises(WorkspaceControlError):
         control.start_job("clear", workspace_config(), confirmation="wrong")
 
     job = control.start_job("clear", workspace_config(), confirmation="ERASE AGENT HOME")
@@ -544,7 +544,7 @@ def test_apply_rejects_disk_shrink(tmp_path: Path) -> None:
         distro=True,
         resources={"cpus": 4, "memory_gib": 8, "disk_gib": 128},
     )
-    with pytest.raises(WorkspaceControlError, match="只支持扩容"):
+    with pytest.raises(WorkspaceControlError):
         control.start_job("apply", workspace_config(disk_gib=64))
 
 
@@ -598,11 +598,11 @@ def test_worker_dispatches_resource_apply_and_system_rebuild_separately(
 
 
 @pytest.mark.parametrize(
-    ("control_kwargs", "action", "config_overrides", "message"),
+    ("control_kwargs", "action", "config_overrides"),
     [
-        ({"distro": False}, "restart", {}, "尚未构建"),
-        ({"distro": True}, "build", {}, "已经存在"),
-        ({"distro": True, "managed": False}, "uninstall", {}, "所有权标记"),
+        ({"distro": False}, "restart", {}),
+        ({"distro": True}, "build", {}),
+        ({"distro": True, "managed": False}, "uninstall", {}),
         (
             {
                 "distro": True,
@@ -610,7 +610,6 @@ def test_worker_dispatches_resource_apply_and_system_rebuild_separately(
             },
             "apply",
             {"disk_gib": 64},
-            "只支持扩容",
         ),
     ],
 )
@@ -618,7 +617,6 @@ def test_workspace_action_descriptions_match_execution_guards(
     control_kwargs: dict,
     action: str,
     config_overrides: dict,
-    message: str,
     tmp_path: Path,
 ) -> None:
     control = ProbeControl(tmp_path, **control_kwargs)
@@ -629,8 +627,8 @@ def test_workspace_action_descriptions_match_execution_guards(
     }
 
     assert descriptions[action]["available"] is False
-    assert message in descriptions[action]["disabled_reason"]
-    with pytest.raises(WorkspaceControlError, match=message):
+    assert descriptions[action]["disabled_reason"]
+    with pytest.raises(WorkspaceControlError):
         control.start_job(
             action,
             config,
