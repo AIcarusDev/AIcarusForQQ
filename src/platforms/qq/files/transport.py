@@ -8,7 +8,7 @@ import logging
 import socket
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import SplitResult, urljoin, urlsplit
 
 import httpx
 
@@ -20,6 +20,10 @@ _HTTP_DOWNLOADS = asyncio.Semaphore(4)
 _MAX_REDIRECTS = 5
 _REFRESHABLE_STATUSES = {403, 404}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+# Mihomo/Clash fake-IP DNS uses the RFC 2544 benchmarking block.
+_IPV4_BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+_QQ_FTN_HOST_SUFFIX = ".ftn.qq.com"
+_QQ_FTN_DOWNLOAD_PATH_PREFIX = "/ftn_handler/"
 
 
 def adapter_for_download(client: Any) -> str:
@@ -118,6 +122,23 @@ def _is_public_address(value: str) -> bool:
         return False
 
 
+def _is_ipv4_benchmark_address(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return isinstance(address, ipaddress.IPv4Address) and address in _IPV4_BENCHMARK_NETWORK
+
+
+def _is_trusted_qq_ftn_download(parsed: SplitResult, hostname: str, port: int | None) -> bool:
+    return (
+        parsed.scheme == "https"
+        and port in {None, 443}
+        and (hostname == "ftn.qq.com" or hostname.endswith(_QQ_FTN_HOST_SUFFIX))
+        and parsed.path.startswith(_QQ_FTN_DOWNLOAD_PATH_PREFIX)
+    )
+
+
 async def _validate_public_http_url(url: str) -> None:
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
@@ -126,6 +147,14 @@ async def _validate_public_http_url(url: str) -> None:
             "QQ 文件下载地址无效",
             retryable=True,
         )
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise QQFileStreamError(
+            "source_unavailable",
+            "QQ 文件下载地址无效",
+            retryable=True,
+        ) from exc
     hostname = parsed.hostname.rstrip(".").lower()
     if hostname == "localhost" or hostname.endswith(".localhost"):
         raise QQFileStreamError(
@@ -144,7 +173,7 @@ async def _validate_public_http_url(url: str) -> None:
             infos = await asyncio.to_thread(
                 socket.getaddrinfo,
                 hostname,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
+                port or (443 if parsed.scheme == "https" else 80),
                 type=socket.SOCK_STREAM,
             )
         except OSError as exc:
@@ -154,7 +183,12 @@ async def _validate_public_http_url(url: str) -> None:
                 retryable=True,
             ) from exc
         addresses = {str(item[4][0]).split("%", 1)[0] for item in infos if item[4]}
-    if not addresses or any(not _is_public_address(address) for address in addresses):
+    allow_proxy_fake_ip = _is_trusted_qq_ftn_download(parsed, hostname, port)
+    if not addresses or any(
+        not _is_public_address(address)
+        and not (allow_proxy_fake_ip and _is_ipv4_benchmark_address(address))
+        for address in addresses
+    ):
         raise QQFileStreamError(
             "source_unavailable",
             "QQ 文件下载地址不安全",

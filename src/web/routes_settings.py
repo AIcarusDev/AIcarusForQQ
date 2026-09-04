@@ -323,6 +323,19 @@ def _section_enabled(cfg_part: object, default: bool = True) -> bool:
     return bool(cfg_part.get("enabled", default))
 
 
+def _deep_merge_settings_mapping(current: object, incoming: dict) -> dict:
+    """Merge a partial settings object without dropping unsubmitted nested keys."""
+
+    merged = deepcopy(current) if isinstance(current, dict) else {}
+    for key, value in incoming.items():
+        previous = merged.get(key)
+        if isinstance(previous, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_settings_mapping(previous, value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
 def _get_settings_api_key_names(cfg: dict) -> tuple[str, ...]:
     names = set(get_configured_api_key_names(cfg))
     names.update(SETTINGS_AUXILIARY_API_KEY_NAMES)
@@ -751,7 +764,25 @@ async def settings_save():
         new_platforms = dict(new_cfg.get("platforms", {}))
         for platform_name, platform_cfg in data["platforms"].items():
             if isinstance(platform_cfg, dict):
-                new_platforms[str(platform_name)] = platform_cfg
+                platform_key = str(platform_name)
+                if platform_key == "qq":
+                    current_qq = new_platforms.get(platform_key)
+                    merged_qq = dict(current_qq) if isinstance(current_qq, dict) else {}
+                    merged_qq.update(deepcopy(platform_cfg))
+                    incoming_adapter = platform_cfg.get("adapter")
+                    if isinstance(incoming_adapter, dict):
+                        current_adapter = (
+                            current_qq.get("adapter")
+                            if isinstance(current_qq, dict)
+                            else None
+                        )
+                        merged_qq["adapter"] = _deep_merge_settings_mapping(
+                            current_adapter,
+                            incoming_adapter,
+                        )
+                    new_platforms[platform_key] = merged_qq
+                else:
+                    new_platforms[platform_key] = deepcopy(platform_cfg)
         new_cfg["platforms"] = new_platforms
     if "tools" in data and isinstance(data["tools"], dict):
         tools_data = data["tools"]
