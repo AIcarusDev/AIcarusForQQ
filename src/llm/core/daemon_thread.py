@@ -6,19 +6,23 @@ import asyncio
 import concurrent.futures
 import threading
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar
+from typing import Any, TypeVar
 
-P = ParamSpec("P")
 T = TypeVar("T")
 
 
 def call_in_daemon_thread(
-    fn: Callable[P, T],
-    *args: P.args,
+    fn: Callable[..., T],
+    *args: Any,
     thread_name: str = "daemon-worker",
-    **kwargs: P.kwargs,
+    **kwargs: Any,
 ) -> concurrent.futures.Future[T]:
-    """Run a blocking function in a daemon thread and expose a Future."""
+    """Run a blocking function in a daemon thread and expose a Future.
+
+    ``ParamSpec`` cannot describe an extra keyword-only argument between its
+    forwarded positional and keyword arguments. Keep this boundary dynamic so
+    ``thread_name`` remains keyword-only without changing runtime binding.
+    """
     future: concurrent.futures.Future[T] = concurrent.futures.Future()
 
     def _worker() -> None:
@@ -36,10 +40,10 @@ def call_in_daemon_thread(
 
 
 async def run_in_daemon_thread(
-    fn: Callable[P, T],
-    *args: P.args,
+    fn: Callable[..., T],
+    *args: Any,
     thread_name: str = "daemon-worker",
-    **kwargs: P.kwargs,
+    **kwargs: Any,
 ) -> T:
     """Await blocking work without using asyncio's non-daemon default executor."""
     return await asyncio.wrap_future(
