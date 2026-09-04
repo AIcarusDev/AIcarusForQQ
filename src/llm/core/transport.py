@@ -18,7 +18,7 @@ import httpx
 from openai import OpenAI
 
 from .error_policy import is_transient_provider_failure
-from .profiles import resolve_model_provider
+from .profiles import resolve_model_provider, resolve_model_thinking_control
 
 logger = logging.getLogger("AICQ.llm.transport")
 
@@ -67,12 +67,14 @@ def normalize_generation_for_provider(
             enable_thinking = thinking_type == "enabled"
 
     if thinking_control == "enable_thinking":
+        gen.pop("reasoning_effort", None)
         extra_body.pop("thinking", None)
         if "enable_thinking" in gen:
             extra_body["enable_thinking"] = bool(gen["enable_thinking"])
         elif "enable_thinking" not in extra_body:
             extra_body["enable_thinking"] = True
     elif thinking_control == "thinking":
+        gen.pop("reasoning_effort", None)
         extra_body.pop("enable_thinking", None)
         extra_body["thinking"] = {
             "type": "enabled" if enable_thinking is not False else "disabled"
@@ -80,12 +82,17 @@ def normalize_generation_for_provider(
     else:
         extra_body.pop("enable_thinking", None)
         extra_body.pop("thinking", None)
+        if thinking_control not in {"reasoning_effort", "reasoning_effort_none"}:
+            gen.pop("reasoning_effort", None)
 
     if (
-        thinking_control == "reasoning_effort"
+        thinking_control in {"reasoning_effort", "reasoning_effort_none"}
         and "reasoning_effort" not in gen
         and enable_thinking is False
-        and _gemini_reasoning_none_supported(model)
+        and (
+            thinking_control == "reasoning_effort_none"
+            or _gemini_reasoning_none_supported(model)
+        )
     ):
         gen["reasoning_effort"] = "none"
 
@@ -514,14 +521,28 @@ class OpenAICompatClient:
         self.provider = provider_name
         self.vision_enabled = bool(cfg.get("vision", True))
         self._thinking_control: str = provider_cfg.get("thinking_control", "enable_thinking")
+        self._model_thinking_controls: dict[str, str] = dict(
+            provider_cfg.get("model_thinking_controls") or {}
+        )
         self.assistant_prefill_supported: bool = bool(
             provider_cfg.get("supports_assistant_prefill", True)
         )
 
     def normalize_generation(self, gen: dict) -> dict:
+        thinking_control = resolve_model_thinking_control(
+            {
+                "thinking_control": getattr(
+                    self, "_thinking_control", "enable_thinking"
+                ),
+                "model_thinking_controls": getattr(
+                    self, "_model_thinking_controls", {}
+                ),
+            },
+            getattr(self, "model", ""),
+        )
         return normalize_generation_for_provider(
             gen,
-            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            thinking_control=thinking_control,
             model=getattr(self, "model", ""),
         )
 

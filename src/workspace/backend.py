@@ -16,6 +16,26 @@ from .errors import WorkspaceError, WorkspaceErrorCode
 logger = logging.getLogger("AICQ.workspace")
 
 
+_BROKER_STARTUP_RETRY_DELAYS_SECONDS = (0.5, 1.0)
+
+
+def _broker_socket_is_starting(returncode: int | None, diagnostic: str) -> bool:
+    """Return whether the bridge failed before an RPC could reach the broker."""
+
+    if returncode != 69:
+        return False
+    lowered = diagnostic.casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "[errno 2]",
+            "[errno 111]",
+            "no such file or directory",
+            "connection refused",
+        )
+    )
+
+
 _EXPORT_SCRIPT = r"""
 import json
 import os
@@ -818,27 +838,14 @@ class WslWorkspaceBackend:
             )
         return size
 
-    async def request(
+    async def _bridge_round_trip(
         self,
-        method: str,
-        params: Mapping[str, Any],
+        payload: bytes,
         *,
-        timeout: float | None = None,
-    ) -> Mapping[str, Any]:
-        if self._closed:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
-
-        request_id = uuid.uuid4().hex
-        envelope = {
-            "version": PROTOCOL_VERSION,
-            "request_id": request_id,
-            "method": str(method),
-            "params": dict(params),
-        }
-        payload = (json.dumps(envelope, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
-            "utf-8"
-        )
-
+        method: str,
+        timeout: float | None,
+        request_id: str,
+    ) -> tuple[int, bytes, bytes]:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *self._argv(),
@@ -868,10 +875,12 @@ class WslWorkspaceBackend:
         transport_timeout = None
         if timeout is not None:
             transport_timeout = max(0.1, float(timeout)) + self.config.bridge_grace_seconds
-
         try:
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(payload), transport_timeout)
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(payload),
+                    transport_timeout,
+                )
             except asyncio.TimeoutError as exc:
                 proc.kill()
                 await proc.wait()
@@ -889,8 +898,51 @@ class WslWorkspaceBackend:
             async with self._state_lock:
                 self._processes.discard(proc)
 
-        if proc.returncode != 0:
+        return int(proc.returncode or 0), stdout, stderr
+
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> Mapping[str, Any]:
+        if self._closed:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
+
+        request_id = uuid.uuid4().hex
+        envelope = {
+            "version": PROTOCOL_VERSION,
+            "request_id": request_id,
+            "method": str(method),
+            "params": dict(params),
+        }
+        payload = (json.dumps(envelope, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+
+        retry_delays = iter(_BROKER_STARTUP_RETRY_DELAYS_SECONDS)
+        while True:
+            returncode, stdout, stderr = await self._bridge_round_trip(
+                payload,
+                method=method,
+                timeout=timeout,
+                request_id=request_id,
+            )
+            if returncode == 0:
+                break
+
             diagnostic = stderr.decode("utf-8", errors="replace").strip()[-4096:]
+            delay = next(retry_delays, None)
+            if delay is not None and _broker_socket_is_starting(returncode, diagnostic):
+                logger.info(
+                    "[computer] broker socket is not ready; retrying %s in %.1fs",
+                    method,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
             lowered = diagnostic.casefold()
             if any(
                 marker in lowered
@@ -908,11 +960,11 @@ class WslWorkspaceBackend:
                 message = "Agent 电脑系统与当前程序不兼容，请前往 Web 配置中的“Agent 电脑”页面更新系统。"
             else:
                 code = WorkspaceErrorCode.BROKER_UNAVAILABLE
-                message = diagnostic or f"WSL bridge exited with code {proc.returncode}"
+                message = diagnostic or f"WSL bridge exited with code {returncode}"
             raise WorkspaceError(
                 code,
                 message,
-                details={"returncode": proc.returncode},
+                details={"returncode": returncode},
                 request_id=request_id,
             )
 

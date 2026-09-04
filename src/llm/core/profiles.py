@@ -1,5 +1,6 @@
 """profiles.py — OpenAI 兼容模型供应商定义与解析。"""
 
+from fnmatch import fnmatchcase
 import re
 from urllib.parse import urlparse
 
@@ -8,7 +9,21 @@ _VALID_THINKING_CONTROLS = {
     "enable_thinking",
     "thinking",
     "reasoning_effort",
+    "reasoning_effort_none",
     "none",
+}
+
+# OpenCode Go aggregates heterogeneous upstreams behind one provider URL. These
+# controls were verified against the live API on 2026-09-02. Keep unknown or
+# explicitly forced-thinking models on the provider fallback (``none``).
+_OPENCODE_GO_MODEL_THINKING_CONTROLS = {
+    "kimi-k2.6": "thinking",
+    "kimi-k3": "reasoning_effort_none",
+    "deepseek-v4-*": "thinking",
+    "qwen3.*": "enable_thinking",
+    "minimax-m3": "thinking",
+    "mimo-v2.5*": "thinking",
+    "glm-5.2": "reasoning_effort_none",
 }
 
 
@@ -44,9 +59,55 @@ def _looks_like_deepseek_provider(provider: dict) -> bool:
     return (parsed.hostname or "").lower() == "api.deepseek.com"
 
 
+def _looks_like_opencode_console_go_provider(provider: dict) -> bool:
+    """Return whether this is OpenCode's strict Console Go compatibility API."""
+    base_url = _clean_text(provider.get("base_url")).lower()
+    if not base_url:
+        return False
+    parsed = urlparse(base_url if "://" in base_url else f"//{base_url}")
+    path = (parsed.path or "").rstrip("/")
+    return (
+        (parsed.hostname or "").lower() == "opencode.ai"
+        and (path == "/zen/go" or path.startswith("/zen/go/"))
+    )
+
+
 def _normalize_thinking_control(value) -> str | None:
     normalized = _clean_text(value).lower()
     return normalized if normalized in _VALID_THINKING_CONTROLS else None
+
+
+def _normalize_model_thinking_controls(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    controls: dict[str, str] = {}
+    for raw_pattern, raw_control in value.items():
+        pattern = _clean_text(raw_pattern).lower()
+        control = _normalize_thinking_control(raw_control)
+        if pattern and control is not None:
+            controls[pattern] = control
+    return controls
+
+
+def resolve_model_thinking_control(provider: dict, model: str) -> str:
+    """Resolve one model's wire-level thinking protocol for a provider."""
+    fallback = _normalize_thinking_control(provider.get("thinking_control")) or "none"
+    controls = _normalize_model_thinking_controls(
+        provider.get("model_thinking_controls")
+    )
+    normalized_model = _clean_text(model).lower()
+    if not normalized_model:
+        return fallback
+
+    exact = controls.get(normalized_model)
+    if exact is not None:
+        return exact
+    for pattern, control in controls.items():
+        if any(token in pattern for token in "*?[") and fnmatchcase(
+            normalized_model, pattern
+        ):
+            return control
+    return fallback
 
 
 def get_selected_provider_name(cfg: dict) -> str:
@@ -91,6 +152,7 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
     merged["supports_response_format"] = bool(merged.get("supports_response_format", True))
     looks_like_gemini = _looks_like_gemini_provider(name, merged)
     looks_like_deepseek = _looks_like_deepseek_provider(merged)
+    looks_like_opencode_console_go = _looks_like_opencode_console_go_provider(merged)
     if looks_like_gemini:
         thinking_control = "reasoning_effort"
     elif (
@@ -100,6 +162,10 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
         # DeepSeek V4 uses ``thinking.type``. Override the legacy
         # ``enable_thinking`` value that older settings saves may contain.
         thinking_control = "thinking"
+    elif looks_like_opencode_console_go:
+        # Console Go rejects this non-standard field for its routed models.
+        # Enforce the endpoint capability even if an older UI save says otherwise.
+        thinking_control = "none"
     else:
         thinking_control = _normalize_thinking_control(merged.get("thinking_control"))
         if thinking_control is None:
@@ -110,6 +176,18 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
             )
     merged["thinking_control"] = thinking_control
     merged["supports_enable_thinking"] = thinking_control == "enable_thinking"
+    model_thinking_controls = (
+        dict(_OPENCODE_GO_MODEL_THINKING_CONTROLS)
+        if looks_like_opencode_console_go
+        else {}
+    )
+    model_thinking_controls.update(
+        _normalize_model_thinking_controls(merged.get("model_thinking_controls"))
+    )
+    if model_thinking_controls:
+        merged["model_thinking_controls"] = model_thinking_controls
+    else:
+        merged.pop("model_thinking_controls", None)
     merged["supports_assistant_prefill"] = (
         False
         if looks_like_gemini

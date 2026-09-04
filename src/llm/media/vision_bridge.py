@@ -31,7 +31,7 @@ from .image_cache import (
     update_description,
 )
 from .outbound_image import make_data_url
-from llm.core.profiles import resolve_model_provider
+from llm.core.profiles import resolve_model_provider, resolve_model_thinking_control
 from llm.core.transport import (
     add_extra_generation_kwargs,
     create_streamed_chat_completion,
@@ -92,7 +92,10 @@ class VisionBridge:
             _provider_name, resolved, _providers = resolve_model_provider(provider_cfg)
             self._base_url = resolved.get("base_url", "")
             self._api_key_env = resolved.get("api_key_env", "")
-            self._thinking_control = resolved.get("thinking_control", "enable_thinking")
+            self._thinking_control = resolve_model_thinking_control(
+                resolved,
+                self._model,
+            )
         self._describe_prompt: str = bridge_cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
         self._sim_threshold: int = _coerce_int(bridge_cfg.get("similarity_threshold"), 10)
         self._generation: dict = {

@@ -16,8 +16,17 @@ from config_loader import (
     save_config,
 )
 from llm.compression.config import normalize_generation_config, normalize_world_multimodal_image_limit
-from llm.core.profiles import get_configured_api_key_names, sanitize_model_providers
-from llm.core.transport import add_enabled_sampling_kwargs, normalize_generation_for_provider
+from llm.core.profiles import (
+    get_configured_api_key_names,
+    resolve_model_thinking_control,
+    sanitize_model_providers,
+)
+from llm.core.transport import (
+    OpenAICompatClient,
+    add_enabled_sampling_kwargs,
+    add_extra_generation_kwargs,
+    normalize_generation_for_provider,
+)
 from platforms.qq.adapter.access_control import is_session_allowed_by_config, whitelist_rejection_reason
 from platforms.qq.adapter.config import normalize_qq_platform_config, runtime_adapter_config
 
@@ -219,6 +228,99 @@ def test_deepseek_thinking_detection_is_endpoint_scoped_and_honors_none():
     assert providers["hosted_deepseek"]["thinking_control"] == "enable_thinking"
 
 
+def test_opencode_console_go_resolves_thinking_control_per_model():
+    providers = sanitize_model_providers(
+        {
+            "console_go": {
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "thinking_control": "enable_thinking",
+                "supports_enable_thinking": True,
+            },
+            "other_opencode": {
+                "base_url": "https://opencode.ai/other/v1",
+                "thinking_control": "enable_thinking",
+            },
+        }
+    )
+
+    assert providers["console_go"]["thinking_control"] == "none"
+    assert providers["console_go"]["supports_enable_thinking"] is False
+    assert resolve_model_thinking_control(
+        providers["console_go"], "kimi-k2.7-code"
+    ) == "none"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "kimi-k2.6"
+    ) == "thinking"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "kimi-k3"
+    ) == "reasoning_effort_none"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "deepseek-v4-pro"
+    ) == "thinking"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "qwen3.8-flash"
+    ) == "enable_thinking"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "minimax-m3"
+    ) == "thinking"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "minimax-m2.7"
+    ) == "none"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "mimo-v2.5-pro"
+    ) == "thinking"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "glm-5.2"
+    ) == "reasoning_effort_none"
+    assert resolve_model_thinking_control(
+        providers["console_go"], "glm-5.3-flash"
+    ) == "none"
+    assert providers["other_opencode"]["thinking_control"] == "enable_thinking"
+
+
+def test_provider_model_thinking_control_override_wins_over_builtin_pattern():
+    provider = sanitize_model_providers(
+        {
+            "console_go": {
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "model_thinking_controls": {
+                    "qwen3.8-flash": "none",
+                },
+            }
+        }
+    )["console_go"]
+
+    assert resolve_model_thinking_control(provider, "qwen3.8-flash") == "none"
+    assert resolve_model_thinking_control(provider, "qwen3.7-plus") == "enable_thinking"
+
+
+def test_opencode_client_emits_each_models_supported_thinking_protocol():
+    provider = sanitize_model_providers(
+        {"console_go": {"base_url": "https://opencode.ai/zen/go/v1"}}
+    )["console_go"]
+    client = object.__new__(OpenAICompatClient)
+    client._thinking_control = provider["thinking_control"]
+    client._model_thinking_controls = provider["model_thinking_controls"]
+
+    expected_by_model = {
+        "kimi-k2.7-code": {},
+        "glm-5.3-flash": {},
+        "qwen3.8-flash": {"extra_body": {"enable_thinking": False}},
+        "deepseek-v4-flash": {
+            "extra_body": {"thinking": {"type": "disabled"}}
+        },
+        "kimi-k3": {"reasoning_effort": "none"},
+    }
+    for model, expected in expected_by_model.items():
+        client.model = model
+        generation = client.normalize_generation({"enable_thinking": False})
+        request_kwargs = {}
+        add_extra_generation_kwargs(request_kwargs, generation)
+        if extra_body := generation.get("extra_body"):
+            request_kwargs["extra_body"] = extra_body
+        assert request_kwargs == expected
+
+
 def test_memory_processing_adapter_uses_explicit_model_binding():
     from llm.core.provider import build_memory_processing_adapter_cfg
 
@@ -296,6 +398,30 @@ def test_generation_transport_maps_thinking_flags_by_provider():
     )
 
     assert gen["extra_body"] == {"enable_thinking": False}
+
+    gen = normalize_generation_for_provider(
+        {
+            "enable_thinking": False,
+            "extra_body": {"thinking": {"type": "enabled"}},
+        },
+        thinking_control="reasoning_effort_none",
+        model="kimi-k3",
+    )
+
+    assert gen["reasoning_effort"] == "none"
+    assert "extra_body" not in gen
+
+    gen = normalize_generation_for_provider(
+        {
+            "enable_thinking": False,
+            "reasoning_effort": "none",
+        },
+        thinking_control="none",
+        model="kimi-k2.7-code",
+    )
+
+    assert "reasoning_effort" not in gen
+    assert "extra_body" not in gen
 
 
 def test_advanced_sampling_only_sends_enabled_parameters():

@@ -628,7 +628,7 @@ if (-not $SkipVerification) {
 @{
     distro_name = $DistroName
     protocol_version = 5
-    broker_version = '0.6.3'
+    broker_version = '0.6.4'
     install_location = [IO.Path]::GetFullPath($InstallLocation)
     resources = @{ cpus = $Cpus; memory_gib = $MemoryGiB; disk_gib = $DiskGiB }
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManagedMarker -Encoding utf8
