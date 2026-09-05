@@ -7,20 +7,24 @@ Handler 运行在 asyncio.to_thread 派生的线程中，
 import asyncio
 import base64
 import copy
+import hashlib
 import logging
 import re
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 from pydantic import Field, RootModel
 
+from llm.media.image_resolver import ImagePayloadError, inspect_image_payload
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.prompt_signatures import build_prompt_signature
 from platforms.qq.adapter.conversation import format_adapter_error
+from workspace.errors import WorkspaceError
 
 from .prompt import get_description
 
@@ -56,6 +60,9 @@ _MESSAGE_SHAPE_SINGLE = "single"
 _SINGLE_SHAPE_ALIASES = {"single", "single_message", "message", "segments"}
 _ARRAY_SHAPE_ALIASES = {"array", "messages", "multi", "multi_message", "batch"}
 _PENDING_RECHECK_DELAYS = (0.2, 2.0, 5.0, 10.0)
+_MAX_LOCAL_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_LOCAL_IMAGE_PIXELS = 100_000_000
+_MAX_LOCAL_IMAGES_PER_CALL = 4
 
 
 class TextSegment(ToolArgsModel):
@@ -70,15 +77,23 @@ class AtSegment(ToolArgsModel):
 
 class ImageSegment(ToolArgsModel):
     command: Literal["image"]
+    path: str = Field(
+        default="",
+        pattern=r"^(?:|/home/agent/[^\r\n]+)$",
+        description=(
+            "Agent Linux 中已有图片的绝对路径，必须位于 /home/agent 下。"
+            "不要和 image_ref 或 resource_ref 同时填写。"
+        ),
+    )
     image_ref: str = Field(
         default="",
-        description="已固化图片的 image_ref。不要和 resource_ref 同时填写。",
+        description="已固化图片的 image_ref。不要和 path 或 resource_ref 同时填写。",
     )
     resource_ref: str = Field(
         default="",
         description=(
             "<browser><images> 中原图候选的 resource_ref。系统会在发送前按需固化原图；"
-            "不要把 source_url 或视口截图 image_ref 填到这里。"
+            "不要把 source_url 或视口截图 image_ref 填到这里，也不要和 path 同时填写。"
         ),
     )
 
@@ -311,7 +326,7 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
             text_parts.append("[动画表情]")
             content_segments.append({"type": "sticker", "sticker_id": sticker_id})
         elif cmd == "image":
-            image_ref = seg.get("image_ref", "")
+            image_ref = seg.get("image_ref") or seg.get("_local_image_ref", "")
             text_parts.append("[图片]")
             content_segments.append({"type": "image", "image_ref": image_ref})
     text = "".join(text_parts)
@@ -614,14 +629,75 @@ def _prepare_sendable_segments(
             has_sendable = True
         elif cmd == "image":
             image_ref = str(seg.get("image_ref", "") or "")
-            if not image_ref:
-                return None, "image segment 缺少 image_ref 或尚未完成 resource_ref 固化。", warnings
+            local_image_base64 = str(seg.get("_local_image_base64", "") or "")
+            if not image_ref and not local_image_base64:
+                return None, "image segment 缺少可发送的图片来源。", warnings
             has_sendable = True
         prepared_segments.append(prepared_seg)
 
     if not has_sendable:
         return None, "消息没有可发送的内容，未发送。", warnings
     return prepared_segments, None, warnings
+
+
+async def _materialize_local_image_paths(
+    messages: list[dict[str, Any]],
+    workspace_service: Any,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Validate Agent-local image paths and embed their bytes for the adapter."""
+
+    prepared = copy.deepcopy(messages)
+    local_segments: list[tuple[dict[str, Any], str]] = []
+    for message in prepared:
+        if not isinstance(message, dict):
+            continue
+        for segment in message.get("segments") or []:
+            if not isinstance(segment, dict) or segment.get("command") != "image":
+                continue
+            sources = {
+                "path": str(segment.get("path") or "").strip(),
+                "image_ref": str(segment.get("image_ref") or "").strip(),
+                "resource_ref": str(segment.get("resource_ref") or "").strip(),
+            }
+            selected = [(name, value) for name, value in sources.items() if value]
+            if len(selected) != 1:
+                return None, "image segment 的 path、image_ref、resource_ref 必须且只能提供一个。"
+            if selected[0][0] == "path":
+                local_segments.append((segment, selected[0][1]))
+
+    if len(local_segments) > _MAX_LOCAL_IMAGES_PER_CALL:
+        return None, f"单次发送最多选择 {_MAX_LOCAL_IMAGES_PER_CALL} 张 Agent Linux 本地图片。"
+    if local_segments and workspace_service is None:
+        return None, "Agent 电脑服务不可用，无法读取本地图片。"
+
+    try:
+        for segment, path in local_segments:
+            async with workspace_service.stage_host_file(path) as staged:
+                if staged.size > _MAX_LOCAL_IMAGE_BYTES:
+                    return None, "本地图片超过 20 MiB 大小限制。"
+                raw = await asyncio.to_thread(Path(staged.host_path).read_bytes)
+                image_info = await asyncio.to_thread(
+                    inspect_image_payload,
+                    raw,
+                    max_bytes=_MAX_LOCAL_IMAGE_BYTES,
+                    max_pixels=_MAX_LOCAL_IMAGE_PIXELS,
+                )
+                digest = hashlib.sha256(raw).hexdigest()
+                segment.pop("path", None)
+                segment["_local_image_ref"] = f"img_{digest[:32]}"
+                segment["_local_image_base64"] = base64.b64encode(raw).decode("ascii")
+                segment["_local_image_mime"] = image_info.mime_type
+    except WorkspaceError as exc:
+        logger.info("[send_message] Agent Linux 图片暂存失败 code=%s", exc.code.value)
+        return None, "无法读取指定的 Agent Linux 图片。"
+    except ImagePayloadError as exc:
+        logger.info("[send_message] Agent Linux 图片校验失败 status=%s", exc.code)
+        return None, f"Agent Linux 图片内容无效（{exc.code}）。"
+    except OSError:
+        logger.warning("[send_message] Agent Linux 图片读取失败", exc_info=True)
+        return None, "无法读取指定的 Agent Linux 图片。"
+
+    return prepared, None
 
 
 def _materialize_selected_browser_resources(
@@ -886,6 +962,42 @@ def make_handler(
             }
 
         if not confirmed_batch_id:
+            prepared_messages, local_image_error = run_coroutine_sync(
+                _materialize_local_image_paths(
+                    send_messages,
+                    getattr(app_state, "workspace_service", None),
+                ),
+                loop,
+            )
+            if local_image_error or prepared_messages is None:
+                return {
+                    "to": target,
+                    "error": local_image_error or "Agent Linux 图片读取失败。",
+                    "sent_count": 0,
+                    "failed_count": len(send_messages),
+                    "total_count": len(send_messages),
+                    "interrupted": False,
+                }
+            send_messages = prepared_messages
+            if (
+                any(
+                    isinstance(segment, dict) and segment.get("_local_image_base64")
+                    for message in send_messages
+                    if isinstance(message, dict)
+                    for segment in (message.get("segments") or [])
+                )
+                and round_inbound_revision is not None
+                and int(getattr(session, "inbound_revision", 0) or 0)
+                != int(round_inbound_revision)
+            ):
+                return {
+                    "to": target,
+                    "error": "读取图片期间收到新消息，本次图片发送意图已失效，未发送。",
+                    "sent_count": 0,
+                    "failed_count": len(send_messages),
+                    "total_count": len(send_messages),
+                    "interrupted": True,
+                }
             confirmation_bypass_error = _unconfirmed_high_risk_image_error(
                 send_messages,
                 session,

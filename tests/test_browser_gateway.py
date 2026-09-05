@@ -220,6 +220,26 @@ def test_gateway_routes_localhost_to_workspace_without_touching_windows_port() -
     assert captured and captured[0].startswith(b"GET /probe HTTP/1.1")
 
 
+def test_unavailable_workspace_localhost_returns_renderable_error_page() -> None:
+    class TestGateway(BrowserGateway):
+        def _workspace_tunnel(self, _target):
+            raise BrowserNetworkError("Agent localhost connection failed: <unavailable>")
+
+    gateway = TestGateway(workspace_enabled=lambda: True)
+    try:
+        response = _proxy_request(
+            gateway.proxy_url,
+            b"GET http://localhost:8765/preview.html HTTP/1.1\r\nHost: localhost:8765\r\n\r\n",
+        )
+    finally:
+        gateway.close()
+
+    assert response.startswith(b"HTTP/1.1 502 Bad Gateway")
+    assert b"Content-Type: text/html; charset=utf-8" in response
+    assert b"<title>Agent localhost unavailable</title>" in response
+    assert b"&lt;unavailable&gt;" in response
+
+
 def test_disabled_workspace_fails_before_starting_wsl(monkeypatch) -> None:
     called = False
 

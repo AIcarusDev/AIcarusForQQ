@@ -566,6 +566,13 @@ def llm_segments_to_qq_adapter(
                         "data": _sticker_image_data(f"base64://{seg['_fallback_base64']}", adapter),
                     })
         elif cmd == "image":
+            local_image_base64 = str(seg.get("_local_image_base64", "") or "")
+            if local_image_base64:
+                qq_adapter_segs.append({
+                    "type": "image",
+                    "data": {"file": f"base64://{local_image_base64}"},
+                })
+                continue
             image_ref = seg.get("image_ref", "")
             if not image_ref:
                 raise ImageLoadError("image_ref", "image segment missing image_ref")
