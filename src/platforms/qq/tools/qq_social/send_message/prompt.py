@@ -12,21 +12,9 @@ ARRAY_DESCRIPTION = """
 """
 
 
-SINGLE_DESCRIPTION = """
-向当前打开的会话窗口发送一条消息。
-内部的 "segments" 字段是内容片段列表，用于将文字、@某人、表情包、图片等不同类型片段拼合为单条消息发送。
-图片 segment 可以直接填写 image_ref；Linux 中已有图片的绝对路径(须位于 /home/agent 下)；或 resource_ref。三种方式选一个。
-如需发送多条消息，按顺序多次调用该工具即可。
-
-注意：
-  - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果消息包含 at，会发送失败。
-  - 发送 Agent Linux 中已有图片时，image segment 直接填写 /home/agent 下的 path。
-  - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 enter_qq_session 进入指定会话。
-"""
-
-
 DESCRIPTION = ARRAY_DESCRIPTION
 
 
-def get_description(message_shape: str) -> str:
-    return SINGLE_DESCRIPTION if message_shape == "single" else ARRAY_DESCRIPTION
+def get_description(message_shape: str = "array") -> str:
+    return ARRAY_DESCRIPTION
+

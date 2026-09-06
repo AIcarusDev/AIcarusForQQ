@@ -8,7 +8,7 @@
 - qq_stickers.list_stickers()：返回主 image_ref 和印象；视觉模型还会收到标注完整 ref 的网格。
 - qq_stickers.update_sticker(image_ref, description)：修改印象。
 - qq_stickers.delete_sticker(image_ref)：删除收藏及其全部别名。
-- send_message 的表情片段为 {"command":"sticker","image_ref":"a1b2c3d4e5f6"}，单条和批量消息形状均支持。
+- send_message 的表情片段为 {"command":"sticker","image_ref":"a1b2c3d4e5f6"}。
 
 直接发送可见聊天图片不要求先收藏。浏览器原图继续使用原来的 image/resource_ref 固化和确认流程。
 

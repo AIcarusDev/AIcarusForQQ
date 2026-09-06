@@ -357,25 +357,10 @@ def _default_web_search_cfg(cfg: dict) -> dict:
     return web_search
 
 
-def _normalize_send_message_shape(value: object) -> str | None:
-    shape = str(value or "").strip().lower().replace("-", "_")
-    if shape in {"array", "messages", "multi", "multi_message", "batch"}:
-        return "array"
-    if shape in {"single", "single_message", "message", "segments"}:
-        return "single"
-    return None
-
-
 def _default_tools_cfg(cfg: dict) -> dict:
     """Return tool config with UI-visible defaults without mutating saved config."""
     raw = cfg.get("tools", {}) if isinstance(cfg, dict) else {}
-    tools = deepcopy(raw) if isinstance(raw, dict) else {}
-    send_raw = tools.get("send_message", {})
-    send_message = deepcopy(send_raw) if isinstance(send_raw, dict) else {}
-    shape = _normalize_send_message_shape(send_message.get("message_shape"))
-    send_message["message_shape"] = shape or "array"
-    tools["send_message"] = send_message
-    return tools
+    return deepcopy(raw) if isinstance(raw, dict) else {}
 
 
 def _qq_platform_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
@@ -789,19 +774,7 @@ async def settings_save():
         tools_data = data["tools"]
         current_tools = new_cfg.get("tools", {})
         new_tools = dict(current_tools) if isinstance(current_tools, dict) else {}
-        send_data = tools_data.get("send_message")
-        if isinstance(send_data, dict):
-            current_send = new_tools.get("send_message", {})
-            new_send = dict(current_send) if isinstance(current_send, dict) else {}
-            if "message_shape" in send_data:
-                shape = _normalize_send_message_shape(send_data.get("message_shape"))
-                if shape is None:
-                    return jsonify({
-                        "success": False,
-                        "error": "send_message.message_shape 只能是 array 或 single",
-                    }), 400
-                new_send["message_shape"] = shape
-            new_tools["send_message"] = new_send
+        # tools.send_message.message_shape 已废弃，保持 tools 配置平滑兼容
         new_cfg["tools"] = new_tools
     if "tts" in data and isinstance(data["tts"], dict):
         td = data["tts"]

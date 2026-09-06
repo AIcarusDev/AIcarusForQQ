@@ -182,13 +182,11 @@ def test_prepared_sticker_keeps_gif_bytes_after_collection_is_deleted(adapter, f
     assert send._extract_message_text(prepared)[1] == [{"type": "sticker", "image_ref": main}]
 
 
-@pytest.mark.parametrize("contract", [send.SEND_MESSAGE_SINGLE_CONTRACT, send.SEND_MESSAGE_ARRAY_CONTRACT])
-def test_send_schema_accepts_image_ref_and_rejects_old_or_ambiguous_fields(contract):
-    def arguments(segment):
-        item = {"segments": [segment]}
-        return {"messages": [item]} if contract is send.SEND_MESSAGE_ARRAY_CONTRACT else item
+def test_send_schema_accepts_image_ref_and_rejects_old_or_ambiguous_fields():
+    declaration = send.SEND_MESSAGE_ARRAY_CONTRACT.declaration()
 
-    declaration = contract.declaration()
+    def arguments(segment):
+        return {"messages": [{"segments": [segment]}]}
     assert validate_arguments_by_declaration(arguments({"command": "sticker", "image_ref": "a" * 12}), declaration)[0]
     for segment in (
         {"command": "sticker", "sticker_id": "000"},

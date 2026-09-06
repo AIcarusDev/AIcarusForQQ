@@ -1451,22 +1451,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
             </details>
           </div>
-          <div class="group">
-            <div class="group-title">
-              <h3>AIC Action</h3>
-              <span class="subtle">模型可见的工具参数形态</span>
-            </div>
-            <div class="field">
-              <label>send_message 参数形态</label>
-              <select id="send_message_shape">
-                <option value="array">messages 数组：一次调用可发送多条消息</option>
-                <option value="single">单条消息：一次调用只发送一条消息</option>
-              </select>
-              <span class="hint"
-                >数组形态适合不稳定并行/多次 tool call 的模型；单条形态适合能稳定连续调用 send_message 的模型。</span
-              >
-            </div>
-          </div>
+
           <div class="group duplicate-guard-group">
             <div class="group-title duplicate-guard-title">
               <h3>重复输出保护</h3>
@@ -4568,10 +4553,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "world_multimodal_image_limit",
       gen.world_multimodal_image_limit ?? 5,
     );
-    setValue(
-      "send_message_shape",
-      data.tools?.send_message?.message_shape || "array",
-    );
+
     setChecked("enable_thinking", generationThinkingEnabled(gen));
     setChecked(
       "native_reasoning_as_cognition",
@@ -5247,11 +5229,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "native_reasoning_as_cognition",
         ),
       },
-      tools: {
-        send_message: {
-          message_shape: value("send_message_shape") || "array",
-        },
-      },
+
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
       self_name: value("self_name"),
       timezone: value("timezone"),
@@ -5457,8 +5435,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "请至少添加一个模型供应商";
     if (!payload.provider) return "请选择主模型供应商";
     if (!payload.model) return "请填写主模型 ID";
-    if (!["array", "single"].includes(payload.tools?.send_message?.message_shape))
-      return "send_message 参数形态只能选择数组或单条";
+
     if (payload.vision_bridge.enabled && !payload.vision_bridge.provider)
       return "启用 Vision Bridge 时需要选择供应商";
     const qqPayload = payload.platforms?.qq || {};

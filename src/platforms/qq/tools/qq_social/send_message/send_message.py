@@ -109,22 +109,12 @@ class SendMessageItem(ToolArgsModel):
     )
 
 
-class SendMessageSingleArgs(SendMessageItem):
-    pass
-
-
 class SendMessageArrayArgs(ToolArgsModel):
     messages: list[SendMessageItem] = Field(
         min_length=1,
         description="要发送的消息列表，每个元素作为一条消息独立发送。",
     )
 
-
-SEND_MESSAGE_SINGLE_CONTRACT = ToolContract(
-    name="send_message",
-    description=get_description(_MESSAGE_SHAPE_SINGLE),
-    args_model=SendMessageSingleArgs,
-)
 
 SEND_MESSAGE_ARRAY_CONTRACT = ToolContract(
     name="send_message",
@@ -137,31 +127,11 @@ TOOL_CONTRACT = SEND_MESSAGE_ARRAY_CONTRACT
 
 def get_send_message_shape(config: dict | None = None) -> str:
     """Return the configured model-facing send_message shape."""
-    tools_cfg = (config or {}).get("tools")
-    send_cfg: Any = {}
-    if isinstance(tools_cfg, dict):
-        send_cfg = tools_cfg.get("send_message", {})
-    raw_shape: Any = None
-    if isinstance(send_cfg, dict):
-        raw_shape = (
-            send_cfg.get("message_shape")
-            or send_cfg.get("shape")
-            or send_cfg.get("mode")
-        )
-    elif isinstance(send_cfg, str):
-        raw_shape = send_cfg
-    shape = str(raw_shape or "").strip().lower().replace("-", "_")
-    if shape in _SINGLE_SHAPE_ALIASES:
-        return _MESSAGE_SHAPE_SINGLE
-    if shape in _ARRAY_SHAPE_ALIASES:
-        return _MESSAGE_SHAPE_ARRAY
     return _MESSAGE_SHAPE_ARRAY
 
 
 def get_declaration(session: Any | None = None, config: dict | None = None, **_: Any) -> dict:
-    message_shape = get_send_message_shape(config)
-    contract = SEND_MESSAGE_SINGLE_CONTRACT if message_shape == _MESSAGE_SHAPE_SINGLE else SEND_MESSAGE_ARRAY_CONTRACT
-    return contract.declaration()
+    return SEND_MESSAGE_ARRAY_CONTRACT.declaration()
 
 
 def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
@@ -170,31 +140,11 @@ def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
 
 def _repair_schema_args_for_shape(
     args: dict[str, Any],
-    message_shape: str,
+    message_shape: str = _MESSAGE_SHAPE_ARRAY,
 ) -> tuple[dict[str, Any], list[str]]:
     """修复 send_message 的 messages 容器结构性字段错误。"""
     repair_notes: list[str] = []
     messages = args.get("messages")
-    root_segments = args.get("segments")
-    if (
-        message_shape == _MESSAGE_SHAPE_ARRAY
-        and not isinstance(messages, list)
-        and isinstance(root_segments, list)
-    ):
-        message: dict[str, Any] = {"segments": root_segments}
-        if "quote" in args and args.get("quote") not in (None, ""):
-            quote = args.get("quote")
-            if isinstance(quote, int) and not isinstance(quote, bool):
-                quote = str(quote)
-            message["quote"] = quote
-        repaired_args = {
-            key: value
-            for key, value in args.items()
-            if key not in {"segments", "quote"}
-        }
-        repaired_args["messages"] = [message]
-        return repaired_args, ["wrapped root single-message fields into messages[0]"]
-
     if not isinstance(messages, list):
         return args, repair_notes
 
@@ -243,10 +193,8 @@ def _repair_schema_args_for_shape(
 def make_schema_repairer(
     config: dict | None = None,
 ) -> Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]:
-    message_shape = get_send_message_shape(config)
-
     def _repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-        return _repair_schema_args_for_shape(args, message_shape)
+        return _repair_schema_args_for_shape(args, _MESSAGE_SHAPE_ARRAY)
 
     return _repair_schema_args
 

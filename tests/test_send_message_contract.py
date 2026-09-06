@@ -18,14 +18,14 @@ from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.tools.qq_social.send_message import send_message as send_mod
 
 
-def test_get_declaration_switches_between_array_and_single_shapes():
-    array_decl = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
-    single_decl = send_mod.get_declaration(config={"tools": {"send_message": {"shape": "single"}}})
+def test_get_declaration_always_returns_array_shape():
+    decl_default = send_mod.get_declaration()
+    decl_single_cfg = send_mod.get_declaration(config={"tools": {"send_message": {"shape": "single"}}})
 
-    assert array_decl["parameters"]["required"] == ["messages"]
-    assert "messages" in array_decl["parameters"]["properties"]
-    assert single_decl["parameters"]["required"] == ["segments"]
-    assert "segments" in single_decl["parameters"]["properties"]
+    assert decl_default["parameters"]["required"] == ["messages"]
+    assert "messages" in decl_default["parameters"]["properties"]
+    assert decl_single_cfg["parameters"]["required"] == ["messages"]
+    assert "messages" in decl_single_cfg["parameters"]["properties"]
 
 
 def test_image_segment_accepts_one_agent_linux_path():
@@ -175,7 +175,7 @@ def test_sanitize_semantic_args_splits_consecutive_text_segments():
     assert len(changes) == 1
 
 
-def test_array_shape_repairs_root_single_message_arguments_before_schema_validation():
+def test_array_shape_strictly_rejects_root_single_message_arguments_before_schema_validation():
     declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
     raw_arguments = json.dumps(
         {
@@ -196,16 +196,7 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
         semantic_sanitizer=send_mod.sanitize_semantic_args,
     )
 
-    assert result.ok is True
-    assert result.args == {
-        "messages": [
-            {
-                "quote": "-7549",
-                "segments": [{"command": "text", "content": "07.21元这个折扣价好可爱"}],
-            }
-        ]
-    }
-    assert len(result.schema_changes) == 1
+    assert result.ok is False
 
 
 def test_array_shape_repairs_nested_numeric_quote_through_refs():
@@ -238,7 +229,7 @@ def test_array_shape_repairs_nested_numeric_quote_through_refs():
     assert len(result.schema_changes) == 1
 
 
-def test_build_tools_single_shape_preserves_root_single_message_arguments():
+def test_build_tools_always_builds_array_declaration():
     state = NamespaceRuntimeState()
     state.open("qq_social", load_namespace_registry(), 1)
     collection = build_tools(
@@ -253,25 +244,8 @@ def test_build_tools_single_shape_preserves_root_single_message_arguments():
         qq_client=object(),
     )
     spec = collection.active_specs["qq_social.send_message"]
-    raw_arguments = json.dumps(
-        {
-            "segments": [{"command": "text", "content": "我在"}],
-        },
-        ensure_ascii=False,
-    )
-
-    result = process_tool_arguments(
-        raw_arguments,
-        "send_message",
-        "test",
-        tool_declaration=spec.declaration,
-        schema_repairer=spec.schema_repairer,
-        semantic_sanitizer=spec.semantic_sanitizer,
-    )
-
-    assert result.ok is True
-    assert result.args == {"segments": [{"command": "text", "content": "我在"}]}
-    assert result.schema_changes == ()
+    assert spec.declaration["parameters"]["required"] == ["messages"]
+    assert "messages" in spec.declaration["parameters"]["properties"]
 
 
 def test_coerce_execute_messages_accepts_single_message_shape():

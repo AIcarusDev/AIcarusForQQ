@@ -15,7 +15,6 @@ from consciousness.flow import ToolCall, ToolResponse
 from hooks import emit_hook, hook_scope
 from tools.namespaces import NamespaceClosedEvent
 
-from .decision_filter import normalize_send_messages
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .tool_execution_guard import evaluate_tool_execution_guard
 from .tool_calling.common import strip_legacy_motivation_fields
@@ -61,8 +60,6 @@ def _send_message_schema_kind_for_spec(spec: Any) -> str:
         return ""
     if "messages" in properties:
         return "array"
-    if "segments" in properties:
-        return "single"
     return ""
 
 
@@ -269,56 +266,6 @@ def _merge_send_message_array_results(slots: list[dict]) -> dict[str, Any]:
     if failed_count:
         merged["error"] = "部分消息未发送。"
     return merged
-
-
-def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
-    """Split a send_message containing multiple text segments into separate calls."""
-    expanded: list[dict] = []
-    for slot in slots:
-        if (
-            slot.get("fn_name") != "send_message"
-            or slot.get("send_message_schema") != "single"
-            or slot.get("result") is not None
-        ):
-            expanded.append(slot)
-            continue
-
-        args = slot.get("args")
-        if not isinstance(args, dict):
-            expanded.append(slot)
-            continue
-        segments = args.get("segments")
-        if not isinstance(segments, list):
-            expanded.append(slot)
-            continue
-        if not all(isinstance(seg, dict) for seg in segments):
-            expanded.append(slot)
-            continue
-        if sum(1 for seg in segments if seg.get("command") == "text") <= 1:
-            expanded.append(slot)
-            continue
-
-        normalized_messages = normalize_send_messages([args])
-        if len(normalized_messages) <= 1:
-            expanded.append(slot)
-            continue
-
-        original_id = str(getattr(slot["tc"], "id", "") or "call")
-        logger.warning(
-            "[send_message] 多个 text segment 已规范化为 %d 次独立调用 call_id=%s",
-            len(normalized_messages),
-            original_id,
-        )
-        for index, normalized_args in enumerate(normalized_messages, start=1):
-            expanded.append(
-                _clone_send_message_slot(
-                    slot,
-                    args=normalized_args,
-                    call_id=None if index == 1 else f"{original_id}_split_{index}",
-                )
-            )
-
-    return expanded
 
 
 def _namespace_name_list(value: object) -> list[str]:
@@ -645,7 +592,6 @@ class ToolExecutor:
             slots.append(slot)
 
         slots = _split_send_message_array_slots(slots)
-        slots = _expanded_single_send_message_slots(slots)
         return slots
 
     def _parallel_eligible(self, slot: dict) -> bool:
