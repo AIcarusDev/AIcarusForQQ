@@ -107,12 +107,21 @@ class ImageResolver:
         self.history_loader = history_loader or load_history_window
         self.browser_image_reader = browser_image_reader or read_browser_image_file
 
-    def resolve(self, image_ref: object) -> tuple[dict[str, Any], str] | None:
+    def resolve(self, image_ref: object, *, include_browser: bool = True) -> tuple[dict[str, Any], str] | None:
         """Return the first visible image and its source, or ``None``."""
 
         normalized_ref = normalize_image_ref(image_ref)
         if not normalized_ref:
             return None
+
+        from .sticker_collection import StickerCollectionError, get_sticker_image
+
+        try:
+            sticker = get_sticker_image(normalized_ref)
+        except StickerCollectionError as exc:
+            return {"unavailable_status": exc.code}, "sticker"
+        if sticker is not None:
+            return sticker, "sticker"
 
         for entry in getattr(self.session, "context_messages", []) or []:
             if image := image_from_entry(entry, normalized_ref):
@@ -134,6 +143,8 @@ class ImageResolver:
             if image := image_from_entry(entry, normalized_ref):
                 return image, "forward"
 
+        if not include_browser:
+            return None
         try:
             browser_image = self.browser_image_reader(normalized_ref)
         except Exception:
@@ -192,6 +203,8 @@ def image_from_entry(entry: dict[str, Any], image_ref: str) -> dict[str, Any] | 
 
 
 def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
+    if image.get("unavailable_status"):
+        return None
     mime = str(image.get("mime") or image.get("mime_type") or "image/jpeg")
     data = image.get("data")
     if isinstance(data, bytes):
@@ -222,6 +235,8 @@ def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
 
 
 def image_unavailable_status(image: dict[str, Any]) -> str:
+    if status := image.get("unavailable_status"):
+        return str(status)
     for key in ("pending", "expired", "failed"):
         if image.get(key):
             return key
@@ -232,3 +247,17 @@ def image_unavailable_status(image: dict[str, Any]) -> str:
         except (binascii.Error, ValueError):
             return "invalid_image_data"
     return "unavailable"
+
+
+def image_bytes(image: dict[str, Any]) -> tuple[bytes, str] | None:
+    """Decode the shared payload without transforming the original image bytes."""
+    payload = image_payload(image)
+    if payload is None:
+        return None
+    data, mime = payload
+    if isinstance(data, bytes):
+        return data, mime
+    try:
+        return base64.b64decode(data, validate=True), mime
+    except (binascii.Error, ValueError):
+        return None

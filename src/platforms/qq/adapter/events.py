@@ -18,7 +18,7 @@ import httpx
 
 from .segments import (
     qq_adapter_segments_to_text,
-    build_content_segments,
+    build_message_content,
     get_forward_node_message_segments,
     get_reply_message_id,
     _determine_content_type,
@@ -187,7 +187,8 @@ async def qq_adapter_event_to_context(
     tz = timezone or ZoneInfo("Asia/Shanghai")
     timestamp = datetime.fromtimestamp(event.get("time", 0), tz=tz).isoformat()
 
-    content_segments = build_content_segments(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
+    content = build_message_content(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
+    content_segments = content["content_segments"]
     reply_to = get_reply_message_id(message_segs)
     content_type = _determine_content_type(message_segs)
 
@@ -207,34 +208,6 @@ async def qq_adapter_event_to_context(
     sender_title = sender.get("title", "") if msg_type == "group" else ""
     sender_level = sender.get("level", "") if msg_type == "group" else ""
 
-    # 收集图片引用信息（不下载），以 image_ref 为键建立 dict
-    image_refs = [
-        (seg.get("image_ref") or seg.get("ref"), "动画表情" if seg["type"] == "sticker" else "图片")
-        for seg in content_segments
-        if seg.get("type") in ("image", "sticker") and (seg.get("image_ref") or seg.get("ref"))
-    ]
-    image_tasks = []
-    for seg in message_segs:
-        if seg.get("type") not in ("image", "mface"):
-            continue
-        data = seg.get("data", {})
-        if raw_b64 := data.get("base64", ""):
-            image_tasks.append(("b64", raw_b64, "image/jpeg"))
-        elif url := data.get("url", ""):
-            image_tasks.append(("url", url, ""))
-
-    # 立即可用的图片（base64直传）和需要下载的图片（URL）分开处理
-    # URL 类先以 {"pending": True} 预占位，避免下载未完成时模型把图片误认为已加载，
-    # 同时给 xml 渲染端一个明确的「加载中」状态。
-    images: dict[str, dict] = {}
-    pending_downloads: list[tuple[str, str, str]] = []  # (image_ref, url, label)
-    for (image_ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
-        if kind == "b64":
-            images[image_ref] = {"base64": value, "mime": preset_mime, "label": label}
-        else:
-            images[image_ref] = {"pending": True, "label": label}
-            pending_downloads.append((image_ref, value, label))
-
     entry: dict = {
         "role": "user",
         "message_id": str(event.get("message_id", f"msg_{uuid.uuid4().hex[:8]}")),
@@ -248,14 +221,10 @@ async def qq_adapter_event_to_context(
         "timestamp": timestamp,
         "content": text,
         "content_type": content_type,
-        "content_segments": content_segments,
+        **content,
     }
     if reply_to:
         entry["reply_to"] = reply_to
-    if images:
-        entry["images"] = images
-    if pending_downloads:
-        entry["_pending_images"] = pending_downloads
     return entry
 
 

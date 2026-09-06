@@ -1,518 +1,453 @@
-"""sticker_collection.py — 表情包收藏管理
+"""Persistent sticker images addressed by their original image references."""
 
-布局：
-  data/stickers/
-    index.json          ← 表情包索引（id → {description, created_at, filename, mime}）
-    images/             ← 表情包图片文件
-      000.jpg
-      001.png
-      ...
-    cache/              ← 自动生成的缓存（勿手动修改）
-      stickers_grid.jpg ← 缩略图网格缓存
-"""
+from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import math
+import os
+import re
+import tempfile
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-from PIL import Image, ImageDraw
+
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger("AICQ.llm.media.sticker")
-
-# 表情包目录：项目根 / data / stickers
-_STICKER_DIR = Path(__file__).parent.parent.parent.parent / "data" / "stickers"
+_STICKER_DIR = Path(__file__).resolve().parents[3] / "data" / "stickers"
 _INDEX_PATH = _STICKER_DIR / "index.json"
 _IMAGES_DIR = _STICKER_DIR / "images"
-_GRID_CACHE_PATH = Path(__file__).parent.parent.parent.parent / "cache" / "stickers" / "stickers_grid.jpg"
-
-_MIME_TO_EXT: dict[str, str] = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-    "image/bmp": ".bmp",
+_GRID_CACHE_PATH = Path(__file__).resolve().parents[3] / "cache" / "stickers" / "stickers_grid.jpg"
+_LOCK = threading.RLock()
+_REF_PATTERN = re.compile(r"[A-Za-z0-9_-]{4,128}\Z")
+_HASH_PATTERN = re.compile(r"[a-f0-9]{64}\Z")
+_MIME_TO_EXT = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/gif": ".gif", "image/bmp": ".bmp",
 }
-_VALID_EXTENSIONS: frozenset[str] = frozenset(_MIME_TO_EXT.values())
-_EXT_TO_MIME: dict[str, str] = {v: k for k, v in _MIME_TO_EXT.items()}
-
-# ── 网格布局常量 ──────────────────────────────────────────
-MAX_STICKERS: int = 30   # 单张网格图支持的最大表情包数量（5 列 × 6 行）
-_THUMB_SIZE: int = 96
-_GRID_COLS: int = 5
-_GRID_SPACING: int = 10  # 单元格之间的间距
-_GRID_MARGIN: int = 14   # 整体边距
-_LABEL_FONT_SIZE: int = 16
-_LABEL_SPACING: int = 5  # 缩略图底部到标签文字的间距
-_GRID_BG_COLOR: tuple[int, int, int] = (255, 255, 255)
-_GRID_LABEL_COLOR: tuple[int, int, int] = (40, 40, 40)
+_VALID_EXTENSIONS = frozenset((*_MIME_TO_EXT.values(), ".jpeg"))
+MAX_STICKERS = 30
+MAX_STICKER_BYTES = 20 * 1024 * 1024
+_THUMB_SIZE = 96
+_GRID_COLS = 5
+_GRID_SPACING = 10
+_GRID_MARGIN = 14
+_LABEL_FONT_SIZE = 16
 
 
-# ── 内部工具 ──────────────────────────────────────────────
+class StickerCollectionError(ValueError):
+    """A bounded error suitable for tool/API results, without host paths."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def valid_image_ref(value: object) -> bool:
+    return isinstance(value, str) and _REF_PATTERN.fullmatch(value) is not None
+
+
+def _atomic_write(path: Path, raw: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".sticker-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _save_index(document: dict) -> None:
+    try:
+        _atomic_write(_INDEX_PATH, json.dumps(document, ensure_ascii=False, indent=2).encode("utf-8"))
+    except OSError as exc:
+        raise StickerCollectionError("write_failed", "表情包索引保存失败") from exc
+
+
+def _image_path(filename: str) -> Path:
+    if not isinstance(filename, str) or not filename or Path(filename).name != filename or "\\" in filename:
+        raise StickerCollectionError("invalid_index", "表情包索引包含无效文件名")
+    path = _IMAGES_DIR / filename
+    if path.resolve().parent != _IMAGES_DIR.resolve():
+        raise StickerCollectionError("invalid_index", "表情包文件不在收藏目录内")
+    return path
+
+
+def _validate_index(document: dict) -> None:
+    try:
+        if document.get("version") != 2 or not isinstance(document["stickers"], dict):
+            raise ValueError
+        bindings = document["ref_hashes"]
+        if not isinstance(bindings, dict):
+            raise ValueError
+        for ref, digest in bindings.items():
+            if not valid_image_ref(ref) or not isinstance(digest, str) or not _HASH_PATTERN.fullmatch(digest):
+                raise ValueError
+        claimed = set()
+        for ref, info in document["stickers"].items():
+            _image_path(info["filename"])
+            if not isinstance(info["sha256"], str) or not _HASH_PATTERN.fullmatch(info["sha256"]):
+                raise ValueError
+            if info["mime"] not in _MIME_TO_EXT or not isinstance(info["description"], str):
+                raise ValueError
+            if not isinstance(info["created_at"], str) or not isinstance(info["aliases"], list):
+                raise ValueError
+            for candidate in [ref, *info["aliases"]]:
+                if not valid_image_ref(candidate) or candidate in claimed or bindings.get(candidate) != info["sha256"]:
+                    raise ValueError
+                claimed.add(candidate)
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise StickerCollectionError("invalid_index", "表情包索引损坏，未修改收藏数据") from exc
+
+
+def _new_ref(document: dict) -> str:
+    while True:
+        ref = uuid.uuid4().hex[:12]
+        if ref not in document["ref_hashes"] and not any(_IMAGES_DIR.glob(f"{ref}.*")):
+            return ref
+
+
+def _inspect(raw: bytes) -> str:
+    from .image_resolver import ImagePayloadError, inspect_image_payload
+
+    try:
+        info = inspect_image_payload(raw, max_bytes=MAX_STICKER_BYTES, max_pixels=100_000_000)
+    except ImagePayloadError as exc:
+        raise StickerCollectionError(exc.code, "表情包图片内容无效或超出限制") from exc
+    if info.mime_type not in _MIME_TO_EXT:
+        raise StickerCollectionError("unsupported_image_format", "不支持此表情包图片格式")
+    return info.mime_type
+
 
 def _load_index() -> dict:
-    if _INDEX_PATH.exists():
-        try:
-            return json.loads(_INDEX_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("[sticker_collection] 读取 index.json 失败: %s", e)
-    return {}
-
-
-def _save_index(index: dict) -> None:
-    _STICKER_DIR.mkdir(parents=True, exist_ok=True)
-    _INDEX_PATH.write_text(
-        json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def _next_id(index: dict) -> str:
-    """生成下一个可用的三位表情包 ID（如 '000', '001'）。"""
-    n = len(index)
-    while True:
-        sid = f"{n:03d}"
-        if sid not in index:
-            return sid
-        n += 1
-
-
-# ── 公共 API ──────────────────────────────────────────────
-
-def _get_grid_font():
-    """获取网格标签字体。优先尝试系统等宽字体，再 fallback 到 Pillow 内置字体。"""
-    from PIL import ImageFont
-    candidates = [
-        "C:/Windows/Fonts/consola.ttf",       # Consolas（Windows，等宽，数字极清晰）
-        "C:/Windows/Fonts/cour.ttf",           # Courier New（Windows）
-        "C:/Windows/Fonts/arial.ttf",          # Arial（Windows，通用）
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",   # Linux
-        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-    ]
-    for fp in candidates:
-        try:
-            return ImageFont.truetype(fp, _LABEL_FONT_SIZE)
-        except OSError:
-            continue
-    # 最后 fallback：Pillow 内置位图字体
+    """Called under _LOCK. Migrate legacy metadata before any collection access."""
+    if not _INDEX_PATH.exists():
+        return {"version": 2, "stickers": {}, "ref_hashes": {}}
     try:
-        return ImageFont.load_default(size=_LABEL_FONT_SIZE)
-    except TypeError:
-        return ImageFont.load_default()
+        raw = _INDEX_PATH.read_bytes()
+        document = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise StickerCollectionError("invalid_index", "表情包索引读取失败，未修改收藏数据") from exc
+    if not isinstance(document, dict):
+        raise StickerCollectionError("invalid_index", "表情包索引格式错误")
+    if "version" in document:
+        _validate_index(document)
+        _recover_interrupted_deletions(document)
+        return document
+    migrated = {"version": 2, "stickers": {}, "ref_hashes": {}}
+    try:
+        for old_id, info in sorted(document.items()):
+            if not re.fullmatch(r"\d{3}", old_id) or not isinstance(info, dict):
+                raise ValueError("invalid legacy entry")
+            image = _image_path(info["filename"]).read_bytes()
+            digest = hashlib.sha256(image).hexdigest()
+            if info.get("sha256") and info["sha256"] != digest:
+                raise ValueError("legacy image changed")
+            ref = _new_ref(migrated)
+            migrated["stickers"][ref] = {
+                "filename": info["filename"], "mime": _inspect(image),
+                "description": info["description"], "created_at": info["created_at"],
+                "sha256": digest, "aliases": [],
+            }
+            migrated["ref_hashes"][ref] = digest
+        _validate_index(migrated)
+        backup = _INDEX_PATH.with_name("index.v1.backup.json")
+        if not backup.exists():
+            _atomic_write(backup, raw)
+        _save_index(migrated)
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise StickerCollectionError("migration_failed", "表情包迁移失败，旧索引和图片已保留") from exc
+    logger.info("[sticker_collection] 已迁移 %d 个收藏到 image_ref", len(migrated["stickers"]))
+    return migrated
 
 
-def _rebuild_grid_cache() -> None:
-    """根据当前索引重新生成网格缩略图并写入磁盘缓存。"""
-
-    index = _load_index()
-    entries = sorted(index.items())[:MAX_STICKERS]
-
-    if not entries:
-        _GRID_CACHE_PATH.unlink(missing_ok=True)
-        logger.info("[sticker_collection] 无表情包，已移除网格缓存")
-        return
-
-    font = _get_grid_font()
-
-    # 计算标签实际高度
-    _probe = Image.new("RGB", (1, 1))
-    _probe_draw = ImageDraw.Draw(_probe)
-    _bbox = _probe_draw.textbbox((0, 0), "000", font=font)
-    label_h = int(_bbox[3] - _bbox[1])
-
-    cell_h = _THUMB_SIZE + _LABEL_SPACING + label_h
-    num_rows = math.ceil(len(entries) / _GRID_COLS)
-    grid_w = _GRID_MARGIN * 2 + _GRID_COLS * _THUMB_SIZE + (_GRID_COLS - 1) * _GRID_SPACING
-    grid_h = _GRID_MARGIN * 2 + num_rows * cell_h + (num_rows - 1) * _GRID_SPACING
-
-    canvas = Image.new("RGB", (grid_w, grid_h), _GRID_BG_COLOR)
-    draw = ImageDraw.Draw(canvas)
-
-    for idx, (sid, info) in enumerate(entries):
-        row = idx // _GRID_COLS
-        col = idx % _GRID_COLS
-        x = _GRID_MARGIN + col * (_THUMB_SIZE + _GRID_SPACING)
-        y = _GRID_MARGIN + row * (cell_h + _GRID_SPACING)
-
-        img_path = _IMAGES_DIR / info["filename"]
-        try:
-            with Image.open(img_path) as img:
-                if hasattr(img, "seek"):
-                    try:
-                        img.seek(0)
-                    except EOFError:
-                        pass
-                img_rgba = img.convert("RGBA")
-                img_rgba.thumbnail((_THUMB_SIZE, _THUMB_SIZE), Image.Resampling.LANCZOS)
-
-                # 将缩略图居中合成到白底方块上，处理透明通道
-                cell_canvas = Image.new("RGBA", (_THUMB_SIZE, _THUMB_SIZE), (255, 255, 255, 255))
-                paste_x = (_THUMB_SIZE - img_rgba.width) // 2
-                paste_y = (_THUMB_SIZE - img_rgba.height) // 2
-                cell_canvas.paste(img_rgba, (paste_x, paste_y), img_rgba)
-                canvas.paste(cell_canvas.convert("RGB"), (x, y))
-        except Exception as e:
-            logger.warning("[sticker_collection] 生成网格时跳过图片 id=%s: %s", sid, e)
-            continue
-
-        # ID 标签居中绘制
-        label_bbox = draw.textbbox((0, 0), sid, font=font)
-        label_w = label_bbox[2] - label_bbox[0]
-        label_x = x + (_THUMB_SIZE - label_w) // 2
-        label_y = y + _THUMB_SIZE + _LABEL_SPACING
-        draw.text((label_x, label_y), sid, fill=_GRID_LABEL_COLOR, font=font)
-
-    _GRID_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(_GRID_CACHE_PATH, format="JPEG", quality=92)
-    logger.info("[sticker_collection] 网格缓存已更新，共 %d 个表情包", len(entries))
-
-
-def get_sticker_grid_bytes() -> Optional[bytes]:
-    """返回网格缩略图的 JPEG 字节流。缓存不存在时自动重建。"""
-    if not _GRID_CACHE_PATH.exists():
-        _rebuild_grid_cache()
-    if _GRID_CACHE_PATH.exists():
-        try:
-            return _GRID_CACHE_PATH.read_bytes()
-        except OSError as e:
-            logger.warning("[sticker_collection] 读取网格缓存失败: %s", e)
-    return None
-
-
-def save_sticker(raw_bytes: bytes, mime: str, description: str) -> Optional[tuple[str, bool]]:
-    """将图片存为新表情包，返回 (id, is_duplicate)。
-
-    - 若收藏已达 MAX_STICKERS 上限，返回 None。
-    - 若图片与已有表情包完全相同（SHA-256 一致），返回 (已有id, True)。
-    - 正常保存时返回 (新id, False)。
-    """
-    sha256 = hashlib.sha256(raw_bytes).hexdigest()
-
-    index = _load_index()
-
-    # 查重：遍历已有条目，比较 sha256
-    for sid, info in index.items():
-        if info.get("sha256") == sha256:
-            logger.info(
-                "[sticker_collection] 表情包重复，跳过保存 id=%s sha256=%.16s…",
-                sid, sha256,
-            )
-            return sid, True
-
-    if len(index) >= MAX_STICKERS:
-        logger.warning("[sticker_collection] 表情包数量已达上限 (%d)，拒绝添加", MAX_STICKERS)
+def _find_ref(document: dict, image_ref: str) -> str | None:
+    if not valid_image_ref(image_ref):
         return None
-
-    sid = _next_id(index)
-    ext = _MIME_TO_EXT.get(mime, ".jpg")
-    filename = f"{sid}{ext}"
-
-    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    (_IMAGES_DIR / filename).write_bytes(raw_bytes)
-
-    index[sid] = {
-        "description": description,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "filename": filename,
-        "mime": mime,
-        "sha256": sha256,
-    }
-    _save_index(index)
-    logger.info("[sticker_collection] 已保存表情包 id=%s desc=%r", sid, description)
-
-    try:
-        _rebuild_grid_cache()
-    except Exception as e:
-        logger.warning("[sticker_collection] 更新网格缓存失败: %s", e)
-
-    return sid, False
+    entries = document["stickers"]
+    if image_ref in entries:
+        return image_ref
+    return next((ref for ref, info in entries.items() if image_ref in info["aliases"]), None)
 
 
-def _renumber_index(index: dict) -> dict:
-    """将 index 中的条目按当前排序重编号为连续的 000、001…，重命名对应图片文件。
-
-    使用两步重命名法防止文件名冲突，返回重编号后的新 index dict。
-    """
-    sorted_entries = sorted(index.items())
-    need_rename = not all(
-        sid == f"{i:03d}" and Path(info["filename"]).stem == f"{i:03d}"
-        for i, (sid, info) in enumerate(sorted_entries)
-    )
-    if not need_rename:
-        return index
-
-    # 第一步：全部改为 __tmp_NNN.ext
-    tmp_entries: list[tuple[str, str, dict]] = []
-    for new_num, (old_sid, info) in enumerate(sorted_entries):
-        new_sid = f"{new_num:03d}"
-        ext = Path(info["filename"]).suffix.lower()
-        tmp_name = f"__tmp_{new_num:03d}{ext}"
-        final_name = f"{new_sid}{ext}"
-        try:
-            (_IMAGES_DIR / info["filename"]).rename(_IMAGES_DIR / tmp_name)
-            if old_sid != new_sid or info["filename"] != final_name:
-                logger.info(
-                    "[sticker_collection] 重编号 id=%s(%s) → %s",
-                    old_sid, info["filename"], new_sid,
-                )
-            tmp_entries.append((tmp_name, new_sid, {**info, "filename": final_name}))
-        except OSError as e:
-            logger.warning(
-                "[sticker_collection] 第一步重命名失败 %s → %s: %s",
-                info["filename"], tmp_name, e,
-            )
-            tmp_entries.append((info["filename"], old_sid, info))
-
-    # 第二步：从 __tmp_NNN.ext 改为最终名
-    new_index: dict = {}
-    for tmp_name, new_sid, info in tmp_entries:
-        final_name = info["filename"]
-        tmp_path = _IMAGES_DIR / tmp_name
-        if tmp_path.exists() and tmp_name != final_name:
+def _recover_interrupted_deletions(document: dict) -> None:
+    """A crash before index commit must leave the indexed original recoverable."""
+    for ref, info in document["stickers"].items():
+        path = _image_path(info["filename"])
+        if path.exists():
+            continue
+        for staged in (_STICKER_DIR / "trash").glob(f"{ref}-*"):
             try:
-                tmp_path.rename(_IMAGES_DIR / final_name)
-            except OSError as e:
-                logger.warning(
-                    "[sticker_collection] 第二步重命名失败 %s → %s: %s",
-                    tmp_name, final_name, e,
-                )
-                info = {**info, "filename": tmp_name}
-        new_index[new_sid] = info
-    return new_index
+                if hashlib.sha256(staged.read_bytes()).hexdigest() == info["sha256"]:
+                    staged.rename(path)
+                    break
+            except OSError as exc:
+                raise StickerCollectionError("recovery_failed", "表情包中断操作恢复失败，文件已保留") from exc
 
 
-def delete_sticker(sticker_id: str) -> bool:
-    """删除指定 ID 的表情包（从索引和磁盘同时移除），并对剩余表情包重编号。
+def _entries(document: dict) -> list[tuple[str, dict]]:
+    return sorted(document["stickers"].items(), key=lambda item: (item[1]["created_at"], item[0]))
 
-    返回 True 表示删除成功，False 表示 ID 不存在。
-    删除后剩余的表情包会补位重编号（如删 001 后 002 变为 001）。
-    """
-    index = _load_index()
-    if sticker_id not in index:
-        return False
 
-    entry = index.pop(sticker_id)
-    img_path = _IMAGES_DIR / entry["filename"]
+def _read_entry(ref: str, info: dict) -> dict:
+    result = {"image_ref": ref, "mime": info["mime"], "description": info["description"]}
     try:
-        img_path.unlink(missing_ok=True)
-    except OSError as e:
-        logger.warning("[sticker_collection] 删除表情包文件失败 id=%s: %s", sticker_id, e)
-
-    # 剩余条目重编号，填补空缺
-    index = _renumber_index(index)
-
-    _save_index(index)
-    logger.info("[sticker_collection] 已删除表情包 id=%s，剩余 %d 个已重编号", sticker_id, len(index))
-
-    try:
-        _rebuild_grid_cache()
-    except Exception as e:
-        logger.warning("[sticker_collection] 更新网格缓存失败: %s", e)
-
-    return True
+        path = _image_path(info["filename"])
+        if path.stat().st_size > MAX_STICKER_BYTES:
+            result["unavailable_status"] = "image_too_large"
+            return result
+        raw = path.read_bytes()
+    except OSError:
+        result["unavailable_status"] = "missing_image"
+        return result
+    if hashlib.sha256(raw).hexdigest() != info["sha256"]:
+        result["unavailable_status"] = "image_changed"
+        return result
+    result["data"] = raw
+    return result
 
 
-def update_sticker_description(sticker_id: str, new_description: str) -> bool:
-    """修改指定 ID 表情包的文字描述。
-
-    返回 True 表示修改成功，False 表示 ID 不存在。
-    """
-    index = _load_index()
-    if sticker_id not in index:
-        return False
-
-    index[sticker_id]["description"] = new_description
-    _save_index(index)
-    logger.info(
-        "[sticker_collection] 已更新描述 id=%s desc=%r", sticker_id, new_description
-    )
-    return True
-
-
-def load_sticker_bytes(sticker_id: str) -> Optional[tuple[bytes, str]]:
-    """读取表情包原始字节，返回 (bytes, mime)，不存在返回 None。"""
-    index = _load_index()
-    if sticker_id not in index:
+def get_sticker_image(image_ref: str) -> dict | None:
+    """Known but unavailable images return a status, preventing source fallback."""
+    if not valid_image_ref(image_ref):
         return None
-    entry = index[sticker_id]
-    p = _IMAGES_DIR / entry["filename"]
-    try:
-        return p.read_bytes(), entry.get("mime", "image/jpeg")
-    except OSError as e:
-        logger.warning("[sticker_collection] 读取表情包文件失败 id=%s: %s", sticker_id, e)
+    with _LOCK:
+        document = _load_index()
+        ref = _find_ref(document, image_ref)
+        return _read_entry(ref, document["stickers"][ref]) if ref else None
+
+
+def load_sticker_bytes(image_ref: str) -> tuple[bytes, str] | None:
+    image = get_sticker_image(image_ref)
+    if image is None or "data" not in image:
         return None
+    return image["data"], image["mime"]
+
+
+def save_sticker(raw_bytes: bytes, mime: str, description: str, *, image_ref: str | None = None) -> tuple[str, bool] | None:
+    """Store exact bytes; retain the first reference and register duplicate aliases."""
+    if image_ref is not None and not valid_image_ref(image_ref):
+        raise StickerCollectionError("invalid_ref", "请提供有效的 image_ref，旧表情包编号已停用")
+    mime = _inspect(raw_bytes)
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    with _LOCK:
+        document = _load_index()
+        entries, bindings = document["stickers"], document["ref_hashes"]
+        if image_ref in bindings and bindings[image_ref] != digest:
+            raise StickerCollectionError("ref_conflict", "此 image_ref 已绑定其他图片内容")
+        for ref, info in _entries(document):
+            if info["sha256"] != digest:
+                continue
+            if "data" not in _read_entry(ref, info):
+                raise StickerCollectionError("image_unavailable", "收藏图片不可用，请先整理收藏")
+            if image_ref and image_ref != ref and image_ref not in info["aliases"]:
+                info["aliases"].append(image_ref)
+                bindings[image_ref] = digest
+                _save_index(document)
+            return ref, True
+        if len(entries) >= MAX_STICKERS:
+            return None
+        ref = image_ref or _new_ref(document)
+        filename = ref + _MIME_TO_EXT[mime]
+        path = _image_path(filename)
+        _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            raise StickerCollectionError("file_exists", "收藏目标文件已存在，请先整理收藏")
+        try:
+            _atomic_write(path, raw_bytes)
+            entries[ref] = {
+                "description": description, "created_at": datetime.now(timezone.utc).isoformat(),
+                "filename": filename, "mime": mime, "sha256": digest, "aliases": [],
+            }
+            bindings[ref] = digest
+            _save_index(document)
+        except (OSError, StickerCollectionError):
+            path.unlink(missing_ok=True)
+            raise
+        return ref, False
+
+
+def update_sticker_description(image_ref: str, new_description: str) -> str | None:
+    with _LOCK:
+        document = _load_index()
+        ref = _find_ref(document, image_ref)
+        if ref is None:
+            return None
+        document["stickers"][ref]["description"] = new_description
+        _save_index(document)
+        return ref
+
+
+def delete_sticker(image_ref: str) -> str | None:
+    with _LOCK:
+        document = _load_index()
+        ref = _find_ref(document, image_ref)
+        if ref is None:
+            return None
+        info = document["stickers"].pop(ref)
+        path = _image_path(info["filename"])
+        # Quarantine before committing: an interrupted deletion cannot be adopted as an orphan.
+        trash = _STICKER_DIR / "trash" / f"{ref}-{uuid.uuid4().hex}-{path.name}"
+        moved = False
+        try:
+            if path.exists() and not any(item["filename"] == info["filename"] for item in document["stickers"].values()):
+                trash.parent.mkdir(parents=True, exist_ok=True)
+                path.rename(trash)
+                moved = True
+            _save_index(document)
+        except (OSError, StickerCollectionError):
+            if moved:
+                trash.rename(path)
+            raise
+        if moved:
+            try:
+                trash.unlink()
+            except OSError:
+                logger.warning("[sticker_collection] 已撤销收藏引用，但隔离文件清理失败 ref=%s", ref)
+        # Historical hash bindings prevent a deleted reference being rebound to different bytes.
+        return ref
 
 
 def list_all() -> list[dict]:
-    """返回所有表情包的元数据列表（id + info），不含图片字节。
-    若发现对应文件不存在，自动清理该索引条目。
-    """
-    index = _load_index()
-    if stale_ids := [
-        sid
-        for sid, info in index.items()
-        if not (_IMAGES_DIR / info["filename"]).exists()
-    ]:
-        for sid in stale_ids:
-            logger.warning(
-                "[sticker_collection] 清理过期索引 id=%s (文件不存在)", sid
-                )
-            del index[sid]
-        _save_index(index)
-    return [{"id": sid, **info} for sid, info in sorted(index.items())]
+    with _LOCK:
+        return [{"image_ref": ref, **info} for ref, info in _entries(_load_index())]
+
+
+def _get_grid_font():
+    for name in ("C:/Windows/Fonts/consola.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"):
+        try:
+            return ImageFont.truetype(name, _LABEL_FONT_SIZE)
+        except OSError:
+            pass
+    return ImageFont.load_default(size=_LABEL_FONT_SIZE)
+
+
+def _rebuild_grid_cache(document: dict) -> bytes | None:
+    entries = _entries(document)
+    if not entries:
+        _GRID_CACHE_PATH.unlink(missing_ok=True)
+        return None
+    font = _get_grid_font()
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    boxes = [measure.textbbox((0, 0), ref, font=font) for ref, _ in entries]
+    cell_w = max(_THUMB_SIZE, max(box[2] - box[0] for box in boxes) + 8)
+    label_h = max(box[3] - box[1] for box in boxes)
+    cell_h = _THUMB_SIZE + 5 + label_h
+    cols = min(_GRID_COLS, len(entries))
+    rows = math.ceil(len(entries) / cols)
+    canvas = Image.new("RGB", (
+        2 * _GRID_MARGIN + cols * cell_w + (cols - 1) * _GRID_SPACING,
+        2 * _GRID_MARGIN + rows * cell_h + (rows - 1) * _GRID_SPACING,
+    ), "white")
+    draw = ImageDraw.Draw(canvas)
+    for i, (ref, info) in enumerate(entries):
+        x = _GRID_MARGIN + i % cols * (cell_w + _GRID_SPACING)
+        y = _GRID_MARGIN + i // cols * (cell_h + _GRID_SPACING)
+        image = _read_entry(ref, info)
+        try:
+            with Image.open(io.BytesIO(image.get("data", b""))) as original:
+                thumb = original.convert("RGBA")
+                thumb.thumbnail((_THUMB_SIZE, _THUMB_SIZE), Image.Resampling.LANCZOS)
+                canvas.paste(thumb, (x + (cell_w - thumb.width) // 2, y + (_THUMB_SIZE - thumb.height) // 2), thumb)
+        except (OSError, ValueError):
+            draw.rectangle((x, y, x + cell_w - 1, y + _THUMB_SIZE - 1), outline="gray")
+        box = boxes[i]
+        draw.text((x + (cell_w - box[2] + box[0]) // 2, y + _THUMB_SIZE + 5 - box[1]), ref, font=font, fill=(40, 40, 40))
+    output = io.BytesIO()
+    canvas.save(output, format="JPEG", quality=92)
+    raw = output.getvalue()
+    _atomic_write(_GRID_CACHE_PATH, raw)
+    return raw
+
+
+def get_sticker_snapshot(*, include_grid: bool = False) -> tuple[list[dict], bytes | None]:
+    """One locked snapshot keeps grid labels and the returned list in agreement."""
+    with _LOCK:
+        document = _load_index()
+        items = [{"image_ref": ref, **info} for ref, info in _entries(document)]
+        grid = _rebuild_grid_cache(document) if include_grid else None
+        return items, grid
+
+
+def get_sticker_grid_bytes() -> bytes | None:
+    return get_sticker_snapshot(include_grid=True)[1]
 
 
 def reconcile_stickers() -> dict:
-    """全面检查并修复表情包收藏，返回操作摘要 dict。
-
-    按顺序处理以下问题：
-    0. 预扫描 images/ 中所有有效图片，建立 filename→sha256 及 sha256→filename 映射
-    1. index 记录的文件存在 → 校验 SHA-256，回填或更新
-    2. index 记录的文件不存在，但磁盘上有相同 SHA-256 的文件（被改名）→ 修正 filename
-    3. index 记录的文件不存在且磁盘上也找不到相同内容 → 清除 index 条目
-    4. images/ 中有未被 index 认领的图片（含非标准文件名）→ 纳入 index
-    5. SHA-256 重复 → 保留最早的（标准 id 优先），删除多余的
-    6. 两步重命名法重编号为连续的 000.ext、001.ext…（防止改名时互相覆盖）
-    """
-    index = _load_index()
-    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-
-    stats = {
-        "removed_stale": 0,      # index 有记录但内容彻底消失
-        "updated_hash": 0,       # SHA-256 回填或更新
-        "fixed_rename": 0,       # 文件被改名，已修正 filename
-        "adopted_orphans": 0,    # 孤儿文件纳入 index
-        "removed_duplicates": 0, # 去除重复
-    }
-    changed = False
-
-    # ── 0：预扫描磁盘，建立双向映射 ──────────────────────────────
-    # disk_files:       filename  → sha256（已读取的文件）
-    # disk_sha256_map:  sha256    → filename（用于通过哈希反查文件位置）
-    disk_files: dict[str, str] = {}
-    disk_sha256_map: dict[str, str] = {}
-    for img_path in _IMAGES_DIR.iterdir():
-        if img_path.suffix.lower() not in _VALID_EXTENSIONS:
-            continue
-        try:
-            h = hashlib.sha256(img_path.read_bytes()).hexdigest()
-            disk_files[img_path.name] = h
-            # 同一 sha256 有多个文件时，保留字典序最小的（即编号最早的）
-            if h not in disk_sha256_map or img_path.name < disk_sha256_map[h]:
-                disk_sha256_map[h] = img_path.name
-        except OSError as e:
-            logger.warning("[sticker_collection] 预扫描跳过 %s: %s", img_path.name, e)
-
-    # 已被 index 认领的文件名集合（防止孤儿扫描重复纳入）
-    claimed: set[str] = set()
-
-    # ── 1/2/3：校验 index 中每条记录 ──────────────────────────
-    for sid in list(index.keys()):
-        info = index[sid]
-        current_filename = info["filename"]
-        stored_sha256 = info.get("sha256", "")
-
-        if current_filename in disk_files:
-            # 文件存在：校验 SHA-256
-            actual_sha256 = disk_files[current_filename]
-            if not stored_sha256:
-                index[sid]["sha256"] = actual_sha256
-                stats["updated_hash"] += 1
-                changed = True
-                logger.info("[sticker_collection] 回填 SHA-256 id=%s", sid)
-            elif stored_sha256 != actual_sha256:
-                old_desc = index[sid].get("description", "")
-                index[sid]["sha256"] = actual_sha256
-                index[sid]["description"] = "（图片已被替换，暂无描述）"
-                stats["updated_hash"] += 1
-                changed = True
-                logger.info(
-                    "[sticker_collection] 文件内容已变更，更新 SHA-256 并清空描述 id=%s（原描述: %r）",
-                    sid, old_desc,
-                )
-            claimed.add(current_filename)
-
-        elif stored_sha256 and stored_sha256 in disk_sha256_map:
-            # 文件不在原路径，但磁盘上有相同内容的文件 → 被改名了
-            found_filename = disk_sha256_map[stored_sha256]
-            index[sid]["filename"] = found_filename
-            claimed.add(found_filename)
-            stats["fixed_rename"] += 1
-            changed = True
-            logger.info(
-                "[sticker_collection] id=%s 文件已被改名（%s → %s），已修正",
-                sid, current_filename, found_filename,
-            )
-
-        else:
-            # 文件彻底消失：index 条目无效
-            logger.warning(
-                "[sticker_collection] 清除失效条目 id=%s（文件不存在且无法通过 SHA-256 找回）", sid
-            )
-            del index[sid]
-            stats["removed_stale"] += 1
-            changed = True
-
-    # ── 4：扫描 images/，纳入孤儿文件（含非标准文件名）─────────
-    # 使用 "~" 前缀作为临时 key：~ (ASCII 126) > 所有数字和字母，
-    # 保证标准 id 在后续 sorted() 中始终排在孤儿之前
-    for filename, sha256 in sorted(disk_files.items()):
-        if filename in claimed:
-            continue
-        mime = _EXT_TO_MIME.get(Path(filename).suffix.lower(), "image/jpeg")
-        tmp_key = f"~orphan~{filename}"
-        index[tmp_key] = {
-            "description": "（用户手动添加，暂无描述）",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "filename": filename,
-            "mime": mime,
-            "sha256": sha256,
-        }
-        claimed.add(filename)
-        stats["adopted_orphans"] += 1
-        changed = True
-        logger.info("[sticker_collection] 纳入孤儿文件: %s", filename)
-
-    # ── 5：去重（SHA-256 相同只保留最早的，标准 id 优先）────────
-    # sorted() 自然序下标准 id（"000"...）< "~orphan~..."，所以标准 id 先遍历，得以保留
-    seen_sha256: dict[str, str] = {}
-    for sid, info in sorted(index.items()):
-        h = info.get("sha256", "")
-        if not h:
-            continue
-        if h in seen_sha256:
-            logger.info(
-                "[sticker_collection] 删除重复 id=%s（同 id=%s）", sid, seen_sha256[h]
-            )
+    """Repair filenames and deduplicate exact contents without reassigning references."""
+    with _LOCK:
+        document = _load_index()
+        entries = document["stickers"]
+        stats = dict.fromkeys(("removed_stale", "updated_hash", "fixed_rename", "adopted_orphans", "removed_duplicates", "skipped_overflow"), 0)
+        _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        disk = {}
+        for path in sorted(_IMAGES_DIR.iterdir()):
+            if path.suffix.lower() not in _VALID_EXTENSIONS or not path.is_file():
+                continue
             try:
-                (_IMAGES_DIR / info["filename"]).unlink(missing_ok=True)
-            except OSError as e:
-                logger.warning("[sticker_collection] 删除重复文件失败: %s", e)
-            del index[sid]
-            stats["removed_duplicates"] += 1
-            changed = True
-        else:
-            seen_sha256[h] = sid
-
-    # ── 6：重编号为连续的 000、001… ─────────────────────────────
-    # sorted() 保证标准 id 在前、孤儿在后，结果：现有表情包保持相对顺序，孤儿追加在末尾
-    renumbered = _renumber_index(index)
-    if renumbered is not index:
-        index = renumbered
-        changed = True
-
-    if changed:
-        _save_index(index)
-        try:
-            _rebuild_grid_cache()
-        except Exception as e:
-            logger.warning("[sticker_collection] 重建网格缓存失败: %s", e)
-
-    logger.info(
-        "[sticker_collection] reconcile 完成："
-        "清除失效=%d 更新哈希=%d 纳入孤儿=%d 删除重复=%d 剩余=%d",
-        stats["removed_stale"], stats["updated_hash"],
-        stats["adopted_orphans"], stats["removed_duplicates"], len(index),
-    )
-    return stats
+                _image_path(path.name)
+                if path.stat().st_size > MAX_STICKER_BYTES:
+                    continue
+                raw = path.read_bytes()
+                disk[path.name] = (hashlib.sha256(raw).hexdigest(), _inspect(raw))
+            except (OSError, StickerCollectionError):
+                logger.warning("[sticker_collection] 整理跳过无效图片 %s", path.name)
+        claimed = set()
+        seen = {}
+        for ref, info in _entries(document):
+            original = info["filename"]
+            matching = [name for name, (digest, _) in disk.items() if digest == info["sha256"]]
+            if not matching:
+                del entries[ref]
+                stats["removed_stale"] += 1
+                continue
+            filename = original if original in matching else matching[0]
+            if filename != original:
+                info["filename"] = filename
+                stats["fixed_rename"] += 1
+            digest = info["sha256"]
+            if digest in seen:
+                kept = entries[seen[digest]]
+                kept["aliases"].extend([ref, *info["aliases"]])
+                del entries[ref]
+                stats["removed_duplicates"] += 1
+            else:
+                seen[digest] = ref
+                claimed.add(filename)
+        duplicate_files = []
+        for filename, (digest, mime) in disk.items():
+            if filename in claimed:
+                continue
+            if digest in seen:
+                duplicate_files.append(filename)
+                stats["removed_duplicates"] += 1
+                continue
+            if len(entries) >= MAX_STICKERS:
+                stats["skipped_overflow"] += 1
+                continue
+            ref = _new_ref(document)
+            entries[ref] = {
+                "filename": filename, "mime": mime, "sha256": digest,
+                "description": "（用户手动添加或替换，暂无描述）",
+                "created_at": datetime.now(timezone.utc).isoformat(), "aliases": [],
+            }
+            document["ref_hashes"][ref] = digest
+            seen[digest] = ref
+            stats["adopted_orphans"] += 1
+        _validate_index(document)
+        _save_index(document)
+        for filename in duplicate_files:
+            try:
+                _image_path(filename).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("[sticker_collection] 整理未能清除重复图片 %s", filename)
+        return stats

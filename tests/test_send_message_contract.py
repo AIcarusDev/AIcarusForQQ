@@ -293,7 +293,7 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
     assert error
     assert warnings == []
     prepared, error, warnings = send_mod._prepare_sendable_segments(
-        [{"command": "sticker", "sticker_id": "missing-sticker"}],
+        [{"command": "sticker", "image_ref": "missing-sticker"}],
         fake_session,
     )
     assert prepared is None

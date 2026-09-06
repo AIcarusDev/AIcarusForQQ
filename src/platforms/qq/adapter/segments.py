@@ -422,7 +422,21 @@ def build_content_segments(
       {"type": "file",    "filename": "...", "size_bytes": 123, "is_downloaded": False}
       其他: {"type": "..."}
     """
+    return build_message_content(message, bot_id=bot_id, bot_display_name=bot_display_name)["content_segments"]
+
+
+def build_message_content(
+    message: list[dict],
+    bot_id: str | None = None,
+    bot_display_name: str = "",
+) -> dict:
+    """Build content and image state together, binding each ref to its source segment.
+
+    This only records URL downloads; callers fetch them with download_pending_images.
+    """
     parts: list[dict] = []
+    images: dict[str, dict] = {}
+    pending_downloads: list[tuple[str, str, str]] = []
     for seg in message:
         seg_type = seg.get("type", "")
         data = seg.get("data", {})
@@ -447,16 +461,19 @@ def build_content_segments(
                 name = data.get("name", "").strip()
                 display_name = name if name else qq
                 parts.append({"type": "mention", "uid": qq, "display": f"@{display_name}"})
-        elif seg_type == "mface":
+        elif seg_type in ("image", "mface"):
+            data = data if isinstance(data, dict) else {}
+            is_sticker = seg_type == "mface" or get_image_sub_type(data) == 1
             image_ref = uuid.uuid4().hex[:12]
-            parts.append({"type": "sticker", "image_ref": image_ref})
-        elif seg_type == "image":
-            sub_type = get_image_sub_type(data)
-            image_ref = uuid.uuid4().hex[:12]
-            if sub_type == 1:
-                parts.append({"type": "sticker", "image_ref": image_ref})
+            parts.append({"type": "sticker" if is_sticker else "image", "image_ref": image_ref})
+            label = "动画表情" if is_sticker else "图片"
+            if raw_b64 := data.get("base64", ""):
+                images[image_ref] = {"base64": raw_b64, "mime": "image/jpeg", "label": label}
+            elif url := data.get("url", ""):
+                images[image_ref] = {"pending": True, "label": label}
+                pending_downloads.append((image_ref, url, label))
             else:
-                parts.append({"type": "image", "image_ref": image_ref})
+                images[image_ref] = {"failed": True, "label": label}
         elif seg_type == "file":
             parts.append(_build_file_segment(data if isinstance(data, dict) else {}))
         elif seg_type == "reply":
@@ -482,7 +499,12 @@ def build_content_segments(
             parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
         else:
             parts.append({"type": seg_type, "label": seg_type})
-    return parts
+    content: dict = {"content_segments": parts}
+    if images:
+        content["images"] = images
+    if pending_downloads:
+        content["_pending_images"] = pending_downloads
+    return content
 
 
 def _determine_content_type(message_segs: list[dict]) -> str:
@@ -550,21 +572,15 @@ def llm_segments_to_qq_adapter(
             if user_id:
                 qq_adapter_segs.append({"type": "at", "data": {"qq": str(user_id)}})
         elif cmd == "sticker":
-            sticker_id = seg.get("sticker_id", "")
-            if sticker_id:
-                _data = _load_sticker_for_send(sticker_id)
-                if _data is not None:
-                    _raw, _mime = _data
-                    _b64 = base64.b64encode(_raw).decode("ascii")
-                    qq_adapter_segs.append({
-                        "type": "image",
-                        "data": _sticker_image_data(f"base64://{_b64}", adapter),
-                    })
-                elif seg.get("_fallback_base64"):
-                    qq_adapter_segs.append({
-                        "type": "image",
-                        "data": _sticker_image_data(f"base64://{seg['_fallback_base64']}", adapter),
-                    })
+            image_ref = str(seg.get("image_ref") or "")
+            raw = seg.get("_image_bytes")
+            if "sticker_id" in seg or not image_ref or not isinstance(raw, bytes) or not raw:
+                raise ImageLoadError(image_ref, "sticker requires a prepared image_ref payload")
+            encoded = base64.b64encode(raw).decode("ascii")
+            qq_adapter_segs.append({
+                "type": "image",
+                "data": _sticker_image_data(f"base64://{encoded}", adapter),
+            })
         elif cmd == "image":
             image_ref = seg.get("image_ref", "")
             if not image_ref:
@@ -592,18 +608,6 @@ def llm_segments_to_qq_adapter(
             else:
                 result.append({"type": "text", "data": {"text": " "}})
     return result
-
-
-# ── 表情包加载辅助 ────────────────────────────────────────────────────────────
-
-def _load_sticker_for_send(sticker_id: str):
-    """懒加载表情包字节，供 llm_segments_to_qq_adapter 使用。返回 (bytes, mime) 或 None。"""
-    try:
-        from llm.media.sticker_collection import load_sticker_bytes
-        return load_sticker_bytes(sticker_id)
-    except Exception as e:
-        _seg_logger.warning("懒加载表情包失败 id=%s: %s", sticker_id, e)
-        return None
 
 
 # ── 浏览器图片缓存加载辅助 ────────────────────────────────────────────────────

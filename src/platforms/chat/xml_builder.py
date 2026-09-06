@@ -55,7 +55,7 @@ def _format_relative_time(iso_timestamp: str) -> str:
     return f"{int(months)}个月前" if months < 12 else f"{int(days / 365)}年前"
 
 # 图片位置哨兵：格式 \x00{12位image_ref}:{label}\x00，用户输入不含 \x00，天然防注入
-_IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
+_IMG_SENTINEL_RE = re.compile(r'\x00([A-Za-z0-9_-]{4,128}):([^\x00]+)\x00')
 _CARD_RAW_RENDER_LIMIT = 2000
 _INTERNAL_BOT_MESSAGE_ID_PREFIXES = ("pending_", "failed_", "offline_")
 _MODEL_VISIBLE_DELIVERY_STATES = {"pending", "failed"}
@@ -370,13 +370,10 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
         elif seg_type == "sticker":
             _flush_text()
             image_ref = _segment_image_ref(seg)
-            sticker_id = seg.get("sticker_id", "")
             if image_ref:
                 chunks.append(("sticker", f"\x00{image_ref}:动画表情\x00", ""))
-            elif sticker_id:
-                chunks.append(("sticker", f'[动画表情 id="{html.escape(sticker_id)}"]', ""))
             else:
-                chunks.append(("sticker", "[动画表情]", ""))
+                chunks.append(("sticker", "[历史表情包]", ""))
         elif seg_type == "file":
             _flush_text()
             fn = html.escape(seg.get("filename", "未知"))

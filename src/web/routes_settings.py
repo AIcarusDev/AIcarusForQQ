@@ -37,6 +37,7 @@ from quart import Blueprint, render_template, request, jsonify, send_file
 import yaml
 
 import app_state
+from llm.media.sticker_collection import StickerCollectionError, valid_image_ref
 from config_loader import (
     AGENT_PROMPT_KEYS,
     PromptDocumentError,
@@ -1754,6 +1755,12 @@ async def cache_clear():
 
 # ── 表情包管理 ────────────────────────────────────────────────────────────────
 
+@settings_bp.errorhandler(StickerCollectionError)
+def sticker_collection_error(exc: StickerCollectionError):
+    status = 503 if exc.code in {"invalid_index", "migration_failed", "write_failed", "recovery_failed"} else 400
+    return jsonify({"success": False, "error": str(exc), "code": exc.code}), status
+
+
 @settings_bp.route("/stickers")
 async def stickers_page():
     return await render_template("stickers.html")
@@ -1790,41 +1797,41 @@ async def stickers_upload():
     result = await asyncio.to_thread(save_sticker, raw, mime, description)
     if result is None:
         return jsonify({"success": False, "error": "已达表情包数量上限"}), 400
-    sid, is_dup = result
-    return jsonify({"success": True, "id": sid, "duplicate": is_dup})
+    image_ref, is_dup = result
+    return jsonify({"success": True, "image_ref": image_ref, "duplicate": is_dup})
 
 
-@settings_bp.route("/api/stickers/<sticker_id>", methods=["PATCH"])
-async def stickers_update(sticker_id: str):
+@settings_bp.route("/api/stickers/<image_ref>", methods=["PATCH"])
+async def stickers_update(image_ref: str):
     """修改表情包描述。body: {"description": "..."}"""
     from llm.media.sticker_collection import update_sticker_description
-    if not sticker_id.isalnum():
-        return jsonify({"success": False, "error": "invalid id"}), 400
+    if not valid_image_ref(image_ref):
+        return jsonify({"success": False, "error": "invalid image_ref"}), 400
     data = await request.get_json() or {}
     description = str(data.get("description") or "")
     if len(description) > 200:
         return jsonify({"success": False, "error": "描述不能超过 200 个字符"}), 400
-    ok = await asyncio.to_thread(update_sticker_description, sticker_id, description)
+    ok = await asyncio.to_thread(update_sticker_description, image_ref, description)
     if not ok:
         return jsonify({"success": False, "error": "表情包不存在"}), 404
-    return jsonify({"success": True})
+    return jsonify({"success": True, "image_ref": ok})
 
 
-@settings_bp.route("/api/stickers/<sticker_id>", methods=["DELETE"])
-async def stickers_delete(sticker_id: str):
+@settings_bp.route("/api/stickers/<image_ref>", methods=["DELETE"])
+async def stickers_delete(image_ref: str):
     """删除指定表情包。"""
     from llm.media.sticker_collection import delete_sticker
-    if not sticker_id.isalnum():
-        return jsonify({"success": False, "error": "invalid id"}), 400
-    ok = await asyncio.to_thread(delete_sticker, sticker_id)
+    if not valid_image_ref(image_ref):
+        return jsonify({"success": False, "error": "invalid image_ref"}), 400
+    ok = await asyncio.to_thread(delete_sticker, image_ref)
     if not ok:
         return jsonify({"success": False, "error": "表情包不存在"}), 404
-    return jsonify({"success": True})
+    return jsonify({"success": True, "image_ref": ok})
 
 
 @settings_bp.route("/api/stickers/reconcile", methods=["POST"])
 async def stickers_reconcile():
-    """全量检查并修复表情包收藏（去重、补编号、清理孤儿文件）。"""
+    """全量检查并修复表情包收藏（修复改名、去重、纳入孤儿图片，保持引用稳定）。"""
     from llm.media.sticker_collection import reconcile_stickers
     stats = await asyncio.to_thread(reconcile_stickers)
     return jsonify({"success": True, "stats": stats})

@@ -53,6 +53,7 @@ debug/
 # ── WebUI 前端依赖与本地设计验收证据 ─────────
 /artifacts/
 /design-qa.md
+/output/playwright/
 
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/

@@ -585,14 +585,17 @@
 - **影响**：含 base64 图片的发送在合法的事件顺序下会白等完整 10 秒，批量发送时逐条累积，原本用于防止乱序的等待反而制造明显延迟。
 - **建议**：发送前注册基于本次请求可稳定匹配的 waiter，或让 API/adapter 层统一缓存早到 confirmation；增加“confirmation 先于 echo”和 self-message 两种顺序测试。
 
-### AUD-050：图片引用与下载源按两个过滤后的列表 zip，可能把第二张图绑定到第一张身份
+### AUD-050：图片引用与下载源按两个过滤后的列表 zip，可能把第二张图绑定到第一张身份（fix）
 
 - **优先级 / 类别**：P1 / 多模态身份错配
-- **状态 / 置信度**：构造 QQ 事件探针确认
-- **位置**：`src/platforms/qq/adapter/events.py:190-236`
+- **状态 / 置信度**：**fix（2026-09-06）**；源码修复与隔离回归测试确认，未重启运行进程。
+- **原始位置**：`src/platforms/qq/adapter/events.py:190-236`；复核确认 `src/llm/forward_browser.py` 的转发图片装配也有同类问题。
 - **证据**：`image_refs` 来自每个已转换的 image/sticker segment；`image_tasks` 只收集原始 segment 中实际含 base64/url 的项，随后用 `zip(image_refs, image_tasks)` 对齐。构造“第一个 mface 无下载源、第二个 image 有 URL”时，第二张图被写到第一个 ref 下，并继承“动画表情”标签，第二个 ref 没有图像数据。
 - **影响**：VisionBridge、`examine_image` 和上下文 XML 可能把视觉内容归到错误的 `image_ref`，模型对“哪张图/哪个表情”的判断失真；列表长度不同还会静默截断，不产生错误信号。
 - **建议**：在遍历同一个原始 segment 时同时生成 ref、label 和 source，以原始索引或稳定 ID 绑定；对无源图片保留对应的 unavailable/failed 状态，不要压缩列表后再 zip。
+- **修复**：`src/platforms/qq/adapter/segments.py:428` 的 `build_message_content()` 在解析同一个原始图片段时生成 ref、类别标签和图片状态。普通事件与合并转发共用此转换，移除两处按过滤列表 zip 的绑定逻辑；无来源图片保留自己的 ref 并标记 `failed`。保持 base64 优先、URL 延迟下载、下载失败/过期状态及原有 `build_content_segments()` 返回契约。
+- **验证**：新增 `tests/test_qq_image_binding.py`，修复前 42 个反例场景全部失败；最终 44 个回归场景覆盖普通事件、转发的 `message`/`content` 两种节点形态、首/中/末无源图片、image/mface/sub_type/subType、混合 base64/URL、标签归属、下载失败/过期及仅转换消息段的兼容行为。全量 `python -B -m pytest -q -p no:cacheprovider`：**723 passed, 8 skipped, 1 warning**；8 项跳过均要求外部 Workspace 集成显式启用。修改文件 Ruff 与 `git diff --check` 通过。
+- **生效边界**：验证使用构造消息、模拟下载和临时测试目录，未发送真实 QQ 消息或激活主循环；未追溯改写已有历史图片绑定。本次仅修复来源错位，ref 全局唯一性与 pHash 缓存问题不属于此项修复。
 
 ### AUD-051：VisionBridge 初始化失败后，实时图片消息会在上下文半写入状态崩溃
 

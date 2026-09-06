@@ -23,8 +23,8 @@ def _segment_text(seg: dict[str, Any]) -> str:
         image_ref = str(seg.get("image_ref") or seg.get("ref") or "").strip()
         return f'[image image_ref="{image_ref}"]' if image_ref else "[image]"
     if kind == "sticker":
-        sticker_id = str(seg.get("sticker_id") or "").strip()
-        return f'[sticker sticker_id="{sticker_id}"]' if sticker_id else "[sticker]"
+        image_ref = str(seg.get("image_ref") or seg.get("ref") or "").strip()
+        return f'[sticker image_ref="{html.escape(image_ref, quote=True)}"]' if image_ref else "[历史表情包]"
     return str(seg.get("label") or seg.get("text") or "")
 
 

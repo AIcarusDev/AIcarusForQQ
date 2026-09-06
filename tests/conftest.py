@@ -15,6 +15,19 @@ for path in (ROOT, SRC):
         sys.path.insert(0, text)
 
 
+@pytest.fixture(autouse=True)
+def isolated_sticker_store(monkeypatch, tmp_path):
+    """Image resolution must never read, migrate or mutate the user's collection."""
+    from llm.media import sticker_collection
+
+    root = tmp_path / "stickers"
+    monkeypatch.setattr(sticker_collection, "_STICKER_DIR", root)
+    monkeypatch.setattr(sticker_collection, "_INDEX_PATH", root / "index.json")
+    monkeypatch.setattr(sticker_collection, "_IMAGES_DIR", root / "images")
+    monkeypatch.setattr(sticker_collection, "_GRID_CACHE_PATH", tmp_path / "grid.jpg")
+    return root
+
+
 @pytest.fixture
 def fake_session():
     class FakeSession:

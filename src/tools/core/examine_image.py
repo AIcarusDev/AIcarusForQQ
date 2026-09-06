@@ -6,9 +6,10 @@ VisionBridge 带焦点重新询问 VLM，结果写入内存和 sidecar。
 启用条件：session 和 vision_bridge 均在运行时上下文中就绪。
 """
 
+import base64
 import logging
 
-from llm.media.image_cache import read_image_b64
+from llm.media.image_resolver import ImageResolver, image_bytes, normalize_image_ref
 from pydantic import Field
 
 from tools.contract import ToolArgsModel, ToolContract
@@ -19,7 +20,7 @@ class ExamineImageArgs(ToolArgsModel):
     image_ref: str = Field(
         min_length=1,
         description=(
-            "目标图片的 image_ref，12位十六进制字符串"
+            "目标可见或已收藏图片的 image_ref"
             "（来自上下文 XML 中 <description> 或工具响应里标注的 image_ref）"
         ),
     )
@@ -35,10 +36,9 @@ class ExamineImageArgs(ToolArgsModel):
 TOOL_CONTRACT = ToolContract(
     name="examine_image",
     description=(
-        "对对话中的某张图片进行定向精细观察。"
+        "对某张图片进行定向精细观察。"
         "当你在上下文中看到 [图片] 标记，需要了解图片特定区域或细节时调用。"
-        "调用前必须从上下文中获取图片的 image_ref（12位十六进制字符串）。"
-        "每次调用聚焦一个具体问题，结果会在本轮对话中持续可用。"
+        "需写入目标图片的的 image_ref。"
     ),
     args_model=ExamineImageArgs,
 )
@@ -53,37 +53,19 @@ def make_handler(session, vision_bridge):
     """工厂函数：绑定 session 和 vision_bridge，返回工具处理函数。"""
 
     def handler(image_ref: str, focus: str, **_) -> dict:
-        # ── 1. 在上下文中查找包含该 image_ref 的图片 ────────────
-        target_img: dict | None = None
-        for entry in session.context_messages:
-            images: dict = entry.get("images") or {}
-            if image_ref in images:
-                target_img = images[image_ref]
-                break
-
-        if target_img is None:
-            logger.warning("[tools] examine_image: 未找到图片 image_ref=%s", image_ref)
-            return {
-                "error": (
-                    f"未在当前上下文中找到 image_ref={image_ref!r} 的图片。"
-                    "请检查 image_ref 是否正确，或图片可能已超出上下文窗口。"
-                )
-            }
-
-        # ── 2. 取出 base64 数据 ──────────────────────────────────
-        b64: str = target_img.get("base64", "")
-        mime: str = target_img.get("mime", "image/jpeg")
-        phash: str | None = target_img.get("phash")
-
-        if not b64:
-            # base64 丢失时尝试从磁盘恢复
-            if phash:
-                cached = read_image_b64(phash)
-                if cached:
-                    b64, mime = cached
-            if not b64:
-                logger.warning("[tools] examine_image: base64 数据丢失 image_ref=%s", image_ref)
-                return {"error": "图片原始数据不可用（可能已被清理），无法精查"}
+        image_ref = normalize_image_ref(image_ref)
+        resolver = ImageResolver(session)
+        found = resolver.resolve(image_ref)
+        if found is None:
+            return {"error": "未找到可见或已收藏的图片", "code": "not_found"}
+        target_img, _source = found
+        payload = image_bytes(target_img)
+        if payload is None:
+            return {"error": "图片原始数据不可用，无法精查", "code": resolver.unavailable_status(target_img)}
+        raw, mime = payload
+        b64 = base64.b64encode(raw).decode("ascii")
+        phash = target_img.get("phash")
+        image_ref = str(target_img.get("image_ref") or image_ref)
 
         if not vision_bridge.enabled:
             logger.warning("[tools] examine_image: VisionBridge 未启用")

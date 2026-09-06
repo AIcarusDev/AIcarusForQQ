@@ -201,7 +201,7 @@ runtime_manage(args:
 
 namespace 按领域归属划分，但任务链里的参数准备不一定只发生在同一领域内。attach 用来表达这种窄耦合。
 
-例子：`send_message` 属于 `qq_social`，但发送表情包需要 `sticker_id`。`list_stickers` 的真实归属是 `qq_stickers`，却可以作为 `qq_social` 的 attach 工具出现。
+例子：`send_message` 属于 `qq_social`，发送收藏表情包使用 `image_ref`。`list_stickers` 的真实归属是 `qq_stickers`，却可以作为 `qq_social` 的 attach 工具出现。
 
 规则：
 
@@ -226,7 +226,7 @@ qq_social:
   attach:
     - namespace: qq_stickers
       tool: list_stickers
-      reason: "send_message 发送 sticker 需要 sticker_id。"
+      reason: "send_message 可使用收藏表情包的 image_ref。"
 ```
 
 ## 7. 目标 Namespace 清单
@@ -448,7 +448,7 @@ namespaces:
     attach:
       - namespace: qq_stickers
         tool: list_stickers
-        reason: "发送 sticker 需要 sticker_id。"
+        reason: "发送 sticker 可使用收藏表情包的 image_ref。"
 
   browser_use:
     description: "重型浏览器控制和精确 DOM 定位。"

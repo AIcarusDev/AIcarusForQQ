@@ -103,6 +103,7 @@ def make_handler(session: Any) -> Callable:
             }
 
         image, source = found
+        normalized_ref = str(image.get("image_ref") or normalized_ref)
         payload = resolver.payload(image)
         if payload is None:
             status = resolver.unavailable_status(image)

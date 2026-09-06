@@ -1,37 +1,31 @@
-"""delete_sticker.py — 从收藏中删除一个表情包"""
+"""按 image_ref 删除收藏表情包。"""
 
-import logging
-from llm.media.sticker_collection import delete_sticker
+from llm.media.image_resolver import normalize_image_ref
+from llm.media.sticker_collection import StickerCollectionError, delete_sticker
 from pydantic import Field
 
 from tools.contract import ToolArgsModel, ToolContract
 
-logger = logging.getLogger("AICQ.tools")
 
 class DeleteStickerArgs(ToolArgsModel):
-    sticker_id: str = Field(
-        min_length=1,
-        description="要删除的表情包 ID（三位数字字符串，如 '003'）",
-    )
+    image_ref: str = Field(min_length=4, description="要删除的已收藏表情包的 image_ref。")
 
 
 TOOL_CONTRACT = ToolContract(
     name="delete_sticker",
     description=(
-        "从表情包收藏中删除指定 ID 的表情包。"
-        "删除后剩余表情包会自动补位重编号（例如删除 001 后，002 变为 001，003 变为 002）。"
-        "如果不确定 ID，需先调用 list_stickers 查看。"
+        "通过 image_ref 删除收藏及其全部别名；其他收藏的引用保持不变。"
+        "已保存到工作空间的副本独立保留。"
     ),
     args_model=DeleteStickerArgs,
 )
 
 
-def execute(sticker_id: str, **_) -> dict:
-
-    success = delete_sticker(sticker_id)
-    if not success:
-        logger.warning("[tools] delete_sticker: ID 不存在 id=%s", sticker_id)
-        return {"error": f"表情包 ID \"{sticker_id}\" 不存在，删除失败。"}
-
-    logger.info("[tools] delete_sticker: 已删除 id=%s", sticker_id)
-    return {"deleted_id": sticker_id, "message": f"表情包 \"{sticker_id}\" 已成功删除。"}
+def execute(image_ref: str, **_) -> dict:
+    try:
+        ref = delete_sticker(normalize_image_ref(image_ref))
+    except StickerCollectionError as exc:
+        return {"error": str(exc), "code": exc.code}
+    if ref is None:
+        return {"error": "该 image_ref 不属于已收藏表情包", "code": "not_found"}
+    return {"image_ref": ref, "message": "表情包收藏及其别名已删除。"}

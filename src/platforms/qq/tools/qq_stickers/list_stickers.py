@@ -1,7 +1,7 @@
 """list_stickers.py — 查看自己的表情包收藏"""
 
 import logging
-from llm.media.sticker_collection import MAX_STICKERS, get_sticker_grid_bytes, list_all
+from llm.media.sticker_collection import MAX_STICKERS, StickerCollectionError, get_sticker_snapshot
 
 from tools.contract import ToolArgsModel, ToolContract
 
@@ -14,9 +14,9 @@ class ListStickersArgs(ToolArgsModel):
 TOOL_CONTRACT = ToolContract(
     name="list_stickers",
     description=(
-        "查看自己收藏的表情包列表，返回每个表情包的 ID 和应用场景描述。"
-        "对于支持多模态的模型，还会附带一张包含所有表情包的网格预览图，图中每格下方标有 ID。"
-        "发送表情包前先调用此工具确认 ID。"
+        "查看收藏的表情包列表，可见 image_ref 和应用场景描述。"
+        "支持多模态的模型还会收到网格预览图，每格标注对应表情包的 image_ref。"
+        "发送表情包前先调用此工具确认 ref。"
     ),
     args_model=ListStickersArgs,
 )
@@ -33,14 +33,17 @@ def make_handler(config: dict):
 
     def handler(**_) -> dict:
 
-        stickers = list_all()
+        try:
+            stickers, grid_bytes = get_sticker_snapshot(include_grid=vision_enabled)
+        except StickerCollectionError as exc:
+            return {"error": str(exc), "code": exc.code}
         if not stickers:
             return {"count": 0, "stickers": [], "message": "暂无已收藏的表情包。"}
 
         result: dict = {
             "count": len(stickers),
             "stickers": [
-                {"id": s["id"], "description": s["description"]}
+                {"image_ref": s["image_ref"], "description": s["description"]}
                 for s in stickers
             ],
         }
@@ -52,7 +55,6 @@ def make_handler(config: dict):
             )
 
         if vision_enabled:
-            grid_bytes = get_sticker_grid_bytes()
             if grid_bytes:
                 result["_multimodal_parts"] = [
                     {

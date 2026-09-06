@@ -227,7 +227,7 @@ async def startup() -> None:
     if _max_age or _max_size:
         await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
 
-    # 启动时全面检查表情包收藏（校验文件/SHA-256、纳入孤儿、去重、修复编号空洞）
+    # 先迁移旧索引，再校验文件、修复改名、纳入孤儿和去重；已有 image_ref 保持稳定。
     from llm.media.sticker_collection import reconcile_stickers
     _rc_stats = await asyncio.to_thread(reconcile_stickers)
     logger.info(

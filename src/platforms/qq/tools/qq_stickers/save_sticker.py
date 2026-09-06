@@ -1,114 +1,62 @@
-"""save_sticker.py — 将聊天记录中的图片/动画表情收藏为自己的表情包"""
+"""收藏可见聊天、历史或转发窗口中的图片，保留原 image_ref。"""
 
-import base64
-import logging
-from llm.media.image_cache import read_image_bytes
+from llm.media.image_resolver import ImageResolver, image_bytes, normalize_image_ref
+from llm.media.sticker_collection import MAX_STICKERS, StickerCollectionError, save_sticker
 from pydantic import Field
 
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.contract import ToolArgsModel, ToolContract
 
-logger = logging.getLogger("AICQ.tools")
 
 class SaveStickerArgs(ToolArgsModel):
     image_ref: str = Field(
-        min_length=1,
-        description=(
-            "目标图片/表情的 image_ref，12位十六进制字符串"
-            "（来自上下文 XML 中的 image_ref 标注）"
-        ),
-    )
-    description: str = Field(
-        min_length=1,
-        description=(
-            "描述这个表情包的适用场景，尽量具体，例如："
-            "'表达无语/沉默时发送' / '开心大笑时用' / '表示赞同时'"
-        ),
-    )
+        min_length=4,
+        description=
+        "目标图片/表情的 image_ref，12位十六进制字符串"
+        "（来自上下文 XML 中的 image_ref 标注）"
+            )
+    description: str = Field(min_length=1, description="表情包的大致描述、印象和适用场景。")
 
 
 TOOL_CONTRACT = ToolContract(
     name="save_sticker",
     description=(
-        "将聊天记录中的[动画表情]或[图片]保存到自己的表情包收藏中。"
-        "调用前需从上下文中获取目标图片的 image_ref（12位十六进制字符串）。"
-        "保存成功后会返回该表情包的 ID，之后可在消息的 segments 中用 sticker 指令通过 ID 发送。"
-        "建议：收藏觉得未来确实能用到，或喜欢、有意义的表情包。"
+        "将任何可见图片收藏为 qq 表情包。"
+        "需写入目标图片的 image_ref。"
     ),
     args_model=SaveStickerArgs,
 )
-
-# 需要 session 以便在上下文中查找图片 image_ref
-REQUIRES_CONTEXT: list[str] = ["qq_session_provider"]
+REQUIRES_CONTEXT = ["qq_session_provider"]
 
 
 def make_handler(qq_session_provider):
-    """工厂函数：绑定 session，返回工具处理函数。"""
-    qq_session_provider = ensure_session_provider(qq_session_provider)
+    provider = ensure_session_provider(qq_session_provider)
 
     def handler(image_ref: str, description: str, **_) -> dict:
-        session = qq_session_provider()
+        session = provider()
         if session is None:
             return {"error": NO_CURRENT_SESSION_ERROR}
-
-        # ── 1. 在上下文中查找图片 ──────────────────────────────
-        target_img: dict | None = None
-        for entry in session.context_messages:
-            images: dict = entry.get("images") or {}
-            if image_ref in images:
-                target_img = images[image_ref]
-                break
-
-        if target_img is None:
-            logger.warning("[tools] save_sticker: 未找到图片 image_ref=%s", image_ref)
-            return {
-                "error": (
-                    f"未在当前上下文中找到 image_ref={image_ref!r} 的图片。"
-                    "请检查 image_ref 是否正确，或图片可能已超出上下文窗口。"
-                )
-            }
-
-        # ── 2. 获取原始字节 ─────────────────────────────────────
-        b64: str = target_img.get("base64", "")
-        mime: str = target_img.get("mime", "image/jpeg")
-        phash: str | None = target_img.get("phash")
-
-        raw_bytes: bytes | None = None
-        if b64:
-            try:
-                raw_bytes = base64.b64decode(b64)
-            except Exception as e:
-                logger.warning("[tools] save_sticker: base64 解码失败 image_ref=%s: %s", image_ref, e)
-
-        if raw_bytes is None and phash:
-            raw_bytes = read_image_bytes(phash)
-
-        if raw_bytes is None:
-            logger.warning("[tools] save_sticker: 图片数据不可用 image_ref=%s", image_ref)
-            return {"error": "图片原始数据不可用（可能已被清理），无法保存"}
-
-        # ── 3. 保存到收藏 ────────────────────────────────────────
-        from llm.media.sticker_collection import MAX_STICKERS, save_sticker
-        result = save_sticker(raw_bytes, mime, description)
+        image_ref = normalize_image_ref(image_ref)
+        resolver = ImageResolver(session)
+        found = resolver.resolve(image_ref, include_browser=False)
+        if found is None:
+            return {"error": "未找到可见或已收藏的图片", "code": "not_found"}
+        image, _source = found
+        payload = image_bytes(image)
+        if payload is None:
+            return {"error": "图片原始数据不可用", "code": resolver.unavailable_status(image)}
+        raw, mime = payload
+        try:
+            result = save_sticker(raw, mime, description, image_ref=image_ref)
+        except StickerCollectionError as exc:
+            return {"error": str(exc), "code": exc.code}
         if result is None:
-            return {
-                "error": (
-                    f"表情包收藏已满（上限 {MAX_STICKERS} 个），"
-                    "请先用 remove_sticker 移除一些旧的表情包再添加新的。"
-                )
-            }
-        sticker_id, is_duplicate = result
-        if is_duplicate:
-            logger.info("[tools] save_sticker: 重复图片，已有 id=%s image_ref=%s", sticker_id, image_ref)
-            return {
-                "sticker_id": sticker_id,
-                "message": f"该图片已在表情包收藏中（ID 为 \"{sticker_id}\"），无需重复保存。",
-            }
-        logger.info("[tools] save_sticker: 已保存 id=%s image_ref=%s", sticker_id, image_ref)
+            return {"error": f"收藏已满（上限 {MAX_STICKERS} 个），请先用 delete_sticker 删除旧收藏", "code": "collection_full"}
+        ref, duplicate = result
         return {
-            "sticker_id": sticker_id,
-            "description": description,
-            "message": f"表情包已保存，ID 为 \"{sticker_id}\"，可在消息 segments 中使用 sticker 指令发送。",
+            "image_ref": ref,
+            "duplicate": duplicate,
+            "message": "图片已在收藏中，已保留原印象。" if duplicate else "已收藏，可通过 image_ref 使用。",
         }
 
     return handler
