@@ -74,18 +74,16 @@ class ImageSegment(ToolArgsModel):
         pattern=r"^(?:|/home/agent/[^\r\n]+)$",
         description=(
             "Agent Linux 中已有图片的绝对路径，必须位于 /home/agent 下。"
-            "不要和 image_ref 或 resource_ref 同时填写。"
         ),
     )
     image_ref: str = Field(
         default="",
-        description="已固化图片的 image_ref。不要和 path 或 resource_ref 同时填写。",
+        description="image_ref 。",
     )
     resource_ref: str = Field(
         default="",
         description=(
             "<browser><images> 中原图候选的 resource_ref。系统会在发送前按需固化原图；"
-            "不要把 source_url 或视口截图 image_ref 填到这里，也不要和 path 同时填写。"
         ),
     )
 
