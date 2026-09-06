@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import threading
+from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
+
+from PIL import Image
 
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
@@ -20,6 +26,90 @@ def test_get_declaration_switches_between_array_and_single_shapes():
     assert "messages" in array_decl["parameters"]["properties"]
     assert single_decl["parameters"]["required"] == ["segments"]
     assert "segments" in single_decl["parameters"]["properties"]
+
+
+def test_image_segment_accepts_one_agent_linux_path():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    result = process_tool_arguments(
+        json.dumps({
+            "messages": [{
+                "segments": [{
+                    "command": "image",
+                    "path": "/home/agent/output/result.png",
+                }],
+            }],
+        }),
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+    )
+
+    assert result.ok is True
+    assert result.args["messages"][0]["segments"][0]["path"] == "/home/agent/output/result.png"
+
+
+def test_image_segment_rejects_host_and_outside_agent_paths():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    for path in (r"C:\temp\result.png", "/tmp/result.png"):
+        result = process_tool_arguments(
+            json.dumps({
+                "messages": [{
+                    "segments": [{"command": "image", "path": path}],
+                }],
+            }),
+            "send_message",
+            "test",
+            tool_declaration=declaration,
+        )
+        assert result.ok is False
+
+
+def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (12, 8), (1, 2, 3)).save(output, format="PNG")
+    raw = output.getvalue()
+    host_path = Path("C:/fake-stage/result.png")
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: raw if self == host_path else b"",
+    )
+
+    class WorkspaceService:
+        @asynccontextmanager
+        async def stage_host_file(self, path):
+            assert path == "/home/agent/output/result.png"
+            yield SimpleNamespace(
+                size=len(raw),
+                host_path=str(host_path),
+                workspace_path=path,
+                name="result.png",
+            )
+
+    messages, error = asyncio.run(send_mod._materialize_local_image_paths(
+        [{"segments": [{"command": "image", "path": "/home/agent/output/result.png"}]}],
+        WorkspaceService(),
+    ))
+
+    assert error is None
+    segment = messages[0]["segments"][0]
+    assert "path" not in segment
+    assert segment["_local_image_ref"].startswith("img_")
+    assert base64.b64decode(segment["_local_image_base64"]) == raw
+
+
+def test_materialize_local_image_path_rejects_ambiguous_sources():
+    messages, error = asyncio.run(send_mod._materialize_local_image_paths(
+        [{"segments": [{
+            "command": "image",
+            "path": "/home/agent/output/result.png",
+            "image_ref": "img_existing",
+        }]}],
+        object(),
+    ))
+
+    assert messages is None
+    assert "只能提供一个" in error
 
 
 def test_adapter_error_exposes_only_bounded_metadata():

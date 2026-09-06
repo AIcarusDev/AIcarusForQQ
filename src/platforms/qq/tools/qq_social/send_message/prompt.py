@@ -6,6 +6,7 @@ ARRAY_DESCRIPTION = """
 注意：
   - 同一条消息内的多个 segment 只会被拼接为一条消息，并不会变成多条。若要发送多条独立消息，请在 messages 数组中添加多个元素。
   - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果某条消息包含 at，该条消息会发送失败。
+  - 发送 Agent Linux 中已有图片时，image segment 直接填写 /home/agent 下的 path；不要启动本地 HTTP 服务或绕道浏览器。
   - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 enter_qq_session 进入指定会话。
 """
 
@@ -17,6 +18,7 @@ SINGLE_DESCRIPTION = """
 
 注意：
   - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果消息包含 at，会发送失败。
+  - 发送 Agent Linux 中已有图片时，image segment 直接填写 /home/agent 下的 path；不要启动本地 HTTP 服务或绕道浏览器。
   - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 enter_qq_session 进入指定会话。
 """
 

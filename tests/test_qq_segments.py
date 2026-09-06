@@ -117,6 +117,19 @@ def test_llm_segments_to_qq_adapter_loads_browser_image_by_ref(monkeypatch):
     assert result == [{"type": "image", "data": {"file": "base64://img_ref"}}]
 
 
+def test_llm_segments_to_qq_adapter_sends_materialized_local_image():
+    result = llm_segments_to_qq_adapter([{
+        "command": "image",
+        "_local_image_base64": "cG5nLWJ5dGVz",
+        "_local_image_ref": "img_0123456789abcdef0123456789abcdef",
+    }])
+
+    assert result == [{
+        "type": "image",
+        "data": {"file": "base64://cG5nLWJ5dGVz"},
+    }]
+
+
 def test_send_adapter_rejects_non_artifact_browser_refs(monkeypatch):
     import browser
 

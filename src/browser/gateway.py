@@ -19,6 +19,7 @@ known direct UDP paths separately in ``browser.session``.
 from __future__ import annotations
 
 import base64
+import html
 import ipaddress
 import logging
 import os
@@ -248,20 +249,31 @@ def _split_authority(authority: str, default_port: int) -> tuple[str, int]:
 
 
 def _proxy_error(status: int, message: str) -> bytes:
-    safe = message.encode("utf-8", errors="replace")[:1024]
+    safe_message = html.escape(str(message)[:1024], quote=True)
     reason = {
         400: b"Bad Request",
         403: b"Forbidden",
         502: b"Bad Gateway",
         503: b"Service Unavailable",
     }.get(status, b"Proxy Error")
+    title = (
+        "Agent localhost unavailable"
+        if status == 502 and "agent localhost" in str(message).casefold()
+        else reason.decode("ascii")
+    )
+    body = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{html.escape(title)}</title></head>"
+        f"<body><h1>{html.escape(title)}</h1><p>{safe_message}</p></body></html>"
+    ).encode("utf-8")
     return (
         f"HTTP/1.1 {status} ".encode("ascii")
         + reason
-        + b"\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: "
-        + str(len(safe)).encode("ascii")
+        + b"\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store"
+        + b"\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\nContent-Length: "
+        + str(len(body)).encode("ascii")
         + b"\r\n\r\n"
-        + safe
+        + body
     )
 
 
