@@ -189,6 +189,7 @@ def normalize_qq_platform_config(config: dict[str, Any], *, remove_legacy: bool 
     if isinstance(supervisor, dict):
         merged = deepcopy(DEFAULT_QQ_PLATFORM_CONFIG["supervisor"])
         merged.update(supervisor)
+        merged.pop("qrcode_globs", None)
         cfg["supervisor"] = merged
 
     cfg["enabled"] = bool(cfg.get("enabled", False))
@@ -196,9 +197,7 @@ def normalize_qq_platform_config(config: dict[str, Any], *, remove_legacy: bool 
     platforms["qq"] = cfg
     if remove_legacy:
         config.pop("qq_adapter", None)
-        alerting = config.get("alerting")
-        if isinstance(alerting, dict):
-            alerting.pop("qq_adapter_restart", None)
+        config.pop("alerting", None)
     return cfg
 
 

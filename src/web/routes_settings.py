@@ -52,10 +52,6 @@ from config_loader import (
     save_env_value,
     read_env_proxies,
     save_env_proxy,
-    read_env_smtp,
-    save_env_smtp,
-    read_env_imap,
-    save_env_imap,
 )
 from llm.core.provider import (
     create_adapter,
@@ -566,21 +562,6 @@ async def settings_get():
         "web_search": _default_web_search_cfg(cfg),
         "tools": _default_tools_cfg(cfg),
         "browser_control": normalize_browser_control_config(cfg.get("browser_control")),
-        "alerting": cfg.get("alerting", {
-            "enabled": False,
-            "heartbeat_timeout": 120,
-            "cooldown": 600,
-            "subject_prefix": "[AIcarus 告警]",
-            "email_control": {
-                "enabled": False,
-                "allowed_commands": ["REQUEST", "RESTART", "STATUS"],
-                "token_ttl_seconds": 600,
-                "poll_interval": 30,
-                "reuse_smtp_credentials": True,
-            },
-        }),
-        "smtp": await asyncio.to_thread(read_env_smtp),
-        "imap": await asyncio.to_thread(read_env_imap),
         "tool_execution_guard": cfg.get("tool_execution_guard", {}),
         "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
         "memory": _default_memory_cfg(cfg),
@@ -644,9 +625,6 @@ async def settings_save():
     api_keys_data = dict(data.get("api_keys") or {})
     service_env_data = dict(data.get("service_env") or {})
     proxies_data = dict(data.get("proxies") or {})
-    smtp_data = dict(data.get("smtp") or {})
-    imap_data = dict(data.get("imap") or {})
-
     def _write_env():
         for key_name, val in api_keys_data.items():
             if val:
@@ -659,12 +637,6 @@ async def settings_save():
             if proxy_name in proxies_data:
                 with contextlib.suppress(ValueError):
                     save_env_proxy(proxy_name, proxies_data.get(proxy_name, ""))
-        if smtp_data:
-            with contextlib.suppress(ValueError):
-                save_env_smtp(smtp_data)
-        if imap_data:
-            with contextlib.suppress(ValueError):
-                save_env_imap(imap_data)
         load_dotenv(override=True)
 
     await asyncio.to_thread(_write_env)
@@ -813,80 +785,6 @@ async def settings_save():
         new_cfg["web_search"] = new_ws
     if "browser_control" in data and isinstance(data["browser_control"], dict):
         new_cfg["browser_control"] = normalize_browser_control_config(data["browser_control"])
-    if "alerting" in data and isinstance(data["alerting"], dict):
-        ad = data["alerting"]
-        new_alerting = dict(new_cfg.get("alerting", {}))
-        if "enabled" in ad:
-            new_alerting["enabled"] = bool(ad["enabled"])
-        if "heartbeat_timeout" in ad:
-            new_alerting["heartbeat_timeout"] = max(30, int(ad["heartbeat_timeout"]))
-        if "cooldown" in ad:
-            new_alerting["cooldown"] = max(0, int(ad["cooldown"]))
-        if "subject_prefix" in ad:
-            new_alerting["subject_prefix"] = str(ad["subject_prefix"]).strip() or "[AIcarus 告警]"
-        # QQ 平台自动重启子节点
-        if "qq_adapter_restart" in ad and isinstance(ad["qq_adapter_restart"], dict):
-            nr_in = ad["qq_adapter_restart"]
-            platforms_cfg = dict(new_cfg.get("platforms", {}))
-            qq_cfg = dict(platforms_cfg.get("qq", {}))
-            nr_out = dict(qq_cfg.get("supervisor", {}))
-            if "enabled" in nr_in:
-                nr_out["enabled"] = bool(nr_in["enabled"])
-            if "command" in nr_in:
-                nr_out["command"] = str(nr_in["command"] or "").strip()
-            if "args" in nr_in and isinstance(nr_in["args"], list):
-                nr_out["args"] = [str(a) for a in nr_in["args"]]
-            if "cwd" in nr_in:
-                nr_out["cwd"] = str(nr_in["cwd"] or "").strip()
-            if "stop_command" in nr_in:
-                nr_out["stop_command"] = str(nr_in["stop_command"] or "").strip()
-            if "stop_image_names" in nr_in and isinstance(nr_in["stop_image_names"], list):
-                nr_out["stop_image_names"] = [
-                    str(n).strip() for n in nr_in["stop_image_names"] if str(n).strip()
-                ]
-            if "stop_path_filter" in nr_in:
-                nr_out["stop_path_filter"] = str(nr_in["stop_path_filter"] or "").strip()
-            if "force_kill_by_image_name" in nr_in:
-                nr_out["force_kill_by_image_name"] = bool(nr_in["force_kill_by_image_name"])
-            if "stop_grace_seconds" in nr_in:
-                nr_out["stop_grace_seconds"] = max(0, int(nr_in["stop_grace_seconds"]))
-            if "cooldown_seconds" in nr_in:
-                nr_out["cooldown_seconds"] = max(30, int(nr_in["cooldown_seconds"]))
-            if "max_attempts_per_hour" in nr_in:
-                nr_out["max_attempts_per_hour"] = max(1, int(nr_in["max_attempts_per_hour"]))
-            if "recovery_grace_seconds" in nr_in:
-                nr_out["recovery_grace_seconds"] = max(5, int(nr_in["recovery_grace_seconds"]))
-            if "qrcode_globs" in nr_in and isinstance(nr_in["qrcode_globs"], list):
-                nr_out["qrcode_globs"] = [str(g) for g in nr_in["qrcode_globs"] if str(g).strip()]
-            qq_cfg["supervisor"] = nr_out
-            platforms_cfg["qq"] = qq_cfg
-            new_cfg["platforms"] = platforms_cfg
-            new_alerting.pop("qq_adapter_restart", None)
-        # 邮件远程指令子节点（Phase 3）
-        if "email_control" in ad and isinstance(ad["email_control"], dict):
-            ec_in = ad["email_control"]
-            ec_out = dict(new_alerting.get("email_control", {}))
-            if "enabled" in ec_in:
-                ec_out["enabled"] = bool(ec_in["enabled"])
-            if "allowed_commands" in ec_in and isinstance(ec_in["allowed_commands"], list):
-                allowed_pool = {"REQUEST", "RESTART", "STOP", "STATUS", "KILL_AICQ"}
-                cleaned = []
-                for c in ec_in["allowed_commands"]:
-                    cu = str(c).strip().upper()
-                    if cu in allowed_pool and cu not in cleaned:
-                        cleaned.append(cu)
-                # REQUEST 为握手入口，必须保留，否则用户无法主动要 token
-                if "REQUEST" not in cleaned:
-                    cleaned.insert(0, "REQUEST")
-                ec_out["allowed_commands"] = cleaned
-            if "token_ttl_seconds" in ec_in:
-                ec_out["token_ttl_seconds"] = max(60, min(7 * 24 * 3600, int(ec_in["token_ttl_seconds"])))
-            if "poll_interval" in ec_in:
-                ec_out["poll_interval"] = max(10, min(600, int(ec_in["poll_interval"])))
-            if "reuse_smtp_credentials" in ec_in:
-                ec_out["reuse_smtp_credentials"] = bool(ec_in["reuse_smtp_credentials"])
-            new_alerting["email_control"] = ec_out
-        new_cfg["alerting"] = new_alerting
     if "tool_execution_guard" in data and isinstance(data["tool_execution_guard"], dict):
         guard_data = data["tool_execution_guard"]
         new_guard = dict(new_cfg.get("tool_execution_guard", {}))
@@ -1349,65 +1247,21 @@ async def settings_save():
         logger.exception("热重载 QQ adapter 失败")
         return jsonify({"success": False, "error": f"QQ 平台热重载失败: {exc}"}), 400
 
-    # ── 热重载 AlertManager 与 QQAdapterClient 心跳监视 ──────
-    try:
-        from alerting import AlertManager
-        from platforms.qq.supervisor import QQAdapterSupervisor
-        new_alerting_cfg = new_cfg.get("alerting", {}) or {}
-        new_alert = AlertManager(new_alerting_cfg)
-        # 迁移远程指令 token 注册表：避免“保存设置”时把已发出的 token 全部作废，
-        # 导致用户回信被判 token missing。
-        old_alert = app_state.alert_manager
-        if old_alert is not None:
-            try:
-                new_alert._pending_tokens.update(getattr(old_alert, "_pending_tokens", {}))
-                new_alert._recent_msgids.update(getattr(old_alert, "_recent_msgids", {}))
-            except (AttributeError, TypeError):
-                pass
-        app_state.alert_manager = new_alert
-        # QQ 平台监管器热重载
-        qq_runtime = get_platform("qq")
-        qq_client = getattr(qq_runtime, "client", None)
-        new_supervisor = QQAdapterSupervisor(
-            new_qq_platform_cfg.get("supervisor", {}) or {},
-            client=qq_client,
-            alert=new_alert,
+    # QQ 平台监管器热重载
+    from platforms.qq.supervisor import QQAdapterSupervisor
+
+    qq_runtime = get_platform("qq")
+    qq_client = getattr(qq_runtime, "client", None)
+    new_supervisor = QQAdapterSupervisor(
+        new_qq_platform_cfg.get("supervisor", {}) or {},
+        client=qq_client,
+    )
+    if qq_runtime is not None:
+        qq_runtime.supervisor = new_supervisor
+    if qq_client is not None:
+        qq_client.set_supervisor(
+            new_supervisor if new_supervisor.is_configured() else None
         )
-        if qq_runtime is not None:
-            qq_runtime.supervisor = new_supervisor
-        if qq_client is not None:
-            if new_alert.enabled:
-                qq_client.set_alert_manager(
-                    new_alert,
-                    heartbeat_timeout=float(new_alerting_cfg.get("heartbeat_timeout", 120)),
-                )
-            else:
-                # 关闭告警：解绑 alert，watchdog 仍在跑但不会发邮件
-                qq_client.set_alert_manager(None, heartbeat_timeout=120.0)
-            # 同步重启能力
-            qq_client.set_supervisor(
-                new_supervisor if new_supervisor.is_configured() else None
-            )
-        # ── 邮件远程指令控制器热重载（Phase 3）────────────
-        from email_controller import EmailController
-        old_ec = app_state.email_controller
-        if old_ec is not None:
-            try:
-                await old_ec.stop()
-            except Exception:
-                logger.warning("热重载：停旧 EmailController 异常", exc_info=True)
-        new_ec = EmailController(
-            new_alerting_cfg,
-            supervisor=new_supervisor,
-            alert=new_alert,
-        )
-        app_state.email_controller = new_ec
-        try:
-            await new_ec.start()
-        except Exception:
-            logger.warning("热重载：启新 EmailController 异常", exc_info=True)
-    except Exception:
-        logger.exception("热重载 AlertManager 失败")
 
     # ── 热重载 TTS 插件服务端 ───────────────────────
     try:
@@ -1440,34 +1294,6 @@ async def settings_save():
         logger.exception("热重载 TTS 插件服务端失败")
 
     return jsonify({"success": True})
-
-
-@settings_bp.route("/settings/alerting/test", methods=["POST"])
-async def alerting_test():
-    """触发一次测试告警邮件，验证 SMTP 配置可用。
-
-    使用当前 .env 中已写入的 SMTP 凭据（前端必须先点"保存并应用"再点测试）。
-    ⚠️ 必须复用全局 app_state.alert_manager，否则签发的远程指令 token
-       只会进临时实例的注册表，等用户回复邮件时全局实例查不到 token。
-    """
-    mgr = app_state.alert_manager
-    if mgr is None:
-        return jsonify({"success": False, "error": "AlertManager 尚未初始化"}), 500
-
-    # 临时启用 + 改前缀，发完恢复
-    saved_enabled = mgr.cfg.get("enabled", False)
-    saved_prefix = mgr.cfg.get("subject_prefix", "[AIcarus 告警]")
-    mgr.cfg["enabled"] = True
-    mgr.cfg["subject_prefix"] = saved_prefix + "[WebUI 测试]"
-    try:
-        await mgr.notify_disconnect("WebUI 测试: 这是一封测试邮件，可忽略")
-        return jsonify({"success": True, "message": "已尝试发送测试邮件，请到收件箱确认"})
-    except Exception as e:
-        logger.exception("发送测试告警邮件失败")
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        mgr.cfg["enabled"] = saved_enabled
-        mgr.cfg["subject_prefix"] = saved_prefix
 
 
 @settings_bp.route("/settings/persona", methods=["POST"])

@@ -330,7 +330,6 @@ platforms:
       cooldown_seconds: 300
       max_attempts_per_hour: 4
       recovery_grace_seconds: 45
-      qrcode_globs: []
 
 # ══════════════════════════════════════════
 #  Vision Bridge（视觉桥）
