@@ -463,3 +463,25 @@ def test_advanced_sampling_only_sends_enabled_parameters():
 
     assert create_kwargs == {"model": "test-model", "temperature": 0.7}
 
+
+
+def test_retired_email_config_preserves_legacy_supervisor():
+    from platforms.qq.adapter.config import normalize_qq_platform_config
+
+    config = {
+        "alerting": {
+            "enabled": True,
+            "email_control": {"enabled": True},
+            "qq_adapter_restart": {
+                "enabled": True,
+                "command": "adapter-start.cmd",
+                "qrcode_globs": ["**/*.png"],
+            },
+        },
+    }
+    qq = normalize_qq_platform_config(config, remove_legacy=True)
+    assert "alerting" not in config
+    assert qq["supervisor"]["enabled"] is True
+    assert qq["supervisor"]["command"] == "adapter-start.cmd"
+    assert "qrcode_globs" not in qq["supervisor"]
+    assert normalize_qq_platform_config(config, remove_legacy=True) == qq

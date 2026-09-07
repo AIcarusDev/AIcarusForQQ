@@ -414,14 +414,6 @@ async def startup() -> None:
     )
     logger.info("[startup] 意识主循环已启动，等待首次输入")
 
-    # ── 邮件远程指令控制器（Phase 3）──────────────────
-    ec = app_state.email_controller
-    if ec is not None:
-        try:
-            await ec.start()
-        except Exception:
-            logger.warning("[startup] EmailController 启动失败", exc_info=True)
-
     # ── 续跑上次未完成的归档任务（Ctrl+C / 崩溃残留） ─────
     try:
         from memory.event_extraction.workflow import resume_pending_jobs
@@ -550,14 +542,6 @@ async def shutdown() -> None:
             await tts_server.stop()
         except Exception:
             logger.warning("[shutdown] TTS 插件服务端停止异常", exc_info=True)
-
-    # ── 停止邮件远程指令控制器 ─────────────────────────
-    ec = app_state.email_controller
-    if ec is not None:
-        try:
-            await ec.stop()
-        except Exception:
-            logger.warning("[shutdown] EmailController 停止异常", exc_info=True)
 
     try:
         from browser.session import close_browser_sessions

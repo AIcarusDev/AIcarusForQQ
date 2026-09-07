@@ -96,3 +96,35 @@ def test_active_disconnect_resolves_sent_event_waiters() -> None:
         assert token not in client._sent_event_waiters
 
     asyncio.run(scenario())
+
+
+def test_heartbeat_watchdog_recovers_without_email_manager(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from platforms.qq.adapter import client as client_module
+
+    async def scenario() -> None:
+        client = QQAdapterClient()
+        client._ws = SimpleNamespace(state=client_module.WsState.OPEN)
+        client._last_heartbeat_at = asyncio.get_running_loop().time() - 180
+        restarts = []
+        client.set_supervisor(SimpleNamespace(request_restart=restarts.append))
+        ticks = 0
+
+        async def tick(_delay):
+            nonlocal ticks
+            ticks += 1
+            if ticks == 3:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(client_module.asyncio, "sleep", tick)
+        try:
+            await client._heartbeat_watchdog()
+        except asyncio.CancelledError:
+            pass
+        assert client._heartbeat_stale is True
+        assert len(restarts) == 1
+        await client._handle_meta({"meta_event_type": "heartbeat"})
+        assert client._heartbeat_stale is False
+        assert client._last_heartbeat_at > 0
+
+    asyncio.run(scenario())

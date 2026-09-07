@@ -1119,10 +1119,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       </button>
       <button
         type="button"
-        data-section-button="alerting"
-        onclick="showSection('alerting')"
+        data-section-button="qq-supervisor"
+        onclick="showSection('qq-supervisor')"
       >
-        告警与邮件 <span>Alerts</span>
+        QQ 自动重启 <span>Recovery</span>
       </button>
       <button
         type="button"
@@ -2824,141 +2824,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
       <section
         class="settings-section"
-        id="section-alerting"
-        data-section-title="告警与邮件"
+        id="section-qq-supervisor"
+        data-section-title="QQ 自动重启"
       >
         <div class="section-head">
           <div>
-            <h2>告警与邮件</h2>
-            <p>配置掉线告警、SMTP/IMAP、自动重启和邮件远程指令。</p>
+            <h2>QQ 自动重启</h2>
+            <p>配置 QQ adapter 掉线后的进程重启和恢复检测。</p>
           </div>
         </div>
         <div class="section-body">
-          <div class="group">
-            <div class="toggle-row">
-              <div class="toggle-copy">
-                <strong>启用掉线告警</strong
-                ><span>WebSocket 断开或心跳超时时发送邮件提醒。</span>
-              </div>
-              <label class="toggle"
-                ><input type="checkbox" id="alerting_enabled" /><span
-                  class="slider"
-                ></span
-              ></label>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>心跳超时阈值（秒）</label
-                ><input
-                  id="alerting_heartbeat_timeout"
-                  type="number"
-                  min="30"
-                  max="3600"
-                  placeholder="120"
-                />
-              </div>
-              <div class="field">
-                <label>告警冷却（秒）</label
-                ><input
-                  id="alerting_cooldown"
-                  type="number"
-                  min="0"
-                  max="86400"
-                  placeholder="600"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label>邮件主题前缀</label
-              ><input
-                id="alerting_subject_prefix"
-                type="text"
-                placeholder="[AIcarus 告警]"
-              />
-            </div>
-          </div>
-          <details class="group" open>
-            <summary>SMTP 发送配置</summary>
-            <div class="details-body">
-              <div class="row">
-                <div class="field">
-                  <label>SMTP 主机</label
-                  ><input
-                    id="smtp_host"
-                    type="text"
-                    placeholder="smtp.qq.com"
-                  />
-                </div>
-                <div class="field">
-                  <label>端口</label
-                  ><input
-                    id="smtp_port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    placeholder="465"
-                  />
-                </div>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>使用 SSL</strong
-                  ><span>端口 465 通常启用 SSL；587 STARTTLS 通常关闭。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="smtp_use_ssl" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>SMTP 登录账号</label
-                  ><input
-                    id="smtp_user"
-                    type="text"
-                    placeholder="your@example.com"
-                  />
-                </div>
-                <div class="field">
-                  <label>授权码 / 密码</label
-                  ><input
-                    id="smtp_password"
-                    type="password"
-                    autocomplete="new-password"
-                    placeholder="留空则不修改"
-                  />
-                </div>
-              </div>
-              <div class="field">
-                <label>发件人地址</label
-                ><input
-                  id="smtp_sender"
-                  type="text"
-                  placeholder="留空则等同于登录账号"
-                />
-              </div>
-              <div class="field">
-                <label>收件人列表</label
-                ><input
-                  id="smtp_recipients"
-                  type="text"
-                  placeholder="多个收件人用逗号分隔"
-                />
-              </div>
-              <div>
-                <button
-                  class="btn-secondary"
-                  type="button"
-                  id="alerting_test_btn"
-                  onclick="sendAlertingTest()"
-                >
-                  发送测试邮件
-                </button>
-                <span class="hint">点击前请先保存并应用。</span>
-              </div>
-            </div>
-          </details>
           <details class="group">
             <summary>QQ adapter 自动重启</summary>
             <div class="details-body">
@@ -3075,134 +2950,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   min="5"
                   max="600"
                 />
-              </div>
-              <div class="field">
-                <label>二维码搜索路径（每行一个 glob）</label
-                ><textarea
-                  id="qq_adapter_restart_qrcode_globs"
-                  rows="4"
-                  placeholder="**/qrcode*.png"
-                ></textarea>
-              </div>
-            </div>
-          </details>
-          <details class="group">
-            <summary>邮件远程指令与 IMAP</summary>
-            <div class="details-body">
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>启用邮件远程指令</strong
-                  ><span>通过回复告警邮件执行 RESTART、STATUS 等指令。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="ec_enabled" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="field">
-                <label>允许的指令</label>
-                <div class="command-grid">
-                  <label
-                    ><input
-                      type="checkbox"
-                      id="ec_cmd_REQUEST"
-                      disabled
-                      checked
-                    />
-                    REQUEST</label
-                  ><label
-                    ><input type="checkbox" id="ec_cmd_RESTART" />
-                    RESTART</label
-                  ><label
-                    ><input type="checkbox" id="ec_cmd_STATUS" /> STATUS</label
-                  ><label><input type="checkbox" id="ec_cmd_STOP" /> STOP</label
-                  ><label
-                    ><input type="checkbox" id="ec_cmd_KILL_AICQ" />
-                    KILL_AICQ</label
-                  >
-                </div>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>Token 有效期（秒）</label
-                  ><input
-                    id="ec_token_ttl_seconds"
-                    type="number"
-                    min="60"
-                    max="3600"
-                  />
-                </div>
-                <div class="field">
-                  <label>IMAP 轮询周期（秒）</label
-                  ><input
-                    id="ec_poll_interval"
-                    type="number"
-                    min="10"
-                    max="600"
-                  />
-                </div>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>IMAP 复用 SMTP 凭据</strong
-                  ><span>使用 SMTP 的 USER / PASSWORD 登录 IMAP。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="ec_reuse_smtp_credentials" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>IMAP 主机</label
-                  ><input
-                    id="imap_host"
-                    type="text"
-                    placeholder="imap.163.com"
-                  />
-                </div>
-                <div class="field">
-                  <label>端口</label
-                  ><input
-                    id="imap_port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    placeholder="993"
-                  />
-                </div>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>IMAP 使用 SSL</strong
-                  ><span>端口 993 通常启用 SSL。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="imap_use_ssl" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>IMAP 登录账号</label
-                  ><input
-                    id="imap_user"
-                    type="text"
-                    placeholder="同 SMTP_USER"
-                  />
-                </div>
-                <div class="field">
-                  <label>IMAP 授权码 / 密码</label
-                  ><input
-                    id="imap_password"
-                    type="password"
-                    autocomplete="new-password"
-                    placeholder="留空则不修改"
-                  />
-                </div>
               </div>
             </div>
           </details>
@@ -3599,7 +3346,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["workspace", "Agent 电脑"],
     ["qq_adapter", "QQ / QQ adapter"],
     ["tts", "TTS 插件"],
-    ["alerting", "告警与邮件"],
+    ["qq-supervisor", "QQ 自动重启"],
     ["auxiliary", "辅助服务"],
     ["advanced", "高级"],
   ];
@@ -4613,17 +4360,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "tts_max_concurrent_tasks_per_plugin",
       tts.max_concurrent_tasks_per_plugin ?? 8,
     );
-    const alerting = data.alerting || {};
-    setChecked("alerting_enabled", !!alerting.enabled);
-    setValue("alerting_heartbeat_timeout", alerting.heartbeat_timeout ?? 120);
-    setValue("alerting_cooldown", alerting.cooldown ?? 600);
-    setValue(
-      "alerting_subject_prefix",
-      alerting.subject_prefix || "[AIcarus 告警]",
-    );
-    hydrateSmtp(data.smtp || {});
     hydrateRestart(qqPlatform.supervisor || {});
-    hydrateEmailControl(alerting.email_control || {}, data.imap || {});
     hydrateToolExecutionGuard(data.tool_execution_guard || {});
     const compression = data.cognition_compression || {};
     setValue("compression_provider", getProviderName(compression));
@@ -4708,25 +4445,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     updateGuardianSaveButton();
   }
 
-  function hydrateSmtp(smtp) {
-    setValue("smtp_host", smtp.AICQ_SMTP_HOST || "");
-    setValue("smtp_port", smtp.AICQ_SMTP_PORT || "");
-    const sslRaw = (smtp.AICQ_SMTP_USE_SSL || "").toLowerCase();
-    setChecked(
-      "smtp_use_ssl",
-      sslRaw
-        ? ["1", "true", "yes", "on"].includes(sslRaw)
-        : String(smtp.AICQ_SMTP_PORT || "") === "465",
-    );
-    setValue("smtp_user", smtp.AICQ_SMTP_USER || "");
-    setPasswordPlaceholder(
-      "smtp_password",
-      smtp.AICQ_SMTP_PASSWORD,
-      "QQ/163 等需使用授权码而非登录密码",
-    );
-    setValue("smtp_sender", smtp.AICQ_SMTP_SENDER || "");
-    setValue("smtp_recipients", smtp.AICQ_SMTP_RECIPIENTS || "");
-  }
   function hydrateRestart(nr) {
     setChecked("qq_adapter_restart_enabled", !!nr.enabled);
     setValue("qq_adapter_restart_command", nr.command || "");
@@ -4756,42 +4474,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue(
       "qq_adapter_restart_recovery_grace_seconds",
       nr.recovery_grace_seconds ?? 45,
-    );
-    setValue(
-      "qq_adapter_restart_qrcode_globs",
-      Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "",
-    );
-  }
-  function hydrateEmailControl(ec, imap) {
-    setChecked("ec_enabled", !!ec.enabled);
-    const allowed = new Set(
-      (ec.allowed_commands || ["RESTART", "STATUS"]).map((item) =>
-        String(item).toUpperCase(),
-      ),
-    );
-    ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].forEach((cmd) =>
-      setChecked("ec_cmd_" + cmd, allowed.has(cmd) || cmd === "REQUEST"),
-    );
-    setValue("ec_token_ttl_seconds", ec.token_ttl_seconds ?? 300);
-    setValue("ec_poll_interval", ec.poll_interval ?? 30);
-    setChecked(
-      "ec_reuse_smtp_credentials",
-      ec.reuse_smtp_credentials !== false,
-    );
-    setValue("imap_host", imap.AICQ_IMAP_HOST || "");
-    setValue("imap_port", imap.AICQ_IMAP_PORT || "");
-    const sslRaw = (imap.AICQ_IMAP_USE_SSL || "").toLowerCase();
-    setChecked(
-      "imap_use_ssl",
-      sslRaw
-        ? ["1", "true", "yes", "on"].includes(sslRaw)
-        : String(imap.AICQ_IMAP_PORT || "") === "993" || !imap.AICQ_IMAP_PORT,
-    );
-    setValue("imap_user", imap.AICQ_IMAP_USER || "");
-    setPasswordPlaceholder(
-      "imap_password",
-      imap.AICQ_IMAP_PASSWORD,
-      "留空则用 AICQ_SMTP_PASSWORD",
     );
   }
   function hydrateToolExecutionGuard(cfg) {
@@ -5162,8 +4844,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function buildSettingsPayload() {
     const mainProvider = value("provider");
     const visionMode = value("vision_mode");
-    const smtpPassword = rawValue("smtp_password");
-    const imapPassword = rawValue("imap_password");
     const guardProvider = value("guard_provider");
     const compressionProvider = value("compression_provider");
     const eventExtractionProvider = value("event_extraction_provider");
@@ -5289,7 +4969,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             "qq_adapter_restart_recovery_grace_seconds",
             45,
           ),
-          qrcode_globs: splitLines("qq_adapter_restart_qrcode_globs"),
         },
         },
       },
@@ -5302,41 +4981,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "tts_max_concurrent_tasks_per_plugin",
           8,
         ),
-      },
-      alerting: {
-        enabled: checked("alerting_enabled"),
-        heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
-        cooldown: intValue("alerting_cooldown", 600),
-        subject_prefix: value("alerting_subject_prefix"),
-        email_control: {
-          enabled: checked("ec_enabled"),
-          allowed_commands: [
-            "REQUEST",
-            "RESTART",
-            "STATUS",
-            "STOP",
-            "KILL_AICQ",
-          ].filter((cmd) => checked("ec_cmd_" + cmd)),
-          token_ttl_seconds: intValue("ec_token_ttl_seconds", 300),
-          poll_interval: intValue("ec_poll_interval", 30),
-          reuse_smtp_credentials: checked("ec_reuse_smtp_credentials"),
-        },
-      },
-      smtp: {
-        AICQ_SMTP_HOST: value("smtp_host"),
-        AICQ_SMTP_PORT: value("smtp_port"),
-        AICQ_SMTP_USE_SSL: checked("smtp_use_ssl") ? "true" : "false",
-        AICQ_SMTP_USER: value("smtp_user"),
-        ...(smtpPassword ? { AICQ_SMTP_PASSWORD: smtpPassword } : {}),
-        AICQ_SMTP_SENDER: value("smtp_sender"),
-        AICQ_SMTP_RECIPIENTS: value("smtp_recipients"),
-      },
-      imap: {
-        AICQ_IMAP_HOST: value("imap_host"),
-        AICQ_IMAP_PORT: value("imap_port"),
-        AICQ_IMAP_USE_SSL: checked("imap_use_ssl") ? "true" : "false",
-        AICQ_IMAP_USER: value("imap_user"),
-        ...(imapPassword ? { AICQ_IMAP_PASSWORD: imapPassword } : {}),
       },
       tool_execution_guard: {
         enabled: checked("guard_enabled"),
@@ -5452,8 +5096,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       payload.tts.max_concurrent_tasks_per_plugin > 128
     )
       return "TTS 单插件并发上限必须在 1-128 之间";
-    if (payload.alerting.heartbeat_timeout < 30)
-      return "心跳超时阈值不能低于 30 秒";
     if (
       payload.web_search?.searxng?.enabled &&
       !payload.web_search.searxng.base_url
@@ -5555,8 +5197,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         [
           "proxy_openai",
           "proxy_tavily",
-          "smtp_password",
-          "imap_password",
         ].forEach((id) => setValue(id, ""));
         const preserveGuardianDraft = guardianHasUnsavedChanges();
         const guardianDraft = rawValue("guardian_info");
@@ -5618,27 +5258,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     } finally {
       state.guardianSaving = false;
       updateGuardianSaveButton();
-    }
-  }
-  async function sendAlertingTest() {
-    const btn = $("alerting_test_btn");
-    const original = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "发送中...";
-    try {
-      const res = await fetch("/settings/alerting/test", { method: "POST" });
-      const data = await res.json();
-      if (data.success)
-        showToast(
-          data.message || "已尝试发送测试邮件，请到收件箱确认",
-          "success",
-        );
-      else showToast("测试发送失败: " + (data.error || "未知错误"), "error");
-    } catch (error) {
-      showToast("请求失败: " + error.message, "error");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = original;
     }
   }
     async function launchBrowserLogin() {

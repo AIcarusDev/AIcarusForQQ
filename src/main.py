@@ -32,8 +32,6 @@ from quart import Quart
 from zoneinfo import ZoneInfo
 
 import app_state
-from alerting import AlertManager
-from email_controller import EmailController
 from config_loader import AGENT_PROMPT_KEYS, load_config
 from web.debug_server import debug_bp, init_debug, broadcast_platform_status
 from lifecycle import startup, shutdown
@@ -226,28 +224,13 @@ if not _WEBUI_ONLY:
         on_audio_chunk=_buffer_tts_audio,
         max_concurrent_tasks_per_plugin=int(app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)),
     ) if _tts_enabled else None
-    # ── 掉线告警（可选）────────────────────────────────
-    _alerting_cfg = config.get("alerting", {}) or {}
-    app_state.alert_manager = AlertManager(_alerting_cfg)
-    if _qq_client and app_state.alert_manager.enabled:
-        _qq_client.set_alert_manager(
-            app_state.alert_manager,
-            heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
-        )
     # ── QQ adapter 自动重启 监管器（可选）──────────────────
     _qq_runtime.supervisor = QQAdapterSupervisor(
         _qq_runtime.config.get("supervisor", {}) or {},
         client=_qq_client,
-        alert=app_state.alert_manager,
     )
     if _qq_client and _qq_runtime.supervisor.is_configured():
         _qq_client.set_supervisor(_qq_runtime.supervisor)
-    # ── 邮件远程指令（Phase 3，可选）────────────────────
-    app_state.email_controller = EmailController(
-        _alerting_cfg,
-        supervisor=_qq_runtime.supervisor,
-        alert=app_state.alert_manager,
-    )
     register_qq_platform_handlers(_qq_runtime)
 
 _qq_runtime_for_debug = app_state.platform_registry.get("qq") if app_state.platform_registry else None
