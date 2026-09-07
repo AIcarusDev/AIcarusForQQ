@@ -364,6 +364,20 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_bot_goals_active
                 ON bot_goals(created_at) WHERE is_deleted=0 AND status='active';
 
+            -- 模型上下文契约 container 表：全局单例条目存储
+            CREATE TABLE IF NOT EXISTS bot_container_items (
+                item_id      TEXT    PRIMARY KEY,
+                section      TEXT    NOT NULL,
+                item_key     TEXT    NOT NULL DEFAULT '',
+                content      TEXT    NOT NULL DEFAULT '',
+                metadata_json TEXT   NOT NULL DEFAULT '{}',
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                is_deleted   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_container_items_active
+                ON bot_container_items(section, created_at) WHERE is_deleted=0;
+
             -- adapter 意识流持久化：跨重启保留函数调用历史
             CREATE TABLE IF NOT EXISTS adapter_state (
                 key          TEXT    PRIMARY KEY,
@@ -2743,6 +2757,69 @@ async def load_goals(limit: int = 10) -> list[dict]:
         item["conv_type"] = item.get("focus_type", "")
         item["conv_id"] = item.get("focus_id", "")
         item["conv_name"] = item.get("focus_name", "")
+        out.append(item)
+    return out
+
+
+# ── 上下文契约 container ──────────────────────────────────
+
+async def write_container_item(
+    item_id: str,
+    section: str,
+    item_key: str = "",
+    content: str = "",
+    metadata: dict | None = None,
+) -> None:
+    """写入或更新一条 container 条目。"""
+    now = _ms()
+    meta_str = json.dumps(metadata or {}, ensure_ascii=False)
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO bot_container_items
+               (item_id, section, item_key, content, metadata_json, created_at, updated_at, is_deleted)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+               ON CONFLICT(item_id) DO UPDATE SET
+                   section=excluded.section,
+                   item_key=excluded.item_key,
+                   content=excluded.content,
+                   metadata_json=excluded.metadata_json,
+                   updated_at=excluded.updated_at,
+                   is_deleted=0""",
+            (item_id, section, item_key, content, meta_str, now, now),
+        )
+        await db.commit()
+    logger.debug("已写入 container 条目: item_id=%s, section=%s", item_id, section)
+
+
+async def soft_delete_container_item(item_id: str) -> bool:
+    """软删除一条 container 条目。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE bot_container_items SET is_deleted=1, updated_at=? WHERE item_id=? AND is_deleted=0",
+            (_ms(), item_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def load_container_items() -> list[dict]:
+    """加载所有未删除的 container 条目，按 created_at 正序排序。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT item_id, section, item_key, content, metadata_json, created_at, updated_at
+               FROM bot_container_items
+               WHERE is_deleted=0
+               ORDER BY created_at ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+    out: list[dict] = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+        except Exception:
+            item["metadata"] = {}
         out.append(item)
     return out
 

@@ -32,6 +32,7 @@ from database import (
     load_chat_sessions,
     load_chat_messages,
     load_goals,
+    load_container_items,
     load_adapter_contents,
     save_adapter_contents,
     load_namespace_runtime_state,
@@ -44,6 +45,7 @@ from llm.session import (
     update_bot_info,
 )
 import llm.prompt.goals as _goals
+import llm.prompt.container as _container
 from memory.tokenizer import (
     load_custom_dict_from_events,
     configure as _configure_tokenizer,
@@ -120,6 +122,14 @@ async def startup() -> None:
     _goal_rows = await load_goals(limit=_goals.get_max_entries())
     _goals.restore(_goal_rows)
     logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
+
+    # 恢复上下文契约 container
+    try:
+        _container_rows = await load_container_items()
+        _container.restore(_container_rows)
+        logger.info("[startup] 已恢复 container 条目: %d 条", len(_container_rows))
+    except Exception:
+        logger.warning("[startup] 恢复 container 条目失败", exc_info=True)
 
     _restart_intent = core_restart.read_pending_intent()
 

@@ -50,6 +50,17 @@ def _prepend_text_block(content: "str | list", text: str) -> "str | list":
     return [{"type": "text", "text": text + "\n"}] + content
 
 
+def _append_text_block(content: "str | list", text: str) -> "str | list":
+    """给 user prompt 尾部插入纯文本块。"""
+    if not text:
+        return content
+    if isinstance(content, str):
+        return content + "\n" + text
+    new_parts = list(content)
+    _append_text_part(new_parts, "\n" + text)
+    return new_parts
+
+
 def _build_active_skill_prompt_block() -> str:
     try:
         import app_state
@@ -381,4 +392,13 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         prefix_parts.append(skill_block)
     prefix = "\n".join(prefix_parts)
     user_prompt = _prepend_text_block(user_prompt, prefix)
+    try:
+        from .container import build_container_xml
+
+        container_block = build_container_xml()
+    except Exception:
+        logger.warning("构建 container prompt block 失败", exc_info=True)
+        container_block = "<container/>"
+    if container_block:
+        user_prompt = _append_text_block(user_prompt, container_block)
     return user_prompt
