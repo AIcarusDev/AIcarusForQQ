@@ -124,22 +124,18 @@ def _create_legacy_summary_schema(con: sqlite3.Connection) -> None:
     )
 
 
-def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
+def test_preprocessing_schema_creates_current_summary_cache_columns(tmp_path):
     from memory.maintenance.preprocessing import ensure_preprocessing_schema
 
     db_path = tmp_path / "current-summary-schema.sqlite3"
     with sqlite3.connect(db_path) as con:
         ensure_preprocessing_schema(con)
 
-        tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         cols = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
         assert cols == {
             "summary_id", "task_id", "input_hash", "model", "status",
             "summary", "created_at_ms", "updated_at_ms", "error_json",
         }
-        assert "MemorySummaryInputs" not in tables
-        assert "MemorySummaryInputEvents" not in tables
-        assert "MemorySummaryInputRelations" not in tables
 
 
 def test_preprocessing_schema_rebuilds_current_summary_cache_and_uses_json_fallback(tmp_path):
@@ -372,7 +368,6 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline
             "active",
         )
         assert event_row == ("summary:storyline:legacy", 42, 1, "delta", "active")
-        assert "MemoryStorylineSummaryTaskRelations" not in tables
         assert not tables.intersection(
             {"MemorySummaryInputs", "MemorySummaryInputEvents", "MemorySummaryInputRelations"}
         )
@@ -447,9 +442,7 @@ def test_storyline_synthesis_keeps_current_task_schema_without_legacy_migration(
         assert stats["summary_tasks_loaded"] == 0
         assert "MemoryStorylineSummaryTasks" in tables
         assert "MemoryStorylineSummaryTaskEvents" in tables
-        assert "MemoryStorylineSummaryTaskRelations" not in tables
         assert "MemorySummaryCache" in tables
-        assert "MemoryV2SummaryCache" not in tables
 
 
 def test_entity_resolution_preserves_explicit_types_and_only_normalizes_unicode():

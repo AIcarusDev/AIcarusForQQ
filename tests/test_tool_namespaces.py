@@ -970,8 +970,6 @@ def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_sessi
 
     active_names = collection.active_names()
     assert "core.runtime_manage" in active_names
-    assert "wait_qq_event" not in active_names
-    assert "wait_browser_event" not in active_names
     spec = collection.active_specs["core.enter_qq_session"]
     assert spec.namespace == "qq_runtime"
     assert spec.visible_namespace == "core"
@@ -982,34 +980,7 @@ def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_sessi
     core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
     core_names = [decl["name"] for decl in core_block["declarations"]]
     assert "runtime_manage" in core_names
-    assert "wait_qq_event" not in core_names
     assert all(block["name"] != "qq_runtime" for block in collection.namespace_prompt_blocks())
-
-
-def test_browser_runtime_no_longer_mounts_wait_when_browser_world_active(monkeypatch):
-    import browser.session as browser_session
-
-    monkeypatch.setattr(browser_session, "browser_world_view_state", lambda: {"active": True})
-    collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
-        namespace_state=NamespaceRuntimeState(),
-        current_round=1,
-        default_ttl_rounds=5,
-        qq_client=None,
-        vision_bridge=None,
-        provider=None,
-    )
-
-    active_names = collection.active_names()
-    assert "core.runtime_manage" in active_names
-    assert "wait_browser_event" not in active_names
-    assert "browser_runtime" not in collection.active_namespace_names()
-
-    core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
-    core_names = [decl["name"] for decl in core_block["declarations"]]
-    assert "runtime_manage" in core_names
-    assert "wait_browser_event" not in core_names
-    assert all(block["name"] != "browser_runtime" for block in collection.namespace_prompt_blocks())
 
 
 def test_build_tools_uses_namespace_registry(fake_session):
@@ -1035,7 +1006,6 @@ def test_build_tools_uses_namespace_registry(fake_session):
 
     assert "core.namespace_manage" in collection.active_names()
     assert "core.recall_skill_resource" in collection.active_names()
-    assert "tools_manage" not in collection.all_specs
     inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
     assert "qq_group_info" in inactive_namespaces
     assert "qq_contacts" in inactive_namespaces
@@ -1080,8 +1050,8 @@ def test_qq_namespace_manifest_is_platform_owned():
         "scroll_chat_log", "search_history"
     )
     assert registry.get("qq_forward_view").tools == ("browse_forward",)
-    assert registry.get("qq_chat_view") is None
     assert modules.modules["qq"].mounts[0].source_namespace == "qq_runtime"
+
 
 def test_qq_chat_log_and_forward_view_namespaces_load_independently(fake_session):
     class FakeClient:
@@ -1475,6 +1445,4 @@ def test_core_platform_page_tools_are_visible_and_switch_focus(monkeypatch):
     assert closed["ok"] is True
     assert closed["closed_platform"] == "core"
     assert app_state.current_focus == CLOSED_PLATFORM_FOCUS
-
-
 

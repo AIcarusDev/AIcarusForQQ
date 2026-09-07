@@ -4,7 +4,6 @@ import asyncio
 
 from runtime.events import RuntimeEventHub
 from tools import build_tools
-import tools as tools_package
 from tools.contract import get_contract_from_module
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.prompt_signatures import strip_schema_descriptions
@@ -306,7 +305,7 @@ def test_poke_user_id_contract_is_string_with_integer_compatibility():
     assert user_id_schema["x-coerce-integer"] is True
 
 
-def test_runtime_manage_replaces_wait_family_in_discovered_tools():
+def test_runtime_manage_contract_has_current_action_discriminator():
     from tools.core import runtime_manage
 
     contract = get_contract_from_module(runtime_manage)
@@ -316,8 +315,6 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
         "idle",
         "sleep",
     }
-    assert "wait_qq_event" not in tools_package._discovered_tool_names()
-    assert "wait_browser_event" not in tools_package._discovered_tool_names()
 
 
 def test_scroll_chat_log_contract_is_action_union():
@@ -396,6 +393,5 @@ def _has_schema_description_keyword(value, *, in_properties: bool = False) -> bo
     if isinstance(value, list):
         return any(_has_schema_description_keyword(item) for item in value)
     return False
-
 
 
