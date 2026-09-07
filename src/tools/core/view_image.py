@@ -47,7 +47,7 @@ TOOL_CONTRACT = ToolContract(
     description=(
         "查看图片。可传 image_ref 或 path，返回真实图片；两者选一个。"
         "示例：在 <world> 中需要查看的图片因节省上下文关系只有 image_ref，而省略了真实多模态信息 -> 填写 image_ref 即可查看。"
-        "需要看已经保存到 Linux 目录 /home/agent 内的图片 -> 填写 path 即可查看。"
+        "需要看已经保存到 Linux 目录 /home/agent 内的图片 -> 填写 path 即可查看，同时会返回对应的 image_ref 供后续精查或收藏使用。"
     ),
     args_model=ViewImageArgs,
 )
@@ -179,7 +179,14 @@ def make_handler(session: Any) -> Callable:
                 staged.workspace_path,
                 image_info.mime_type,
             )
-            return {
+            try:
+                from workspace.media import register_workspace_bytes
+                assigned_ref = await register_workspace_bytes(raw, mime=image_info.mime_type)
+            except Exception:
+                logger.exception("[tools] view_image: 注册 workspace 图片失败 path=%s", staged.workspace_path)
+                return {"ok": False, "status": "registration_failed", "path": staged.workspace_path}
+
+            result: dict[str, Any] = {
                 "ok": True,
                 "path": staged.workspace_path,
                 "source": "path",
@@ -192,6 +199,9 @@ def make_handler(session: Any) -> Callable:
                     }
                 ],
             }
+            if assigned_ref:
+                result["image_ref"] = assigned_ref
+            return result
 
     def handler(
         image_ref: str | None = None,

@@ -527,8 +527,10 @@ def _process_loop(state: _LauncherState) -> None:
         with state.lock:
             state.proc = proc
 
-        # 等待服务就绪
-        ready = _wait_for_server(state.port, proc=proc)
+        # 首次图片升级可能需要数分钟；迁移完成前服务不会接受请求。
+        from llm.media.image_upgrade import is_verified
+        startup_timeout = 20.0 if is_verified(BASE_DIR) else 3600.0
+        ready = _wait_for_server(state.port, proc=proc, timeout=startup_timeout)
         if ready:
             url = _webui_url(state.port)
             print(f"[launcher] 服务已就绪: {url}", flush=True)
@@ -844,7 +846,9 @@ def _run_with_gui(state: _LauncherState) -> None:
     url = _webui_url(state.port)
 
     def _load_initial_webui() -> None:
-        state.server_ready.wait(timeout=30)
+        while not state.server_ready.wait(timeout=0.5):
+            if shutdown_requested.is_set() or state.stop_requested:
+                return
         if shutdown_requested.is_set() or state.stop_requested:
             return
         loaded = _load_window_url_when_http_ready(

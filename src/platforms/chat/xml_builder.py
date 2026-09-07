@@ -523,6 +523,11 @@ def _resolve_sentinels(
         image_ref = m.group(1)
         label = m.group(2)
         img = images.get(image_ref)
+        if img and not any(img.get(k) for k in ("pending", "failed", "expired")):
+            from llm.media.image_store import lookup_image
+            shared = lookup_image(image_ref)
+            if shared:
+                img = {**img, **shared}
         if not img:
             return f'[{html.escape(label)} image_ref="{image_ref}"]'
         if img.get("expired"):
@@ -561,19 +566,18 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
         image_ref = m.group(1)
         label = m.group(2)
         img = images.get(image_ref)
+        if img and not any(img.get(k) for k in ("pending", "failed", "expired")):
+            from llm.media.image_store import lookup_image
+            shared = lookup_image(image_ref)
+            if shared:
+                img = {**img, **shared}
         before = _resolve_sentinels(text[last_end:m.start()], images)
         data_url = None
         if img and not img.get("failed") and not img.get("pending"):
-            data_url = img.get("_llm_data_url")
-            if data_url is None and not img.get("_llm_image_failed"):
-                payload = image_bytes(img)
-                if payload is not None:
-                    raw, mime = payload
-                    data_url = make_data_url(base64.b64encode(raw).decode("ascii"), mime)
-                if data_url:
-                    img["_llm_data_url"] = data_url
-                else:
-                    img["_llm_image_failed"] = True
+            payload = image_bytes(img)
+            if payload is not None:
+                raw, mime = payload
+                data_url = make_data_url(base64.b64encode(raw).decode("ascii"), mime)
         if data_url and img:
             # 描述块追加在闭合括号后：vision=false 时 _strip_images 移除 image_url
             # 但保留文本 parts，模型仍能读到描述

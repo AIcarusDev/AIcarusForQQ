@@ -7,7 +7,6 @@ Handler 运行在 asyncio.to_thread 派生的线程中，
 import asyncio
 import base64
 import copy
-import hashlib
 import logging
 import re
 import time
@@ -593,9 +592,11 @@ async def _materialize_local_image_paths(
                     max_bytes=_MAX_LOCAL_IMAGE_BYTES,
                     max_pixels=_MAX_LOCAL_IMAGE_PIXELS,
                 )
-                digest = hashlib.sha256(raw).hexdigest()
+                from llm.media.image_store import register_image
+                record = await asyncio.to_thread(register_image, raw, "workspace")
                 segment.pop("path", None)
-                segment["_local_image_ref"] = f"img_{digest[:32]}"
+                segment["image_ref"] = record["image_ref"]
+                segment["_local_image_ref"] = record["image_ref"]
                 segment["_local_image_base64"] = base64.b64encode(raw).decode("ascii")
                 segment["_local_image_mime"] = image_info.mime_type
     except WorkspaceError as exc:
@@ -686,11 +687,15 @@ def _unconfirmed_high_risk_image_error(
         if not isinstance(message, dict):
             continue
         for segment in message.get("segments") or []:
-            if not isinstance(segment, dict) or segment.get("command") != "image":
+            if not isinstance(segment, dict) or segment.get("command") not in ("image", "sticker"):
                 continue
             image_ref = str(segment.get("image_ref") or "").strip()
             if not image_ref:
                 continue
+            from llm.media.image_store import lookup_image
+            record = lookup_image(image_ref)
+            if record:
+                image_ref = record["image_ref"]
             if image_ref in pending_refs:
                 return "该原图属于待确认批次，必须使用 confirm_browser_image_send，不能直接发送。"
             artifact = read_sendable_browser_image_file(image_ref)

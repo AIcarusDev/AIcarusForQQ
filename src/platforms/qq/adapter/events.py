@@ -241,28 +241,32 @@ async def download_pending_images(entry: dict) -> bool:
 
     images = entry.get("images") or {}
     downloaded_any = False
-    for image_ref, url, label in pending:
+    for pending_index, (image_ref, url, label) in enumerate(pending):
         result = await _fetch_image_b64(url)
         if result is _EXPIRED_SENTINEL:
             images[image_ref] = {"expired": True, "label": label}
             logger.warning("图片已过期，已标记 image_ref=%s", image_ref)
         elif result:
             b64, mime = result
+            import base64 as _b64
+            from llm.media.image_store import register_image, replace_entry_ref
             try:
-                import base64 as _b64
-                from llm.media.media_storage import save_media_bytes
-                raw_bytes = _b64.b64decode(b64, validate=False)
-                _, disk_path = save_media_bytes(raw_bytes, mime=mime, image_ref=image_ref)
-                images[image_ref] = {"file_path": str(disk_path), "mime": mime, "label": label}
-            except Exception as exc:
-                from llm.media.media_identity import MediaRefConflict, MediaIdentityUnavailable
-                if isinstance(exc, (MediaRefConflict, MediaIdentityUnavailable)):
-                    raise
-                images[image_ref] = {"base64": b64, "mime": mime, "label": label}
+                record = await asyncio.to_thread(register_image, _b64.b64decode(b64, validate=True), "chat", image_ref)
+            except Exception:
+                # Preserve the original reservation and remaining downloads for a retry.
+                entry["_pending_images"] = pending[pending_index:]
+                raise
+            entry["images"] = images
+            replace_entry_ref(entry, image_ref, record)
+            image_ref = record["image_ref"]
             downloaded_any = True
         else:
             images[image_ref] = {"failed": True, "label": label}
             logger.warning("图片下载失败，已标记 image_ref=%s", image_ref)
+        from llm.media.image_store import set_ref_status
+        for status in ("expired", "failed"):
+            if images[image_ref].get(status):
+                await asyncio.to_thread(set_ref_status, image_ref, status)
         # Publish success, or invalidate any older cache entry on failure.
         from llm.media.media_cache import cache_recent_image
         cache_recent_image(image_ref, images[image_ref], source="chat")

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from database import (
     init_db,
     load_chat_image_payload_sync,
     lookup_media_ref,
     lookup_media_ref_sync,
-    register_media_ref,
     save_chat_message,
+    update_chat_message_recalled,
 )
 from llm.media.image_resolver import ImageResolver, image_bytes
 from llm.media.media_cache import (
@@ -21,6 +24,8 @@ from llm.media.media_cache import (
     get_recent_image,
 )
 from workspace.media import register_workspace_image
+from test_sticker_collection import png
+from llm.media.image_store import register_image
 
 
 def test_recent_media_cache_lru() -> None:
@@ -45,26 +50,11 @@ def test_media_registry_crud_and_chat_indexing() -> None:
     async def _run() -> None:
         await init_db()
 
-        # Test direct registration
-        test_ref = f"test_manual_{uuid.uuid4().hex[:6]}"
-        await register_media_ref(
-            image_ref=test_ref,
-            source_type="chat",
-            locator="group_100::msg_200",
-            mime="image/png",
-            sha256="fake_sha256",
-        )
-
+        test_ref = "test_manual_ref"
+        register_image(png("blue"), "chat", test_ref)
         record_sync = lookup_media_ref_sync(test_ref)
-        assert record_sync is not None
         assert record_sync["image_ref"] == test_ref
-        assert record_sync["source_type"] == "chat"
-        assert record_sync["locator"] == "group_100::msg_200"
-        assert record_sync["mime"] == "image/png"
-        assert record_sync["sha256"] == "fake_sha256"
-
-        record_async = await lookup_media_ref(test_ref)
-        assert record_async == record_sync
+        assert await lookup_media_ref(test_ref) == record_sync
 
         # Test save_chat_message auto-indexing into media_registry
         session_key = f"qq:group:{uuid.uuid4().hex[:6]}"
@@ -78,7 +68,7 @@ def test_media_registry_crud_and_chat_indexing() -> None:
             "content": "[图片]",
             "images": {
                 chat_ref: {
-                    "base64": "aGVsbG9fd29ybGQ=",
+                    "base64": base64.b64encode(png()).decode(),
                     "mime": "image/jpeg",
                     "label": "图片",
                 }
@@ -97,7 +87,7 @@ def test_media_registry_crud_and_chat_indexing() -> None:
         assert payload is not None
         res_bytes = image_bytes(payload)
         assert res_bytes is not None
-        assert res_bytes[0] == b"hello_world"
+        assert res_bytes[0] == png()
 
     asyncio.run(_run())
 
@@ -119,9 +109,7 @@ def test_image_resolver_with_l1_cache() -> None:
     cache_recent_image(ref, {"base64": "bG1fY2FjaGVk"}, source="chat")
 
     resolved = resolver.resolve(ref)
-    assert resolved is not None
-    assert resolved[0] == {"base64": "bG1fY2FjaGVk"}
-    assert resolved[1] == "chat"
+    assert resolved is None  # LRU entries cannot invent an unregistered identity.
 
 
 def test_image_resolver_with_l2_sqlite_fallback() -> None:
@@ -140,7 +128,7 @@ def test_image_resolver_with_l2_sqlite_fallback() -> None:
             "content": "[图片]",
             "images": {
                 cold_ref: {
-                    "base64": "Y29sZF9pbWFnZV9kYXRh",
+                    "base64": base64.b64encode(png()).decode(),
                     "mime": "image/png",
                     "label": "图片",
                 }
@@ -160,13 +148,13 @@ def test_image_resolver_with_l2_sqlite_fallback() -> None:
         resolved = resolver.resolve(cold_ref)
         assert resolved is not None
         img_data, source = resolved
-        assert image_bytes(img_data)[0] == b"cold_image_data"
+        assert image_bytes(img_data)[0] == png()
         assert source == "chat"
 
         # Verify that it backfilled L1 cache
         cached = get_recent_image(cold_ref)
         assert cached is not None
-        assert image_bytes(cached[0])[0] == b"cold_image_data"
+        assert image_bytes(cached[0])[0] == png()
 
     asyncio.run(_run())
 
@@ -177,7 +165,7 @@ def test_workspace_media_registration(tmp_path: Path) -> None:
         clear_recent_media_cache()
 
         test_file = tmp_path / "plot.png"
-        test_file.write_bytes(b"\x89PNG\r\n\x1a\nfake_image_bytes")
+        test_file.write_bytes(png())
 
         ws_ref = await register_workspace_image(test_file)
         assert ws_ref is not None
@@ -192,7 +180,7 @@ def test_workspace_media_registration(tmp_path: Path) -> None:
         # 1. Resolves via L1
         resolved = resolver.resolve(ws_ref)
         assert resolved is not None
-        assert resolved[0]["data"] == b"\x89PNG\r\n\x1a\nfake_image_bytes"
+        assert resolved[0]["data"] == png()
         assert resolved[0]["mime"] == "image/png"
         assert resolved[1] == "workspace"
 
@@ -200,8 +188,41 @@ def test_workspace_media_registration(tmp_path: Path) -> None:
         clear_recent_media_cache()
         resolved_l2 = resolver.resolve(ws_ref)
         assert resolved_l2 is not None
-        assert resolved_l2[0]["data"] == b"\x89PNG\r\n\x1a\nfake_image_bytes"
+        assert resolved_l2[0]["data"] == png()
         assert resolved_l2[1] == "workspace"
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize("recalled", [False, True])
+def test_workspace_registration_reuses_only_readable_chat_refs(tmp_path: Path, recalled: bool) -> None:
+    async def _run() -> None:
+        await init_db()
+        raw = png()
+        old_ref = "legacy_chat_image"
+        session_key = "qq:group:test"
+        await save_chat_message(session_key, {
+            "role": "user",
+            "message_id": "1",
+            "images": {old_ref: {
+                "base64": base64.b64encode(raw).decode("ascii"),
+                "mime": "image/png",
+            }},
+        })
+        if recalled:
+            await update_chat_message_recalled("1", "recalled", "", session_key=session_key)
+
+        original = tmp_path / "local.png"
+        original.write_bytes(raw)
+        ref = await register_workspace_image(original)
+        if not recalled:
+            assert ref == old_ref
+        original.unlink()
+        clear_recent_media_cache()
+
+        resolved = ImageResolver(browser_image_reader=lambda _: None).resolve(ref)
+        assert resolved is not None
+        assert image_bytes(resolved[0]) == (raw, "image/png")
 
     asyncio.run(_run())
 
@@ -219,7 +240,7 @@ def test_time_ref_generation_and_storage(tmp_path: Path) -> None:
     assert parsed == (2026, 9, 7)
 
     # Test saving & reading
-    assigned_ref, disk_path = save_media_bytes(b"hello_media_test", mime="image/png", image_ref=ref, dt=dt)
+    assigned_ref, disk_path = save_media_bytes(png(), mime="image/png", image_ref=ref, dt=dt)
     assert assigned_ref == ref
     assert disk_path.exists()
     assert "2026" in str(disk_path)
@@ -228,5 +249,5 @@ def test_time_ref_generation_and_storage(tmp_path: Path) -> None:
     read_res = read_media_bytes(ref)
     assert read_res is not None
     data, mime = read_res
-    assert data == b"hello_media_test"
+    assert data == png()
     assert mime == "image/png"

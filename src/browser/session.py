@@ -8,9 +8,7 @@ import hashlib
 import io
 import json
 import logging
-import mimetypes
 import os
-import re
 import socket
 import subprocess
 import threading
@@ -91,15 +89,6 @@ _LATEST_WORLD_VIEW: BrowserWorldView | None = None
 _WORLD_VIEW_LOCK = threading.Lock()
 
 
-def _write_browser_image(ref: str, data: bytes, ext: str) -> Path:
-    from llm.media.media_identity import bind_media_identity, MediaRefConflict
-    BROWSER_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    path = BROWSER_IMAGE_DIR / f"{ref}{ext}"
-    if path.exists() and path.read_bytes() != data:
-        raise MediaRefConflict("Browser reference is bound to different content")
-    bind_media_identity(ref, hashlib.sha256(data).hexdigest())
-    path.write_bytes(data)
-    return path
 
 
 def _resize_png(png_bytes: bytes, max_side: int = 1280) -> bytes:
@@ -680,15 +669,10 @@ class BrowserSession:
                 page.evaluate(_CLEAR_CLICK_PREVIEW_JS)
             if target_overlayed:
                 page.evaluate(_CLEAR_TARGET_OVERLAY_JS)
-        digest = hashlib.sha256(png).hexdigest()
-        image_ref = digest[:12]
-        from llm.media.media_identity import MediaRefConflict
-        try:
-            _write_browser_image(image_ref, png, ".png")
-        except MediaRefConflict:
-            from llm.media.media_storage import generate_time_ref
-            image_ref = generate_time_ref()
-            _write_browser_image(image_ref, png, ".png")
+        from llm.media.image_store import register_image
+        record = register_image(png, "browser")
+        digest = record["sha256"]
+        image_ref = record["image_ref"]
         global _LATEST_VIEWPORT_REF
         _LATEST_VIEWPORT_REF = image_ref
         return {
@@ -1641,16 +1625,7 @@ class BrowserSession:
         }
 
     def read_image_file(self, image_ref: str) -> tuple[bytes, str] | None:
-        artifact = self.image_artifacts.read(image_ref)
-        if artifact is not None:
-            return artifact[0], artifact[1]
-        safe_ref = re.sub(r"[^a-zA-Z0-9_-]", "", image_ref)
-        if safe_ref != image_ref or not safe_ref:
-            return None
-        for path in BROWSER_IMAGE_DIR.glob(f"{safe_ref}.*"):
-            mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
-            return path.read_bytes(), mime
-        return None
+        return read_browser_image_file(image_ref)
 
     def make_locator(self, strategy: str, value: str, options: dict[str, Any] | None = None) -> Any:
         page = self.require_page()
@@ -2037,24 +2012,17 @@ def browser_world_signature() -> dict[str, Any] | None:
 
 
 def browser_image_path(image_ref: str) -> Path | None:
-    safe_ref = re.sub(r"[^a-zA-Z0-9_-]", "", image_ref)
-    if safe_ref != image_ref or not safe_ref:
-        return None
-    for path in BROWSER_IMAGE_DIR.glob(f"{safe_ref}.*"):
-        return path
-    return None
+    from llm.media.image_store import read_image
+    record = read_image(image_ref)
+    return Path(record["locator"]) if record and not record.get("unavailable_status") else None
 
 
 def read_browser_image_file(image_ref: str) -> tuple[bytes, str] | None:
-    """Read a browser image cache entry without creating a browser session."""
-    artifact = _BROWSER_IMAGE_ARTIFACT_STORE.read(image_ref)
-    if artifact is not None:
-        return artifact[0], artifact[1]
-    path = browser_image_path(image_ref)
-    if path is None or not path.is_file():
-        return None
-    mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
-    return path.read_bytes(), mime
+    from llm.media.image_store import read_image
+    record = read_image(image_ref)
+    if record and not record.get("unavailable_status"):
+        return record["data"], record["mime"]
+    return None
 
 
 def read_sendable_browser_image_file(

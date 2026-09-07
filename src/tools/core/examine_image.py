@@ -1,7 +1,7 @@
 """examine_image.py — 定向精细观察对话中的图片
 
-主模型主动调用此工具，指定 image_ref（12位十六进制图片引用）和 focus，
-VisionBridge 带焦点重新询问 VLM，结果写入内存和 sidecar。
+主模型主动调用此工具，指定 image_ref和 focus，
+VisionBridge 带焦点重新询问 VLM，结果写入统一图片索引。
 
 启用条件：session 和 vision_bridge 均在运行时上下文中就绪。
 """
@@ -64,7 +64,6 @@ def make_handler(session, vision_bridge):
             return {"error": "图片原始数据不可用，无法精查", "code": resolver.unavailable_status(target_img)}
         raw, mime = payload
         b64 = base64.b64encode(raw).decode("ascii")
-        phash = target_img.get("phash")
         image_ref = str(target_img.get("image_ref") or image_ref)
 
         if not vision_bridge.enabled:
@@ -73,19 +72,12 @@ def make_handler(session, vision_bridge):
 
         # ── 3. 调用 VLM 精查 ─────────────────────────────────────
         logger.info("[tools] examine_image: 开始精查 focus=%r image_ref=%s", focus, image_ref)
-        result_text = vision_bridge.examine(phash, b64, mime, focus)
+        result_text = vision_bridge.examine(image_ref, b64, mime, focus)
         if result_text is None:
             logger.warning("[tools] examine_image: VLM 返回为空 image_ref=%s", image_ref)
             return {"error": "精查失败，VLM 未能返回有效结果，请稍后重试"}
 
         logger.info("[tools] examine_image: 精查完成 image_ref=%s", image_ref)
-        # ── 4. 同步更新内存中的 examinations ─────────────────────
-        if "examinations" not in target_img:
-            target_img["examinations"] = []
-        target_img["examinations"].append(
-            {"focus": focus, "result": result_text}
-        )
-
         logger.info("[examine_image] image_ref=%s focus=%r", image_ref, focus)
 
         return {

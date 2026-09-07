@@ -114,113 +114,10 @@ class ImageResolver:
         if not normalized_ref:
             return None
 
-        # 收藏图片先检查内容完整性。
-        from .sticker_collection import StickerCollectionError, get_sticker_image
-        try:
-            sticker = get_sticker_image(normalized_ref)
-        except StickerCollectionError as exc:
-            return {"unavailable_status": exc.code}, "sticker"
-        if sticker is not None:
-            return sticker, "sticker"
-
-        # Visible entries own mutable status and vision metadata. Return the
-        # original object so examine_image writes back to the active message.
-        if self.session is not None:
-            for entry in getattr(self.session, "context_messages", []) or []:
-                if (image := image_from_entry(entry, normalized_ref)) is not None:
-                    return self._visible_result(normalized_ref, image, "chat")
-            if getattr(self.session, "is_browsing_history", lambda: False)():
-                view = getattr(self.session, "chat_window_view", {}) or {}
-                if top_db_id := view.get("top_db_id"):
-                    try:
-                        for entry in self.history_loader(self.session, int(top_db_id), int(view.get("page_size") or 10)):
-                            if (image := image_from_entry(entry, normalized_ref)) is not None:
-                                return self._visible_result(normalized_ref, image, "history")
-                    except Exception:
-                        logger.debug("[image_resolver] History lookup failed", exc_info=True)
-            for entry in visible_forward_entries(self.session):
-                if (image := image_from_entry(entry, normalized_ref)) is not None:
-                    return self._visible_result(normalized_ref, image, "forward")
-
-        # L1 跨会话缓存用于当前窗口之外的图片。
-        try:
-            from .media_cache import get_recent_image, cache_recent_image
-            if cached := get_recent_image(normalized_ref):
-                return cached
-        except Exception:
-            pass
-
-        # 时序物理磁盘文件直读 (data/media/YYYY/MM/)
-        try:
-            from .media_storage import read_media_bytes
-            if media_res := read_media_bytes(normalized_ref):
-                raw_bytes, inferred_mime = media_res
-                img_dict = {"data": raw_bytes, "mime": inferred_mime}
-                from database import lookup_media_ref_sync
-                record = lookup_media_ref_sync(normalized_ref)
-                source = str(record.get("source_type") or "chat") if record else "chat"
-                try:
-                    from .media_cache import cache_recent_image
-                    cache_recent_image(normalized_ref, img_dict, source=source)
-                except Exception:
-                    pass
-                return img_dict, source
-        except Exception:
-            pass
-
-        # 浏览器临时图片
-        if include_browser:
-            try:
-                browser_image = self.browser_image_reader(normalized_ref)
-            except Exception:
-                browser_image = None
-            if browser_image is not None:
-                raw, mime = browser_image
-                img_dict = {"data": raw, "mime": mime or "image/jpeg"}
-                try:
-                    from .media_cache import cache_recent_image
-                    cache_recent_image(normalized_ref, img_dict, source="browser")
-                except Exception:
-                    pass
-                return img_dict, "browser"
-
-        # L2 SQLite media_registry 点查冷数据
-        try:
-            from database import lookup_media_ref_sync, load_chat_image_payload_sync
-            record = lookup_media_ref_sync(normalized_ref)
-            if record:
-                stype = record.get("source_type")
-                locator = record.get("locator", "")
-                mime = record.get("mime", "image/jpeg")
-                from pathlib import Path
-                path = Path(locator)
-                if path.is_file():
-                    try:
-                        raw = path.read_bytes()
-                        img_dict = {"data": raw, "mime": mime}
-                        try:
-                            from .media_cache import cache_recent_image
-                            cache_recent_image(normalized_ref, img_dict, source=stype)
-                        except Exception:
-                            pass
-                        return img_dict, stype
-                    except OSError:
-                        logger.debug("[image_resolver] 读取文件失败: %s", locator, exc_info=True)
-                elif stype == "chat":
-                    parts = locator.split("::", 1)
-                    if len(parts) == 2:
-                        s_key, m_id = parts
-                        payload = load_chat_image_payload_sync(s_key, m_id, normalized_ref)
-                        if payload and isinstance(payload, dict):
-                            try:
-                                from .media_cache import cache_recent_image
-                                cache_recent_image(normalized_ref, payload, source="chat")
-                            except Exception:
-                                pass
-                            return payload, "chat"
-        except Exception:
-            logger.debug("[image_resolver] L2 media_registry 查询异常", exc_info=True)
-
+        from .image_store import read_image
+        record = read_image(normalized_ref)
+        if record is not None:
+            return record, str(record.get("source_type") or "media")
         return None
 
     @staticmethod
@@ -277,6 +174,12 @@ def image_from_entry(entry: dict[str, Any], image_ref: str) -> dict[str, Any] | 
 
 
 def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
+    if image.get("image_ref"):
+        from .image_store import read_image
+        current = read_image(image["image_ref"])
+        if current is None or current.get("unavailable_status"):
+            return None
+        return current["data"], current["mime"]
     if image.get("unavailable_status"):
         return None
     mime = str(image.get("mime") or image.get("mime_type") or "image/jpeg")
@@ -304,17 +207,6 @@ def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
             return None
         return b64, mime
 
-    phash = image.get("phash")
-    if phash:
-        try:
-            from llm.media.image_cache import read_image_b64
-
-            cached = read_image_b64(str(phash))
-        except Exception:
-            logger.debug("[tools] view_image: cache 读取失败 phash=%s", phash, exc_info=True)
-            cached = None
-        if cached:
-            return cached
     return None
 
 

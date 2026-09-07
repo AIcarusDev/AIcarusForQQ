@@ -86,3 +86,7 @@ src/skills/project-source/SKILL.md
 src/skills/project-source/references
 src/skills/computer/SKILL.md
 src/skills/computer/references
+
+# Unified image migration evidence and recoverable local backups
+/output/unified-image*.log
+/output/unified-images-*/

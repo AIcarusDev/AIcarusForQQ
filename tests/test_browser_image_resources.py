@@ -83,10 +83,10 @@ def test_artifact_store_persists_only_validated_immutable_original(tmp_path) -> 
         declared_mime="image/png",
     )
 
-    assert artifact.image_ref.startswith("img_")
+    assert artifact.image_ref
     assert artifact.confirmation_reasons == ()
     assert store.read(artifact.image_ref)[:2] == (original, "image/png")
-    assert sorted(path.suffix for path in store.root.iterdir()) == [".json", ".png"]
+    assert not list(store.root.glob("*.png"))  # Originals belong to the shared store.
 
 
 def test_artifact_store_rejects_non_image_and_detects_tampering(tmp_path) -> None:
@@ -110,7 +110,9 @@ def test_artifact_store_rejects_non_image_and_detects_tampering(tmp_path) -> Non
         strategy="response_body",
         declared_mime="image/png",
     )
-    data_path = next(path for path in tmp_path.iterdir() if path.suffix == ".png")
+    from llm.media.image_store import lookup_image
+    from pathlib import Path
+    data_path = Path(lookup_image(artifact.image_ref)["locator"])
     data_path.write_bytes(_png((321, 200)))
     assert store.read(artifact.image_ref) is None
 

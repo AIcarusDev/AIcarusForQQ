@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import logging
-import hashlib
-import os
 import re
-import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("AICQ.media_storage")
 
-MEDIA_ROOT = Path("data/media")
+MEDIA_ROOT = Path(__file__).resolve().parents[3] / "data" / "media"
 _SAFE_REF_PATTERN = re.compile(r"[A-Za-z0-9_-]{4,128}\Z")
 
 
@@ -97,72 +94,18 @@ def save_media_bytes(
 
     Returns (image_ref, absolute_or_relative_path).
     """
-    ref = str(image_ref or "").strip()
-    target_dt = dt or datetime.now(timezone.utc)
-    if not ref:
-        ref = generate_time_ref(target_dt)
-    if not _SAFE_REF_PATTERN.fullmatch(ref):
-        raise ValueError("Invalid media reference")
-    from .media_identity import bind_media_identity, MediaRefConflict
-    bind_media_identity(ref, hashlib.sha256(raw).hexdigest())
-    existing = locate_media_file(ref)
-    if existing is not None:
-        if existing.read_bytes() != raw:
-            raise MediaRefConflict("Media file contains different content")
-        return ref, existing
-
-    date_parts = parse_time_ref_date(ref)
-    if date_parts:
-        year, month, _ = date_parts
-    else:
-        year, month = target_dt.year, target_dt.month
-
-    target_dir = get_media_dir(year, month)
-    if not _inside_media_root(target_dir):
-        raise ValueError("Media directory is outside media root")
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    normalized_mime = str(mime or "image/jpeg").split(";", 1)[0].strip().lower()
-    ext = _MIME_TO_EXT.get(normalized_mime, ".jpg")
-    from .media_identity import claim_media_path
-    dest_path = claim_media_path(ref, target_dir / f"{ref}{ext}")
-    if not _inside_media_root(dest_path):
-        raise ValueError("Media file is outside media root")
-    target_dir = dest_path.parent
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    # Atomic write
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=target_dir, prefix=f".{ref}-", suffix=".tmp", delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-        try:
-            os.link(temporary, dest_path)
-        except FileExistsError:
-            if dest_path.read_bytes() != raw:
-                raise MediaRefConflict("Media file contains different content")
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink(missing_ok=True)
-
-    return ref, dest_path
+    from .image_store import register_image
+    record = register_image(raw, "chat", image_ref, dt=dt)
+    return record["image_ref"], Path(record["locator"])
 
 
 def read_media_bytes(image_ref: str) -> tuple[bytes, str] | None:
     """Fast read media bytes and infer MIME for image_ref."""
-    path = locate_media_file(image_ref)
-    if path is None or not path.is_file():
-        return None
-    try:
-        raw = path.read_bytes()
-        mime = _EXT_TO_MIME.get(path.suffix.lower(), "image/jpeg")
-        return raw, mime
-    except OSError:
-        logger.debug("Failed to read media file %s", path, exc_info=True)
-        return None
+    from .image_store import read_image
+    record = read_image(image_ref)
+    if record and not record.get("unavailable_status"):
+        return record["data"], record["mime"]
+    return None
 
 
 __all__ = [

@@ -61,12 +61,10 @@ def test_disk_images_reach_model_and_vision_bridge(source, monkeypatch):
     assert base64.b64decode(urls[0].split(",", 1)[1]) == raw
 
     calls = []
-    monkeypatch.setattr(vision_bridge, "cache_image", lambda data, mime: ("fixture-hash", None))
-    monkeypatch.setattr(vision_bridge, "load_meta", lambda _: {})
     bridge = vision_bridge.VisionBridge({"enabled": False})
     bridge._enabled = True
     bridge._client = object()
-    monkeypatch.setattr(bridge, "describe", lambda phash, encoded, mime: calls.append(base64.b64decode(encoded)) or "fixture-description")
+    monkeypatch.setattr(bridge, "_call_vlm", lambda encoded, mime, *args: calls.append(base64.b64decode(encoded)) or "fixture-description")
     bridge.process_entry(entry)
     assert calls == [raw]
     assert entry["images"][ref]["description"] == "fixture-description"

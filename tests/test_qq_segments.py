@@ -110,7 +110,7 @@ def test_llm_segments_to_qq_adapter_requires_image_ref():
 
 
 def test_llm_segments_to_qq_adapter_loads_browser_image_by_ref(monkeypatch):
-    monkeypatch.setattr(segments_mod, "_load_browser_image_as_base64", lambda ref: f"base64://{ref}")
+    monkeypatch.setattr(segments_mod, "_load_image_as_base64", lambda ref: f"base64://{ref}")
 
     result = llm_segments_to_qq_adapter([{"command": "image", "image_ref": "img_ref"}])
 

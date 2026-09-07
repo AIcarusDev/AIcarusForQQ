@@ -14,31 +14,32 @@ from types import SimpleNamespace
 import pytest
 
 import database
-from llm.media import media_identity as identity, media_storage as storage, sticker_collection as stickers
+from llm.media import image_store, media_identity as identity, media_storage as storage, sticker_collection as stickers
 from llm.media.media_cache import clear_recent_media_cache
 from llm.media.image_resolver import ImageResolver, image_bytes
 from platforms.qq.adapter.segments import build_message_content
 from workspace.media import register_workspace_image
+from test_sticker_collection import png
 
 
 DAY = datetime(2026, 9, 7, tzinfo=timezone.utc)
 
 
 def collide(monkeypatch):
-    monkeypatch.setattr(identity.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
+    monkeypatch.setattr(image_store.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
 
 
 def test_collision_retries_at_same_length_before_expanding(monkeypatch):
     collide(monkeypatch)
     assert storage.generate_time_ref(DAY) == "260907_aaaaa"
     values = iter(["a" * 32] * 7 + ["b" * 32])
-    monkeypatch.setattr(identity.uuid, "uuid4", lambda: SimpleNamespace(hex=next(values)))
+    monkeypatch.setattr(image_store.uuid, "uuid4", lambda: SimpleNamespace(hex=next(values)))
     assert storage.generate_time_ref(DAY) == "260907_bbbbb"
     collide(monkeypatch)
     assert storage.generate_time_ref(DAY) == "260907_aaaaaa"
     assert storage.parse_time_ref_date("260907_aaaaaa") == (2026, 9, 7)
-    storage.save_media_bytes(b"extended", image_ref="260907_aaaaaa")
-    assert storage.read_media_bytes("260907_aaaaaa")[0] == b"extended"
+    storage.save_media_bytes(png((1, 0, 0)), image_ref="260907_aaaaaa")
+    assert storage.read_media_bytes("260907_aaaaaa")[0] == png((1, 0, 0))
 
 
 def test_allocation_is_bounded_and_supports_four_digit_start(monkeypatch):
@@ -60,6 +61,8 @@ def test_allocation_respects_pre_ledger_refs(monkeypatch, source):
     elif source == "registry":
         asyncio.run(database.init_db())
         with sqlite3.connect(database.DB_PATH) as conn:
+            conn.execute("DROP VIEW media_registry")
+            conn.execute("CREATE TABLE media_registry(image_ref TEXT PRIMARY KEY, source_type TEXT, locator TEXT, sha256 TEXT)")
             conn.execute("INSERT INTO media_registry(image_ref, source_type, locator) VALUES (?, 'chat', 'pending')", (ref,))
     else:
         stickers._STICKER_DIR.mkdir()
@@ -89,7 +92,7 @@ from llm.media import media_identity as i, media_storage as s, sticker_collectio
 s.MEDIA_ROOT = Path(sys.argv[2])
 database.DB_PATH = sys.argv[3]
 stickers._INDEX_PATH = Path(sys.argv[4])
-i.uuid.uuid4 = lambda: SimpleNamespace(hex='a' * 32)
+(__import__("llm.media.image_store", fromlist=["uuid"])).uuid.uuid4 = lambda: SimpleNamespace(hex='a' * 32)
 print(s.generate_time_ref(datetime(2026, 9, 7, tzinfo=timezone.utc)))
 """
     args = [sys.executable, "-B", "-c", code, str(Path(__file__).resolve().parents[1] / "src"),
@@ -115,22 +118,22 @@ def test_content_binding_is_atomic_across_competing_writers():
             return None
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(write, [b"first", b"second"]))
+        results = list(pool.map(write, [png((2, 0, 0)), png((3, 0, 0))]))
     winners = [raw for raw in results if raw is not None]
     assert len(winners) == 1
     assert storage.read_media_bytes(ref)[0] == winners[0]
 
 
 def test_same_content_retries_share_path_across_extensions_and_deletion():
-    ref, path = storage.save_media_bytes(b"original", mime="image/png")
-    assert storage.save_media_bytes(b"original", mime="image/gif", image_ref=ref)[1] == path
+    ref, path = storage.save_media_bytes(png((4, 0, 0)), mime="image/png")
+    assert storage.save_media_bytes(png((4, 0, 0)), mime="image/gif", image_ref=ref)[1] == path
     with pytest.raises(identity.MediaRefConflict):
-        storage.save_media_bytes(b"different", mime="image/gif", image_ref=ref)
+        storage.save_media_bytes(png((5, 0, 0)), mime="image/gif", image_ref=ref)
     path.unlink()
     with pytest.raises(identity.MediaRefConflict):
-        storage.save_media_bytes(b"different", image_ref=ref)
-    assert storage.save_media_bytes(b"original", mime="image/gif", image_ref=ref)[1] == path
-    assert path.read_bytes() == b"original"
+        storage.save_media_bytes(png((5, 0, 0)), image_ref=ref)
+    assert storage.save_media_bytes(png((4, 0, 0)), mime="image/gif", image_ref=ref)[1] == path
+    assert path.read_bytes() == png((4, 0, 0))
 
 
 def test_interrupted_write_keeps_binding_and_allows_same_content_retry(monkeypatch):
@@ -138,13 +141,13 @@ def test_interrupted_write_keeps_binding_and_allows_same_content_retry(monkeypat
     with monkeypatch.context() as patch:
         def fail(*_):
             raise OSError("simulated disk error")
-        patch.setattr(storage.os, "link", fail)
+        patch.setattr(image_store.os, "link", fail)
         with pytest.raises(OSError):
-            storage.save_media_bytes(b"original", image_ref=ref)
+            storage.save_media_bytes(png((4, 0, 0)), image_ref=ref)
     with pytest.raises(identity.MediaRefConflict):
-        storage.save_media_bytes(b"different", image_ref=ref)
-    storage.save_media_bytes(b"original", image_ref=ref)
-    assert storage.read_media_bytes(ref)[0] == b"original"
+        storage.save_media_bytes(png((5, 0, 0)), image_ref=ref)
+    storage.save_media_bytes(png((4, 0, 0)), image_ref=ref)
+    assert storage.read_media_bytes(ref)[0] == png((4, 0, 0))
 
 
 def test_allocation_io_failure_is_not_retried_as_collision(monkeypatch):
@@ -161,12 +164,15 @@ def test_allocation_io_failure_is_not_retried_as_collision(monkeypatch):
 def test_registry_rebinding_cannot_overwrite_chat_bytes():
     async def run():
         await database.init_db()
-        ref, path = storage.save_media_bytes(b"first", mime="image/png")
+        ref, path = storage.save_media_bytes(png((2, 0, 0)), mime="image/png")
         await database.register_media_ref(ref, "chat", str(path))
+        conflicting = path.parent / "conflicting.png"
+        conflicting.write_bytes(png((3, 0, 0)))
         with pytest.raises(identity.MediaRefConflict):
-            await database.register_media_ref(ref, "workspace", "different", sha256=hashlib.sha256(b"second").hexdigest())
+            await register_workspace_image(conflicting, image_ref=ref)
         assert database.lookup_media_ref_sync(ref)["locator"] == str(path)
-        await database.register_media_ref(ref, "chat", "pending")
+        with pytest.raises(ValueError):
+            await database.register_media_ref(ref, "chat", "pending")
         assert database.lookup_media_ref_sync(ref)["locator"] == str(path)
     asyncio.run(run())
 
@@ -175,12 +181,12 @@ def test_workspace_original_edits_do_not_change_published_ref(tmp_path):
     async def run():
         await database.init_db()
         path = tmp_path / "original.png"
-        path.write_bytes(b"original")
+        path.write_bytes(png((4, 0, 0)))
         ref = await register_workspace_image(path)
-        path.write_bytes(b"edited")
+        path.write_bytes(png((6, 0, 0)))
         clear_recent_media_cache()
         found = ImageResolver(browser_image_reader=lambda _: None).resolve(ref)
-        assert image_bytes(found[0])[0] == b"original"
+        assert image_bytes(found[0])[0] == png((4, 0, 0))
         assert found[1] == "workspace"
         with pytest.raises(identity.MediaRefConflict):
             await register_workspace_image(path, image_ref=ref)
@@ -192,25 +198,25 @@ def test_chat_conflict_rolls_back_message_and_registry():
     async def run():
         await database.init_db()
         entry = {"role": "user", "message_id": "fixture", "images": {
-            "legacy_ref": {"base64": base64.b64encode(b"first").decode()},
+            "legacy_ref": {"base64": base64.b64encode(png((2, 0, 0))).decode()},
         }}
         await database.save_chat_message("qq:private:fixture", entry)
-        entry["images"]["legacy_ref"]["base64"] = base64.b64encode(b"second").decode()
+        entry["images"]["legacy_ref"]["base64"] = base64.b64encode(png((3, 0, 0))).decode()
         with pytest.raises(identity.MediaRefConflict):
             await database.save_chat_message("qq:private:fixture", entry)
-        assert image_bytes(database.load_chat_image_payload_sync("qq:private:fixture", "fixture", "legacy_ref"))[0] == b"first"
+        assert image_bytes(database.load_chat_image_payload_sync("qq:private:fixture", "fixture", "legacy_ref"))[0] == png((2, 0, 0))
     asyncio.run(run())
 
 
 def test_download_conflict_does_not_fall_back_to_new_base64(monkeypatch):
     from platforms.qq.adapter import events
     import base64
-    ref, _ = storage.save_media_bytes(b"first")
+    ref, _ = storage.save_media_bytes(png((2, 0, 0)))
     entry = {"images": {ref: {"pending": True}}, "_pending_images": [(ref, "fixture", "image")]}
     async def download(_):
-        return base64.b64encode(b"second").decode(), "image/png"
+        return base64.b64encode(png((3, 0, 0))).decode(), "image/png"
     monkeypatch.setattr(events, "_fetch_image_b64", download)
     with pytest.raises(identity.MediaRefConflict):
         asyncio.run(events.download_pending_images(entry))
     assert "base64" not in entry["images"][ref]
-    assert storage.read_media_bytes(ref)[0] == b"first"
+    assert storage.read_media_bytes(ref)[0] == png((2, 0, 0))

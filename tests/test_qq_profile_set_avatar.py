@@ -44,6 +44,8 @@ def _run_coroutine(coro, _loop, *, timeout=None, **_kwargs):
 
 
 def _session_with_image(image_ref: str, raw: bytes):
+    from llm.media.image_store import register_image
+    register_image(raw, "chat", image_ref)
     return SimpleNamespace(
         context_messages=[
             {

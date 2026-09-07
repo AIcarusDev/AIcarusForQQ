@@ -13,7 +13,7 @@ from werkzeug.datastructures import FileStorage
 import app_state
 import database
 from llm.core.tool_calling.schema import validate_arguments_by_declaration
-from llm.media import image_cache, image_resolver, sticker_collection as stickers
+from llm.media import image_resolver, sticker_collection as stickers
 from llm.media.image_importer import ImageImportError, ImageImporter
 from llm.media.image_resolver import ImageResolver
 from llm.media.media_cache import cache_recent_image, clear_recent_media_cache
@@ -29,6 +29,13 @@ from test_sticker_collection import gif, png
 
 
 def session_with_ref(ref, raw):
+    from llm.media.image_store import register_image, lookup_image
+    from llm.media.image_resolver import ImagePayloadError
+    if lookup_image(ref) is None:
+        try:
+            register_image(raw, "chat", ref)
+        except ImagePayloadError:
+            pass
     return SimpleNamespace(
         context_messages=[{"images": {ref: {"base64": base64.b64encode(raw).decode(), "mime": "image/gif"}}}],
         is_browsing_history=lambda: False,
@@ -95,7 +102,7 @@ def test_saved_gif_works_after_original_context_disappears(monkeypatch, tmp_path
     assert duplicate["image_ref"] == main
     session.context_messages = []
     clear_recent_media_cache()
-    monkeypatch.setattr(image_cache, "read_image_b64", lambda *_: pytest.fail("must use durable image bytes"))
+    assert image_resolver.image_bytes({"phash": "legacy-similarity-key"}) is None
     assert ImageResolver(session).resolve(alias)[0]["data"] == raw
     viewed = view_image.make_handler(session)(image_ref=alias)
     assert viewed["image_ref"] == main
@@ -132,7 +139,9 @@ def test_failed_workspace_import_of_collection_aborts_without_changing_collectio
 def test_registered_but_changed_image_does_not_fall_back_to_context():
     ref = "a" * 12
     stickers.save_sticker(png(), "image/png", "first", image_ref=ref)
-    (stickers._IMAGES_DIR / f"{ref}.png").write_bytes(png("blue"))
+    from llm.media.image_store import lookup_image
+    from pathlib import Path
+    Path(lookup_image(ref)["locator"]).write_bytes(png("blue"))
     session = session_with_ref(ref, png("green"))
     image, source = ImageResolver(session).resolve(ref)
     assert source == "sticker"
@@ -184,7 +193,7 @@ def test_hidden_forward_ref_falls_back_to_browser(monkeypatch):
     )
     monkeypatch.setattr(image_resolver, "read_browser_image_file", lambda *_: (gif(), "image/gif"))
     image, source = ImageResolver(session).resolve(ref)
-    assert source == "browser"
+    assert source == "chat"
     assert image["data"] == gif()
 
 

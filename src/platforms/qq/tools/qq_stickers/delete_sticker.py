@@ -14,7 +14,7 @@ class DeleteStickerArgs(ToolArgsModel):
 TOOL_CONTRACT = ToolContract(
     name="delete_sticker",
     description=(
-        "通过 image_ref 删除收藏及其全部别名；其他收藏的引用保持不变。"
+        "通过 image_ref 取消表情包收藏；原图和历史 image_ref 仍可读取。"
         "已保存到工作空间的副本独立保留。"
     ),
     args_model=DeleteStickerArgs,
@@ -28,4 +28,4 @@ def execute(image_ref: str, **_) -> dict:
         return {"error": str(exc), "code": exc.code}
     if ref is None:
         return {"error": "该 image_ref 不属于已收藏表情包", "code": "not_found"}
-    return {"image_ref": ref, "message": "表情包收藏及其别名已删除。"}
+    return {"image_ref": ref, "message": "已取消表情包收藏，原图和 image_ref 仍保留。"}

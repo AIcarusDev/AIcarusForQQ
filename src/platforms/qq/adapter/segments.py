@@ -468,27 +468,19 @@ def build_message_content(
             parts.append({"type": "sticker" if is_sticker else "image", "image_ref": image_ref})
             label = "动画表情" if is_sticker else "图片"
             if raw_b64 := data.get("base64", ""):
-                try:
-                    import base64 as _b64
-                    from llm.media.media_storage import save_media_bytes
-                    raw_bytes = _b64.b64decode(raw_b64, validate=False)
-                    _, disk_path = save_media_bytes(raw_bytes, mime="image/jpeg", image_ref=image_ref)
-                    images[image_ref] = {"file_path": str(disk_path), "mime": "image/jpeg", "label": label}
-                except Exception as exc:
-                    from llm.media.media_identity import MediaRefConflict, MediaIdentityUnavailable
-                    if isinstance(exc, (MediaRefConflict, MediaIdentityUnavailable)):
-                        raise
-                    images[image_ref] = {"base64": raw_b64, "mime": "image/jpeg", "label": label}
-                try:
-                    from llm.media.media_cache import cache_recent_image
-                    cache_recent_image(image_ref, images[image_ref], source="chat")
-                except Exception:
-                    pass
+                import base64 as _b64
+                from llm.media.image_store import register_image, image_link
+                record = register_image(_b64.b64decode(raw_b64, validate=True), "chat", image_ref)
+                image_ref = record["image_ref"]
+                parts[-1]["image_ref"] = image_ref
+                images[image_ref] = image_link(record, label=label)
             elif url := data.get("url", ""):
                 images[image_ref] = {"pending": True, "label": label}
                 pending_downloads.append((image_ref, url, label))
             else:
                 images[image_ref] = {"failed": True, "label": label}
+                from llm.media.image_store import set_ref_status
+                set_ref_status(image_ref, "failed")
         elif seg_type == "file":
             parts.append(_build_file_segment(data if isinstance(data, dict) else {}))
         elif seg_type == "reply":
@@ -607,9 +599,9 @@ def llm_segments_to_qq_adapter(
             image_ref = seg.get("image_ref", "")
             if not image_ref:
                 raise ImageLoadError("image_ref", "image segment missing image_ref")
-            file_val = _load_browser_image_as_base64(str(image_ref))
+            file_val = _load_image_as_base64(str(image_ref))
             if file_val is _IMAGE_LOAD_FAILED:
-                raise ImageLoadError(str(image_ref), "browser image_ref not found")
+                raise ImageLoadError(str(image_ref), "image_ref not found")
             qq_adapter_segs.append({
                 "type": "image",
                 "data": {"file": file_val},
@@ -632,23 +624,24 @@ def llm_segments_to_qq_adapter(
     return result
 
 
-# ── 浏览器图片缓存加载辅助 ────────────────────────────────────────────────────
+# ── 图片缓存加载辅助 ────────────────────────────────────────────────────
 
 _IMAGE_LOAD_FAILED = "__image_load_failed__"
 
 
-def _load_browser_image_as_base64(image_ref: str) -> str:
+def _load_image_as_base64(image_ref: str) -> str:
     try:
-        from browser import read_sendable_browser_image_file
 
-        item = read_sendable_browser_image_file(image_ref)
+        from llm.media.image_store import read_image
+        record = read_image(image_ref)
+        item = (record["data"], record["mime"]) if record and not record.get("unavailable_status") else None
     except Exception as exc:
-        _seg_logger.warning("[segments] 浏览器图片缓存读取失败 image_ref=%s — %s", image_ref, exc)
+        _seg_logger.warning("[segments] 图片缓存读取失败 image_ref=%s — %s", image_ref, exc)
         return _IMAGE_LOAD_FAILED
     if item is None:
-        _seg_logger.warning("[segments] 浏览器图片缓存不存在 image_ref=%s", image_ref)
+        _seg_logger.warning("[segments] 图片缓存不存在 image_ref=%s", image_ref)
         return _IMAGE_LOAD_FAILED
-    raw, _mime, _manifest = item
+    raw, _mime = item
     if not raw:
         return _IMAGE_LOAD_FAILED
     return f"base64://{base64.b64encode(raw).decode('ascii')}"

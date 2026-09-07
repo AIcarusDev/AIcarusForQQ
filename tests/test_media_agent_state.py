@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from llm.media import image_cache, image_resolver, media_cache, vision_bridge
+from llm.media import image_resolver, media_cache, vision_bridge
 from platforms.qq.adapter import events
 from platforms.qq.adapter.segments import build_message_content
 from tools.core import examine_image, view_image
@@ -29,8 +29,6 @@ def test_examination_preserves_visible_metadata_and_persists_results(window, war
         "type": "image", "data": {"base64": base64.b64encode(raw).decode("ascii")},
     }])
     ref = entry["content_segments"][0]["image_ref"]
-    monkeypatch.setattr(image_cache, "_CACHE_DIR", tmp_path / "vision")
-    monkeypatch.setattr(vision_bridge, "cache_image", lambda *_: ("fixture-phash", True))
     bridge = vision_bridge.VisionBridge({"enabled": False})
     bridge._enabled = True
     bridge._client = object()
@@ -58,10 +56,10 @@ def test_examination_preserves_visible_metadata_and_persists_results(window, war
     media_cache.clear_recent_media_cache()
     assert handler(ref, "second-focus")["result"] == "second-result"
     expected = [("first-focus", "first-result"), ("second-focus", "second-result")]
-    saved = image_cache.load_meta("fixture-phash")["examinations"]
+    from llm.media.image_store import read_image
+    saved = read_image(ref)["examinations"]
     assert [(item["focus"], item["result"]) for item in saved] == expected
-    if window != "history":
-        assert [(item["focus"], item["result"]) for item in entry["images"][ref]["examinations"]] == expected
+    assert image_resolver.ImageResolver(session).resolve(ref)[0]["examinations"] == saved
     assert payloads == [raw, raw, raw]
 
 

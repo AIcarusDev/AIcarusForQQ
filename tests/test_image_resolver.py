@@ -12,63 +12,24 @@ from tools.core import view_image
 from tools.core.view_image import ViewImageArgs, make_handler
 
 
-def test_image_resolver_resolution_order() -> None:
-    from llm.media.media_cache import clear_recent_media_cache, cache_recent_image
-
-    clear_recent_media_cache()
-    image_ref = "image-order-test"
-    session = SimpleNamespace(
-        context_messages=[{"images": {image_ref: {"data": b"chat"}}}],
-    )
-    resolver = ImageResolver(
-        session,
-        browser_image_reader=lambda _ref: (b"browser", "image/png"),
-    )
-
-    # 1. 命中 context_messages（并自动回填 L1）
-    assert resolver.resolve(image_ref) == ({"data": b"chat"}, "chat")
-
-    # 2. 如果 context_messages 为空，命中 L1 缓存
-    clear_recent_media_cache()
-    session.context_messages = []
-    cache_recent_image(image_ref, {"data": b"l1_cache"}, source="cache")
-    assert resolver.resolve(image_ref) == ({"data": b"l1_cache"}, "cache")
-
-    # 3. 如果 L1 缓存未命中，回退到浏览器
-    clear_recent_media_cache()
-    assert resolver.resolve(image_ref) == ({"data": b"browser", "mime": "image/png"}, "browser")
+def test_image_resolver_uses_registered_identity_over_context_and_cache():
+    from llm.media.image_store import register_image
+    from llm.media.media_cache import cache_recent_image
+    from test_sticker_collection import png
+    ref = register_image(png(), "chat")["image_ref"]
+    session = SimpleNamespace(context_messages=[{"images": {ref: {"data": png("blue")}}}])
+    cache_recent_image(ref, {"data": png("blue")})
+    assert ImageResolver(session).resolve(ref)[0]["data"] == png()
 
 
-def test_view_image_ref_keeps_existing_multimodal_result_shape() -> None:
-    session = SimpleNamespace(
-        context_messages=[
-            {
-                "images": {
-                    "image-2": {
-                        "data": b"payload",
-                        "mime_type": "image/webp",
-                    }
-                }
-            }
-        ],
-        is_browsing_history=lambda: False,
-        forward_browser_stack=[],
-    )
-
-    result = make_handler(session)("image_ref='image-2'")
-
+def test_view_image_ref_keeps_existing_multimodal_result_shape():
+    from llm.media.image_store import register_image
+    from test_sticker_collection import png
+    register_image(png(), "chat", "image-2")
+    result = make_handler(SimpleNamespace(context_messages=[]))("image_ref='image-2'")
     assert result == {
-        "ok": True,
-        "image_ref": "image-2",
-        "source": "chat",
-        "mime_type": "image/webp",
-        "_multimodal_parts": [
-            {
-                "data": b"payload",
-                "mime_type": "image/webp",
-                "display_name": "chat:image-2",
-            }
-        ],
+        "ok": True, "image_ref": "image-2", "source": "chat", "mime_type": "image/png",
+        "_multimodal_parts": [{"data": png(), "mime_type": "image/png", "display_name": "chat:image-2"}],
     }
 
 
@@ -105,6 +66,8 @@ def test_view_image_reads_a_valid_linux_path(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(app_state, "workspace_service", WorkspaceService())
     monkeypatch.setattr(app_state, "main_loop", object())
     monkeypatch.setattr(view_image, "run_on_main_loop", lambda coro, _loop: coro)
+    from database import init_db
+    asyncio.run(init_db())
     session = SimpleNamespace(context_messages=[])
 
     result = asyncio.run(make_handler(session)(path="/home/agent/media/sample.jpg"))
@@ -116,6 +79,20 @@ def test_view_image_reads_a_valid_linux_path(monkeypatch, tmp_path) -> None:
     assert result["_multimodal_parts"] == [
         {"data": raw, "mime_type": "image/png", "display_name": "sample.jpg"}
     ]
+    assert "image_ref" in result and bool(result["image_ref"])
+    assigned_ref = result["image_ref"]
+
+    # 验证分配的 image_ref 能被 ImageResolver 正确解析为 workspace 来源
+    resolver = ImageResolver(session)
+    resolved = resolver.resolve(assigned_ref)
+    assert resolved is not None
+    assert resolved[0]["data"] == raw
+    assert resolved[1] == "workspace"
+
+    # 验证同一图片再次查看时命中去重，返回相同的 image_ref
+    result_again = asyncio.run(make_handler(session)(path="/home/agent/media/sample.jpg"))
+    assert result_again["ok"] is True
+    assert result_again["image_ref"] == assigned_ref
 
 
 def test_view_image_rejects_non_image_path_content(monkeypatch, tmp_path) -> None:
@@ -172,3 +149,55 @@ def test_view_image_rejects_oversized_path_before_host_read(monkeypatch, tmp_pat
     assert result["status"] == "image_too_large"
     assert result["limit_bytes"] == view_image.MAX_VIEW_IMAGE_BYTES
     assert not missing_staged_file.exists()
+
+
+def test_workspace_image_ref_integration_with_examine_and_sticker(monkeypatch, tmp_path) -> None:
+    from database import init_db
+    from tools.core import examine_image
+    from platforms.qq.tools.qq_stickers import save_sticker
+
+    asyncio.run(init_db())
+
+    host_image = tmp_path / "chart.png"
+    Image.new("RGB", (10, 10), "blue").save(host_image, format="PNG")
+    raw = host_image.read_bytes()
+
+    class WorkspaceService:
+        @asynccontextmanager
+        async def stage_host_file(self, path):
+            yield SimpleNamespace(
+                workspace_path=path,
+                host_path=str(host_image),
+                name="chart.png",
+                size=len(raw),
+            )
+
+    monkeypatch.setattr(app_state, "workspace_service", WorkspaceService())
+    monkeypatch.setattr(app_state, "main_loop", object())
+    monkeypatch.setattr(view_image, "run_on_main_loop", lambda coro, _loop: coro)
+
+    session = SimpleNamespace(context_messages=[])
+
+    # 1. 通过 view_image 查看 Linux 本地图片，自动获得 image_ref
+    view_res = asyncio.run(make_handler(session)(path="/home/agent/chart.png"))
+    assert view_res["ok"] is True
+    ref = view_res.get("image_ref")
+    assert ref and isinstance(ref, str)
+
+    # 2. 将该 ref 送入 examine_image 进行精查
+    fake_vision_bridge = SimpleNamespace(
+        enabled=True,
+        examine=lambda phash, b64, mime, focus: f"Examined: {focus}",
+    )
+    examine_handler = examine_image.make_handler(session, fake_vision_bridge)
+    examine_res = examine_handler(image_ref=ref, focus="检查蓝色区域")
+    assert "error" not in examine_res
+    assert examine_res["image_ref"] == ref
+    assert examine_res["result"] == "Examined: 检查蓝色区域"
+
+    # 3. 将该 ref 送入 save_sticker 进行表情包收藏
+    sticker_handler = save_sticker.make_handler(lambda: session)
+    sticker_res = sticker_handler(image_ref=ref, description="蓝色方块")
+    assert "error" not in sticker_res
+    assert sticker_res["image_ref"] == ref
+

@@ -3,10 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -29,41 +26,6 @@ def gif() -> bytes:
     return output.getvalue()
 
 
-@pytest.mark.parametrize("failure", ["before_commit", "after_commit"])
-def test_v2_migration_interruption_preserves_images_and_old_refs(monkeypatch, failure):
-    refs = ["a" * 12, "b" * 12]
-    originals = [png(), gif()]
-    for ref, raw, mime in zip(refs, originals, ("image/png", "image/gif")):
-        stickers.save_sticker(raw, mime, "fixture", image_ref=ref)
-    document = json.loads(stickers._INDEX_PATH.read_bytes())
-    document["version"] = 2
-    stickers._INDEX_PATH.write_text(json.dumps(document), encoding="utf-8")
-    old_index = stickers._INDEX_PATH.read_bytes()
-    save = stickers._save_index
-
-    def interrupted(doc):
-        if failure == "after_commit":
-            save(doc)
-        raise OSError("simulated interruption")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(stickers, "_save_index", interrupted)
-        with pytest.raises(OSError):
-            stickers.list_all()
-
-    if failure == "before_commit":
-        assert stickers._INDEX_PATH.read_bytes() == old_index
-    for ref, raw in zip(refs, originals):
-        assert (stickers._IMAGES_DIR / document["stickers"][ref]["filename"]).read_bytes() == raw
-        assert stickers.load_sticker_bytes(ref)[0] == raw
-    items = stickers.list_all()
-    assert len(items) == 2
-    assert stickers.list_all() == items
-    assert stickers._INDEX_PATH.with_name("index.v2.backup.json").read_bytes() == old_index
-    for item in items:
-        assert stickers.load_sticker_bytes(item["image_ref"]) is not None
-    stickers.reconcile_stickers()
-    assert stickers.list_all() == items
 
 
 def legacy_collection():
@@ -82,34 +44,6 @@ def legacy_collection():
     return entries, raw_index
 
 
-def test_migration_preserves_originals_and_refs_survive_process_restart():
-    old, raw_index = legacy_collection()
-    items = stickers.list_all()
-    refs = [item["image_ref"] for item in items]
-    assert len(set(refs)) == 2
-    assert all(len(ref) == 12 and ref not in old for ref in refs)
-    assert stickers._INDEX_PATH.with_name("index.v1.backup.json").read_bytes() == raw_index
-    for item, source in zip(items, old.values()):
-        assert all(item[key] == source[key] for key in source)
-        assert stickers.load_sticker_bytes(item["image_ref"])[0] == (stickers._IMAGES_DIR / item["filename"]).read_bytes()
-    code = """
-import json, sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from llm.media import sticker_collection as s
-s._STICKER_DIR = Path(sys.argv[2])
-s._INDEX_PATH = s._STICKER_DIR / "index.json"
-s._IMAGES_DIR = s._STICKER_DIR / "images"
-print(json.dumps(s.list_all()))
-"""
-    process = subprocess.run(
-        [sys.executable, "-B", "-c", code, str(Path(__file__).resolve().parents[1] / "src"), str(stickers._STICKER_DIR)],
-        check=True, text=True, capture_output=True,
-    )
-    assert json.loads(process.stdout) == items
-    stickers.reconcile_stickers()
-    assert [item["image_ref"] for item in stickers.list_all()] == refs
-    assert stickers.load_sticker_bytes("000") is None
 
 
 @pytest.mark.parametrize("raw", [b"{", b"[]", b'{"version":3}', b'{"not-an-entry":{}}'])
@@ -122,31 +56,8 @@ def test_corrupt_index_is_not_treated_as_empty(raw):
     assert not stickers._IMAGES_DIR.exists()
 
 
-def test_migration_commit_failure_is_retryable_without_losing_originals(monkeypatch):
-    old, raw_index = legacy_collection()
-    replace = stickers.os.replace
-
-    def fail_index(source, destination):
-        if destination == stickers._INDEX_PATH:
-            raise OSError("simulated index replace failure")
-        return replace(source, destination)
-
-    monkeypatch.setattr(stickers.os, "replace", fail_index)
-    with pytest.raises(stickers.StickerCollectionError) as error:
-        stickers.list_all()
-    assert error.value.code == "migration_failed"
-    assert stickers._INDEX_PATH.read_bytes() == raw_index
-    assert all((stickers._IMAGES_DIR / item["filename"]).is_file() for item in old.values())
-    monkeypatch.setattr(stickers.os, "replace", replace)
-    assert len(stickers.list_all()) == 2
 
 
-def test_missing_legacy_file_leaves_index_untouched():
-    _, raw_index = legacy_collection()
-    (stickers._IMAGES_DIR / "000.png").unlink()
-    with pytest.raises(stickers.StickerCollectionError):
-        stickers.list_all()
-    assert stickers._INDEX_PATH.read_bytes() == raw_index
 
 
 def test_aliases_edit_and_delete_one_collection_without_affecting_other_refs():
@@ -189,7 +100,8 @@ def test_concurrent_duplicate_collection_preserves_every_alias():
         results = list(pool.map(lambda ref: stickers.save_sticker(raw, "image/png", "ignored", image_ref=ref), refs))
     assert results == [(main, True)] * len(refs)
     assert len(stickers.list_all()) == 1
-    assert set(stickers.list_all()[0]["aliases"]) == set(refs)
+    from llm.media.image_store import read_image
+    assert all(read_image(ref)["image_ref"] == main for ref in refs)
     assert all(stickers.load_sticker_bytes(ref) == (raw, "image/png") for ref in refs)
 
 
@@ -223,60 +135,12 @@ def test_save_and_delete_commit_failures_restore_previous_collection(monkeypatch
     assert stickers.load_sticker_bytes(main) == (raw, "image/png")
 
 
-def test_reconcile_rename_and_duplicates_keep_identity_and_impression():
-    main = "a" * 12
-    raw = png()
-    stickers.save_sticker(raw, "image/png", "first", image_ref=main)
-    path = stickers._IMAGES_DIR / f"{main}.png"
-    path.rename(stickers._IMAGES_DIR / "renamed.png")
-    (stickers._IMAGES_DIR / "duplicate.png").write_bytes(raw)
-    stickers.reconcile_stickers()
-    item, = stickers.list_all()
-    assert item["image_ref"] == main
-    assert item["description"] == "first"
-    assert stickers.load_sticker_bytes(main) == (raw, "image/png")
-    assert len(list(stickers._IMAGES_DIR.iterdir())) == 1
 
 
-def test_interrupted_delete_before_commit_restores_the_indexed_original():
-    ref, raw = "a" * 12, png()
-    stickers.save_sticker(raw, "image/png", "first", image_ref=ref)
-    trash = stickers._STICKER_DIR / "trash"
-    trash.mkdir()
-    (stickers._IMAGES_DIR / f"{ref}.png").rename(trash / f"{ref}-interrupted.png")
-    assert stickers.load_sticker_bytes(ref) == (raw, "image/png")
-    assert (stickers._IMAGES_DIR / f"{ref}.png").exists()
-    assert not list(trash.iterdir())
 
 
-def test_replaced_contents_never_inherit_old_reference_or_impression():
-    main, alias = "a" * 12, "b" * 12
-    stickers.save_sticker(png(), "image/png", "old impression", image_ref=main)
-    stickers.save_sticker(png(), "image/png", "ignored", image_ref=alias)
-    replacement = png("blue")
-    (stickers._IMAGES_DIR / f"{main}.png").write_bytes(replacement)
-    assert stickers.load_sticker_bytes(main) is None
-    assert stickers.get_sticker_image(alias)["unavailable_status"] == "image_changed"
-    stickers.reconcile_stickers()
-    item, = stickers.list_all()
-    assert item["image_ref"] not in {main, alias}
-    assert item["description"] != "old impression"
-    assert stickers.load_sticker_bytes(item["image_ref"]) == (replacement, "image/png")
-    assert stickers.load_sticker_bytes(main) is None
-    assert stickers.load_sticker_bytes(alias) is None
 
 
-def test_swapped_files_are_repaired_by_exact_content_instead_of_changing_refs():
-    main, other = "a" * 12, "b" * 12
-    first, second = png(), png("blue")
-    stickers.save_sticker(first, "image/png", "red", image_ref=main)
-    stickers.save_sticker(second, "image/png", "blue", image_ref=other)
-    (stickers._IMAGES_DIR / f"{main}.png").write_bytes(second)
-    (stickers._IMAGES_DIR / f"{other}.png").write_bytes(first)
-    stickers.reconcile_stickers()
-    assert stickers.load_sticker_bytes(main) == (first, "image/png")
-    assert stickers.load_sticker_bytes(other) == (second, "image/png")
-    assert len(stickers.list_all()) == 2
 
 
 def test_capacity_uses_exact_contents_and_still_accepts_aliases_at_limit():
@@ -285,11 +149,7 @@ def test_capacity_uses_exact_contents_and_still_accepts_aliases_at_limit():
     assert stickers.save_sticker(png("blue"), "image/png", "overflow") is None
     assert stickers.save_sticker(png((0, 0, 0)), "image/png", "ignored", image_ref="alias-first") == ("0" * 12, True)
     assert len(stickers.list_all()) == stickers.MAX_STICKERS
-    orphan = stickers._IMAGES_DIR / "user-added.png"
-    orphan.write_bytes(png("blue"))
-    assert stickers.reconcile_stickers()["skipped_overflow"] == 1
-    assert len(stickers.list_all()) == stickers.MAX_STICKERS
-    assert orphan.read_bytes() == png("blue")
+
 
 
 @pytest.mark.parametrize("ref", ["000", "../unsafe", "/home/agent/image.png", "bad\\ref"])

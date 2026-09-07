@@ -6,7 +6,6 @@ import io
 import json
 import threading
 from contextlib import asynccontextmanager
-from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
@@ -64,16 +63,12 @@ def test_image_segment_rejects_host_and_outside_agent_paths():
         assert result.ok is False
 
 
-def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch):
+def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch, tmp_path):
     output = io.BytesIO()
     Image.new("RGB", (12, 8), (1, 2, 3)).save(output, format="PNG")
     raw = output.getvalue()
-    host_path = Path("C:/fake-stage/result.png")
-    monkeypatch.setattr(
-        Path,
-        "read_bytes",
-        lambda self: raw if self == host_path else b"",
-    )
+    host_path = tmp_path / "result.png"
+    host_path.write_bytes(raw)
 
     class WorkspaceService:
         @asynccontextmanager
@@ -94,7 +89,8 @@ def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch):
     assert error is None
     segment = messages[0]["segments"][0]
     assert "path" not in segment
-    assert segment["_local_image_ref"].startswith("img_")
+    from llm.media.image_store import read_image
+    assert read_image(segment["_local_image_ref"])["data"] == raw
     assert base64.b64decode(segment["_local_image_base64"]) == raw
 
 

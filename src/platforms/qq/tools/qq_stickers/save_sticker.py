@@ -12,7 +12,7 @@ class SaveStickerArgs(ToolArgsModel):
     image_ref: str = Field(
         min_length=4,
         description=
-        "目标图片/表情的 image_ref，12位十六进制字符串"
+        "目标图片/表情的 image_ref"
         "（来自上下文 XML 中的 image_ref 标注）"
             )
     description: str = Field(min_length=1, description="表情包的大致描述、印象和适用场景。")

@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import re
 import threading
 import time
@@ -385,7 +384,8 @@ class BrowserImageArtifactStore:
             raise BrowserImageValidationError("browser response MIME is not an image")
         actual_mime, width, height, frame_count = self._inspect(data)
         digest = hashlib.sha256(data).hexdigest()
-        image_ref = f"img_{digest[:32]}"
+        from llm.media.image_store import register_image
+        image_ref = register_image(data, "browser")["image_ref"]
         reasons = self._semantic_reasons(
             resource=resource,
             actual_mime=actual_mime,
@@ -409,73 +409,30 @@ class BrowserImageArtifactStore:
             resource_ref=resource.resource_ref,
             confirmation_reasons=reasons,
         )
-        extension = _MIME_EXTENSION[actual_mime]
-        with self._lock:
-            self.root.mkdir(parents=True, exist_ok=True)
-            data_path = self.root / f"{image_ref}{extension}"
-            manifest_path = self.root / f"{image_ref}.json"
-            if data_path.exists() and data_path.read_bytes() != data:
-                raise BrowserImageValidationError("browser image_ref collision")
-            from llm.media.media_identity import bind_media_identity, MediaRefConflict
-            try:
-                bind_media_identity(image_ref, digest)
-            except MediaRefConflict as exc:
-                raise BrowserImageValidationError("browser image_ref collision") from exc
-            if manifest_path.exists():
-                if self.read(image_ref) is None:
-                    raise BrowserImageValidationError(
-                        "existing browser image artifact failed integrity validation"
-                    )
-                return artifact
-            if not data_path.exists():
-                temp_path = self.root / f".{image_ref}.{os.getpid()}.tmp"
-                temp_path.write_bytes(data)
-                temp_path.replace(data_path)
-            manifest = {
-                **asdict(artifact),
-                "confirmation_reasons": list(artifact.confirmation_reasons),
-                "file": data_path.name,
-                "created_at": time.time(),
-            }
-            encoded = json.dumps(
-                manifest,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            temp_manifest = self.root / f".{image_ref}.{os.getpid()}.json.tmp"
-            temp_manifest.write_text(encoded, encoding="utf-8")
-            temp_manifest.replace(manifest_path)
+        from llm.media.image_store import connection
+        with connection(write=True) as db:
+            row = db.execute("SELECT metadata FROM media_browser_artifacts WHERE image_ref=?", (image_ref,)).fetchone()
+            metadata = {**asdict(artifact), "confirmation_reasons": list(reasons)}
+            if row:
+                old = json.loads(row[0])
+                metadata["confirmation_reasons"] = list(dict.fromkeys([*old.get("confirmation_reasons", []), *reasons]))
+            db.execute("INSERT INTO media_browser_artifacts VALUES (?,?) ON CONFLICT(image_ref) DO UPDATE SET metadata=excluded.metadata",
+                       (image_ref, json.dumps(metadata, ensure_ascii=False)))
         return artifact
 
     def read(self, image_ref: object) -> tuple[bytes, str, dict[str, Any]] | None:
-        ref = str(image_ref or "").strip()
-        if not _IMAGE_REF_RE.fullmatch(ref):
+        from llm.media.image_store import read_image, connection
+        record = read_image(str(image_ref or ""))
+        if not record or record.get("unavailable_status"):
             return None
-        manifest_path = self.root / f"{ref}.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            filename = str(manifest["file"])
-            data_path = self.root / filename
-            if data_path.parent.resolve() != self.root.resolve() or not data_path.name.startswith(f"{ref}."):
-                return None
-            data = data_path.read_bytes()
-            digest = hashlib.sha256(data).hexdigest()
-            if digest != str(manifest.get("sha256") or ""):
-                return None
-            if ref != f"img_{digest[:32]}":
-                return None
-            mime, width, height, _frame_count = self._inspect(data)
-            if (
-                mime != str(manifest.get("mime") or "")
-                or width != int(manifest.get("width") or 0)
-                or height != int(manifest.get("height") or 0)
-                or len(data) != int(manifest.get("size_bytes") or 0)
-            ):
-                return None
-            return data, mime, manifest
-        except (OSError, ValueError, TypeError, KeyError, BrowserImageValidationError):
+        with connection() as db:
+            row = db.execute("SELECT metadata FROM media_browser_artifacts WHERE image_ref=?", (record["image_ref"],)).fetchone()
+        if row is None:
             return None
+        metadata = json.loads(row[0])
+        if metadata.get("sha256") != record["sha256"]:
+            return None
+        return record["data"], record["mime"], metadata
 
 
 __all__ = [

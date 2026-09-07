@@ -36,6 +36,7 @@ from config_loader import AGENT_PROMPT_KEYS, load_config
 from web.debug_server import debug_bp, init_debug, broadcast_platform_status
 from lifecycle import startup, shutdown
 from log_config import setup_logging
+from llm.media.image_upgrade import ensure_images_ready
 from platforms import PlatformRegistry
 from platforms.core import CoreRuntime
 from platforms.qq import QQRuntime
@@ -78,6 +79,7 @@ _LAUNCHER_MODE = os.environ.get("AICQ_LAUNCHER_MODE") == "1"
 # ── 环境变量 & 日志 ───────────────────────────────────────
 load_dotenv()
 setup_logging()
+ensure_images_ready(Path(__file__).resolve().parents[1])
 
 # ── 加载配置 & 填充 app_state ─────────────────────────────
 config, prompt_docs = load_config()

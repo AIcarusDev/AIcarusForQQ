@@ -38,7 +38,6 @@ from database import (
     save_namespace_runtime_state,
 )
 from llm.compression.config import normalize_generation_config
-from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     sessions,
@@ -212,22 +211,7 @@ async def startup() -> None:
                 platform=_meta.get("focus_platform") or "qq",
             )
 
-    # 启动时清理过期 / 超量的图片缓存
-    _evict_cfg = app_state.config.get("vision_bridge", {}).get("cache_eviction", {})
-    try:
-        _max_age = int(_evict_cfg.get("max_age_days", 30))
-    except (ValueError, TypeError):
-        logger.warning("[startup] cache_eviction.max_age_days 配置无效，已回退到默认值 30")
-        _max_age = 30
-    try:
-        _max_size = int(_evict_cfg.get("max_size_mb", 0))
-    except (ValueError, TypeError):
-        logger.warning("[startup] cache_eviction.max_size_mb 配置无效，已回退到默认值 0")
-        _max_size = 0
-    if _max_age or _max_size:
-        await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
-
-    # 先迁移旧索引，再校验文件、修复改名、纳入孤儿和去重；已有 image_ref 保持稳定。
+    # Original images are durable; legacy stores are handled by explicit migration.
     from llm.media.sticker_collection import reconcile_stickers
     _rc_stats = await asyncio.to_thread(reconcile_stickers)
     logger.info(
