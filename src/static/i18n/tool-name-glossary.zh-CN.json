@@ -175,14 +175,6 @@
       "zh_name": "核心·重启进程",
       "zh_definition": "重新启动当前核心进程以加载运行时变化。"
     },
-    "think_deeply": {
-      "zh_name": "深入思考",
-      "zh_definition": "针对当前问题进行额外的深入思考。"
-    },
-    "core.think_deeply": {
-      "zh_name": "核心·深入思考",
-      "zh_definition": "针对当前问题进行额外的深入思考。"
-    },
     "list_contact": {
       "zh_name": "列出联系人",
       "zh_definition": "列出好友、群聊或已打开的临时会话。"

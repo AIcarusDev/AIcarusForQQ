@@ -174,14 +174,6 @@
       "source": "src/tools/core/restart.py#TOOL_CONTRACT",
       "status": "active"
     },
-    "think_deeply": {
-      "source": "src/tools/core/think_deeply/think_deeply.py#TOOL_CONTRACT",
-      "status": "historical"
-    },
-    "core.think_deeply": {
-      "source": "src/tools/core/think_deeply/think_deeply.py#TOOL_CONTRACT",
-      "status": "active"
-    },
     "list_contact": {
       "source": "src/platforms/qq/tools/qq_contacts/list_contact.py#TOOL_CONTRACT",
       "status": "historical"

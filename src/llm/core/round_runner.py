@@ -130,8 +130,6 @@ def _log_finish_reason(tag: str, response: Any) -> str:
 
 
 def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
-    if log_tag.startswith("think_deeply/"):
-        return "slow_thinking", log_tag.split("/", 1)[1]
     if log_tag.startswith("memory/"):
         return "memory", log_tag.split("/", 1)[1]
     if log_tag == "cognition_compression":
@@ -857,7 +855,7 @@ class LLMRoundRunner:
         system_prompt: str,
         user_content: str | list,
         gen: dict,
-        log_tag: str = "slow_thinking",
+        log_tag: str = "simple_text",
     ) -> str | None:
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
         gen = self._normalize_generation_for_transport(gen)

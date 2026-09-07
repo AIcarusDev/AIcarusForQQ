@@ -12,7 +12,6 @@ namespaces:
       - enter_platform
       - close_platform
       - runtime_manage
-      - think_deeply
       - recall_memory
       - recall_skill_resource
       - goal_manage

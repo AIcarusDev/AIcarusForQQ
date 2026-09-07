@@ -58,7 +58,6 @@ from llm.core.provider import (
     build_tool_execution_guard_adapter_cfg,
     build_event_extraction_adapter_cfg,
     build_memory_processing_adapter_cfg,
-    build_slow_thinking_adapter_cfg,
     build_compression_adapter_cfg,
 )
 from llm.compression.config import normalize_generation_config
@@ -564,7 +563,6 @@ async def settings_get():
         "tool_execution_guard": cfg.get("tool_execution_guard", {}),
         "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
         "memory": _default_memory_cfg(cfg),
-        "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
         "api_keys": await asyncio.to_thread(read_env_keys, _get_settings_api_key_names(cfg)),
@@ -964,34 +962,6 @@ async def settings_save():
                 )
             new_mem["processing"] = new_mp
         new_cfg["memory"] = new_mem
-    if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
-        st_data = data["slow_thinking"]
-        new_st = dict(new_cfg.get("slow_thinking", {}))
-        if "enabled" in st_data:
-            new_st["enabled"] = bool(st_data["enabled"])
-        for key in ("model",):
-            if key in st_data:
-                if st_data[key]:
-                    new_st[key] = st_data[key]
-                else:
-                    new_st.pop(key, None)
-        if "provider" in st_data:
-            provider = st_data.get("provider")
-            if provider:
-                new_st["provider"] = provider
-            else:
-                new_st.pop("provider", None)
-        new_st.pop("profile", None)
-        new_st.pop("base_url", None)
-        new_st.pop("api_key_env", None)
-        if "generation" in st_data and isinstance(st_data["generation"], dict):
-            new_st["generation"] = _apply_generation_controls(
-                new_st.get("generation", {}),
-                st_data["generation"],
-                min_tokens=64,
-                default_temperature=1.0,
-            )
-        new_cfg["slow_thinking"] = new_st
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
     if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
@@ -1068,7 +1038,6 @@ async def settings_save():
             memory_processing_required,
         ) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
-        _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
     ):
         if error:
             return jsonify({"success": False, "error": error}), 400
@@ -1106,7 +1075,6 @@ async def settings_save():
             _section_enabled(new_memory_processing, False),
         ),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
-        _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
     ):
         if error:
             return jsonify({"success": False, "error": error}), 400
@@ -1159,10 +1127,6 @@ async def settings_save():
             compression_adapter_ = create_adapter(
                 build_compression_adapter_cfg(new_cfg, compression_cfg_)
             )
-        st_cfg_ = new_cfg.get("slow_thinking", {})
-        st_adapter_ = None
-        if st_cfg_.get("enabled", True) and st_cfg_.get("provider") and st_cfg_.get("model"):
-            st_adapter_ = create_adapter(build_slow_thinking_adapter_cfg(new_cfg, st_cfg_))
         save_config(new_cfg)
         vb = VisionBridge(new_cfg)
         return (
@@ -1175,8 +1139,6 @@ async def settings_save():
             memory_processing_adapter_,
             compression_cfg_,
             compression_adapter_,
-            st_cfg_,
-            st_adapter_,
             vb,
         )
 
@@ -1191,8 +1153,6 @@ async def settings_save():
             new_memory_processing_adapter,
             new_compression_cfg,
             new_compression_adapter,
-            new_st_cfg,
-            new_st_adapter,
             new_vision_bridge,
         ) = await asyncio.to_thread(_create_and_save)
     except Exception as e:
@@ -1213,9 +1173,6 @@ async def settings_save():
     # ── 热重载上下文压缩 adapter ──────────────────────────
     app_state.cognition_compression_cfg = new_compression_cfg
     app_state.cognition_compression_adapter = new_compression_adapter
-    # ── 热重载 slow_thinking adapter ─────────────────────
-    app_state.slow_thinking_cfg = new_st_cfg
-    app_state.slow_thinking_adapter = new_st_adapter
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.GEN = new_cfg.get("generation", {})

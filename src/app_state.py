@@ -67,8 +67,6 @@ tts_audio_buffers: dict[str, bytearray] = {}
 tool_execution_guard_adapter: Any = None  # 外界可感知工具执行前守门子模型
 tool_execution_guard_cfg: dict = {}
 
-slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器
-slow_thinking_cfg: dict = {}
 
 event_extraction_adapter: Any = None  # 记忆事件提取专用适配器
 event_extraction_cfg: dict = {}

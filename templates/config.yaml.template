@@ -132,7 +132,7 @@ prompt_snapshots:
   root_dir: "logs/llm_prompts"
   include:
     main_round: true      # 主意识循环请求
-    simple_text: false    # 慢思考 / 压缩等纯文本子调用
+    simple_text: false    # 压缩等纯文本子调用
     forced_tool: false    # 归档等原生 forced tool 子调用
   compress_after_days: 1        # 旧 jsonl 自动 gzip
   bundle_after_days: 14         # 更旧的 gzip 按日期打 tar.gz 包
@@ -269,18 +269,6 @@ memory:
     recall_limit: 6
     world_query_chunks: 6 # 从当前 world/chat 中提取参与被动召回的高质量文本片段上限
     cognition_query_chunks: 3 # 从最近内心流中提取参与被动召回的片段上限
-
-# --- 主动思考（think_deeply 工具） ---
-# 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
-# 这里也使用显式 provider + model 绑定。
-slow_thinking:
-  enabled: true
-  provider: "siliconflow"
-  model: "Pro/zai-org/GLM-5"
-  generation:
-    temperature: 1.0
-    max_output_tokens: 10000
-    enable_thinking: true
 
 # ══════════════════════════════════════════
 #  平台集成

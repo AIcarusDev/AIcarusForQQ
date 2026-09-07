@@ -278,23 +278,6 @@ def test_browser_locator_contract_is_operation_specific():
     assert "arg" in defs["BrowserLocatorEvalOptions"]["properties"]
 
 
-def test_think_deeply_contract_keeps_intent_enum():
-    from tools.core import think_deeply
-
-    contract = get_contract_from_module(think_deeply)
-
-    assert contract is not None
-    properties = contract.declaration()["parameters"]["properties"]
-    assert properties["content"]["minLength"] == 1
-    assert _non_null_schema(properties["intent"])["enum"] == [
-        "affirmation",
-        "criticism",
-        "solving",
-        "inspiration",
-        "simulate",
-    ]
-
-
 def test_enter_qq_session_contract_preserves_enum_and_integer_compatibility():
     from platforms.qq.tools.qq_runtime import enter_qq_session
 

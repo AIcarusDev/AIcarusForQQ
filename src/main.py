@@ -46,7 +46,6 @@ from tts import TTSServer
 from llm.core.provider import (
     create_adapter,
     build_tool_execution_guard_adapter_cfg,
-    build_slow_thinking_adapter_cfg,
     build_event_extraction_adapter_cfg,
     build_memory_processing_adapter_cfg,
     build_compression_adapter_cfg,
@@ -132,14 +131,6 @@ if not _WEBUI_ONLY:
             )
         except (ValueError, Exception):
             app_state.tool_execution_guard_adapter = None
-
-    # ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
-    app_state.slow_thinking_cfg = config.get("slow_thinking", {})
-    _st_cfg = app_state.slow_thinking_cfg
-    if _st_cfg.get("enabled", True) and _st_cfg.get("provider") and _st_cfg.get("model"):
-        app_state.slow_thinking_adapter = create_adapter(
-            build_slow_thinking_adapter_cfg(config, _st_cfg)
-        )
 
     # ── 记忆事件提取子模型初始化 ────────────────────────────────────
     app_state.event_extraction_cfg = config.get("memory", {}).get("auto_archive", {})

@@ -225,7 +225,7 @@
 - **优先级 / 类别**：P1 / 启动可用性 bug
 - **状态 / 置信度**：静态确认；适配器异常由独立构造探针确认
 - **位置**：`src/main.py:107-180`、`templates/config.yaml.template:242-247,283-286`
-- **证据**：主模型、守门、记忆处理和压缩适配器创建都捕获初始化异常并允许 WebUI 继续；`slow_thinking` 和 `memory.auto_archive` 两个适配器创建却不在 `try` 中。模板默认启用且配置了这两项。独立调用 `create_adapter()` 传入未知 provider 会抛出 `ValueError`。
+- **证据**：主模型、守门、记忆处理和压缩适配器创建都捕获初始化异常并允许 WebUI 继续；`memory.auto_archive` 适配器创建却不在 `try` 中。模板默认启用且配置了该项。独立调用 `create_adapter()` 传入未知 provider 会抛出 `ValueError`。
 - **影响**：辅助 provider 被删除、拼写错误或配置不完整时，导入 `src.main` 即失败，用户无法进入本应承担修复入口的 WebUI；同类配置的失败语义不一致。
 - **建议**：把所有可选适配器统一交给一个带日志和状态结果的构建器；失败时置 `None`、在设置页明确展示降级原因，并增加入口级坏配置测试。
 

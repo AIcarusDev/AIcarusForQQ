@@ -1541,7 +1541,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>配置辅助模型：视觉桥接、工具执行前守门、上下文压缩与慢思考。</p>
+            <p>配置辅助模型：视觉桥接、工具执行前守门、上下文压缩。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1820,91 +1820,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     id="compression_max_output_tokens"
                     type="number"
                     min="256"
-                    max="65536"
-                    step="1"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="model-card" id="card-slow-thinking">
-            <div
-              class="model-card-head"
-              onclick="toggleCard('card-slow-thinking')"
-            >
-              <div class="model-card-title">
-                <h3>慢思考</h3>
-                <span class="card-badge">THINK</span>
-                <span class="card-desc">think_deeply 工具的内在子模型</span>
-              </div>
-              <span class="model-card-chevron">&#9660;</span>
-            </div>
-            <div class="model-card-body" id="card-slow-thinking-body">
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>启用慢思考</strong
-                  ><span
-                    >主模型可调用 think_deeply，把念头交给内在子模型。</span
-                  >
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="st_enabled" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>供应商</label
-                  ><select id="st_provider"></select>
-                </div>
-                <div
-                  class="field model-picker"
-                  data-provider-id="st_provider"
-                  data-model-id="st_model"
-                  data-model-label="慢思考"
-                >
-                  <label>模型 ID</label
-                  ><input
-                    id="st_model"
-                    type="text"
-                    placeholder="例如 Pro/zai-org/GLM-5"
-                  />
-                </div>
-              </div>
-              <hr class="card-divider" />
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>思维链开关</strong>
-                  <span>开启思维链（具体请求参数会按模型供应商自动转换）。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="st_enable_thinking" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>Temperature</label>
-                  <div class="range-row">
-                    <input
-                      type="range"
-                      id="st_temperature"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      value="1.0"
-                    /><span class="val" id="stTempVal">1.00</span>
-                  </div>
-                </div>
-                <div class="field">
-                  <label>max_output_tokens</label
-                  ><input
-                    id="st_max_output_tokens"
-                    type="number"
-                    min="64"
                     max="65536"
                     step="1"
                   />
@@ -3609,7 +3524,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     compression_provider: value("compression_provider"),
     event_extraction_provider: value("event_extraction_provider"),
     memory_processing_provider: value("memory_processing_provider"),
-    st_provider: value("st_provider"),
     };
     Object.entries(selected).forEach(([id, provider]) =>
       populateProviderSelect(id, provider),
@@ -4419,16 +4333,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       memoryProcessingGen.enable_thinking === true,
     );
     formatRange("memory_processing_temperature", "memoryProcessingTempVal");
-    const st = data.slow_thinking || {};
-    populateProviderSelect("st_provider", getProviderName(st));
-    setChecked("st_enabled", st.enabled !== false);
-    setValue("st_provider", getProviderName(st));
-    setValue("st_model", st.model || "");
-    const stGen = st.generation || {};
-    setValue("st_temperature", stGen.temperature ?? 1.0);
-    setValue("st_max_output_tokens", stGen.max_output_tokens ?? 10000);
-    setChecked("st_enable_thinking", generationThinkingEnabled(stGen));
-    formatRange("st_temperature", "stTempVal");
     const proxies = data.proxies || {};
     setValue("proxy_openai", "");
     setChecked("proxy_openai_clear", false);
@@ -5057,16 +4961,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           },
         },
       },
-      slow_thinking: {
-        enabled: checked("st_enabled"),
-        provider: value("st_provider"),
-        model: value("st_model"),
-        generation: {
-          temperature: floatValue("st_temperature", 1.0),
-          max_output_tokens: intValue("st_max_output_tokens", 10000),
-          enable_thinking: checked("st_enable_thinking"),
-        },
-      },
       api_keys: collectApiKeys(),
       service_env: collectServiceEnv(),
       proxies: collectProxies(),
@@ -5131,11 +5025,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       !payload.memory.processing.enabled
     )
       return "启用事件结构化或算法故事线前需要先启用记忆处理模型";
-    if (
-      payload.slow_thinking.enabled &&
-      (!payload.slow_thinking.provider || !payload.slow_thinking.model)
-    )
-      return "启用慢思考时需要选择供应商并填写模型 ID";
     return "";
   }
   async function saveProviders() {
@@ -5704,7 +5593,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     bindRange("compression_temperature", "compressionTempVal");
     bindRange("event_extraction_temperature", "eventExtractionTempVal");
     bindRange("memory_processing_temperature", "memoryProcessingTempVal");
-    bindRange("st_temperature", "stTempVal");
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
     $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("qq_adapter_port")?.addEventListener("input", updateQQAdapterReverseWsHint);

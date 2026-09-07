@@ -95,7 +95,7 @@ def _create_token_db(path) -> None:
             ("evt-1", BASE_TIME_MS, "openai", "gpt-main", "main_round", "", 100, 50, 150, 20, 10, 1, "success", "{}", ""),
             ("evt-2", BASE_TIME_MS + 1_000, "openai", "gpt-main", "memory_event_extraction", "", 200, 100, 300, 0, 0, 1, "success", "{}", ""),
             ("evt-3", BASE_TIME_MS + 2_000, "openai", "gpt-small", "main_round", "retry", 40, 10, 50, 0, 0, 1, "success", "{}", ""),
-            ("evt-4", BASE_TIME_MS + 3_000, "openai", "gpt-main", "slow_thinking", "", 0, 0, 0, 0, 0, 0, "success", "{}", ""),
+            ("evt-4", BASE_TIME_MS + 3_000, "openai", "gpt-main", "retired_feature", "", 0, 0, 0, 0, 0, 0, "success", "{}", ""),
         ]
         db.executemany(
             "INSERT INTO llm_usage_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -182,7 +182,7 @@ def test_token_timeline_can_group_series_by_feature(tmp_path) -> None:
     assert main["reasoning_output_tokens"] == 10
     assert main["points"][0]["input_tokens"] == 140
 
-    unknown = next(item for item in payload["series"] if item["feature"] == "slow_thinking")
+    unknown = next(item for item in payload["series"] if item["feature"] == "retired_feature")
     assert unknown["requests"] == 1
     assert unknown["known_requests"] == 0
     assert unknown["unknown_requests"] == 1
