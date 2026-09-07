@@ -84,7 +84,7 @@ def _image_path(filename: str) -> Path:
 
 def _validate_index(document: dict) -> None:
     try:
-        if document.get("version") != 2 or not isinstance(document["stickers"], dict):
+        if document.get("version") not in (2, 3) or not isinstance(document["stickers"], dict):
             raise ValueError
         bindings = document["ref_hashes"]
         if not isinstance(bindings, dict):
@@ -109,11 +109,57 @@ def _validate_index(document: dict) -> None:
         raise StickerCollectionError("invalid_index", "表情包索引损坏，未修改收藏数据") from exc
 
 
-def _new_ref(document: dict) -> str:
-    while True:
-        ref = uuid.uuid4().hex[:12]
-        if ref not in document["ref_hashes"] and not any(_IMAGES_DIR.glob(f"{ref}.*")):
-            return ref
+def _new_ref(document: dict, dt: datetime | None = None) -> str:
+    from .media_storage import generate_time_ref
+    from .media_identity import bind_media_identity
+    for ref, digest in document["ref_hashes"].items():
+        bind_media_identity(ref, digest)
+    return generate_time_ref(dt)
+
+
+def _migrate_v2_to_v3(document: dict) -> None:
+    from .media_storage import _TIME_REF_PATTERN
+    _validate_index(document)
+    backup = _INDEX_PATH.with_name("index.v2.backup.json")
+    if not backup.exists() and _INDEX_PATH.exists():
+        _atomic_write(backup, _INDEX_PATH.read_bytes())
+
+    new_stickers = {}
+    bindings = document.setdefault("ref_hashes", {})
+
+    for old_ref, info in list(document.get("stickers", {}).items()):
+        if _TIME_REF_PATTERN.match(old_ref):
+            new_stickers[old_ref] = info
+            continue
+
+        created_at_str = str(info.get("created_at") or "")
+        try:
+            created_dt = datetime.fromisoformat(created_at_str)
+        except Exception:
+            created_dt = None
+
+        new_ref = _new_ref(document, created_dt)
+
+        # References are metadata, not filenames. Keep the original file so
+        # either the old or the atomically committed new index remains usable
+        # after an interrupted migration (including the v2 backup).
+
+        aliases = list(info.get("aliases") or [])
+        if old_ref not in aliases:
+            aliases.append(old_ref)
+
+        info["aliases"] = aliases
+        new_stickers[new_ref] = info
+
+        digest = info["sha256"]
+        bindings[new_ref] = digest
+        bindings[old_ref] = digest
+
+    document["stickers"] = new_stickers
+    document["version"] = 3
+    _validate_index(document)
+    _save_index(document)
+    logger.info("[sticker_collection] 已迁移表情包至 v3 时序 ref (共 %d 个)", len(new_stickers))
 
 
 def _inspect(raw: bytes) -> str:
@@ -131,7 +177,7 @@ def _inspect(raw: bytes) -> str:
 def _load_index() -> dict:
     """Called under _LOCK. Migrate legacy metadata before any collection access."""
     if not _INDEX_PATH.exists():
-        return {"version": 2, "stickers": {}, "ref_hashes": {}}
+        return {"version": 3, "stickers": {}, "ref_hashes": {}}
     try:
         raw = _INDEX_PATH.read_bytes()
         document = json.loads(raw)
@@ -140,10 +186,12 @@ def _load_index() -> dict:
     if not isinstance(document, dict):
         raise StickerCollectionError("invalid_index", "表情包索引格式错误")
     if "version" in document:
+        if document.get("version") == 2 and isinstance(document.get("stickers"), dict):
+            _migrate_v2_to_v3(document)
         _validate_index(document)
         _recover_interrupted_deletions(document)
         return document
-    migrated = {"version": 2, "stickers": {}, "ref_hashes": {}}
+    migrated = {"version": 3, "stickers": {}, "ref_hashes": {}}
     try:
         for old_id, info in sorted(document.items()):
             if not re.fullmatch(r"\d{3}", old_id) or not isinstance(info, dict):
@@ -239,11 +287,21 @@ def save_sticker(raw_bytes: bytes, mime: str, description: str, *, image_ref: st
         raise StickerCollectionError("invalid_ref", "请提供有效的 image_ref，旧表情包编号已停用")
     mime = _inspect(raw_bytes)
     digest = hashlib.sha256(raw_bytes).hexdigest()
+    from .media_identity import bind_media_identity, MediaRefConflict
+
+    def bind(ref):
+        try:
+            bind_media_identity(ref, digest)
+        except MediaRefConflict as exc:
+            raise StickerCollectionError("ref_conflict", "此 image_ref 已绑定其他图片内容") from exc
+
     with _LOCK:
         document = _load_index()
         entries, bindings = document["stickers"], document["ref_hashes"]
         if image_ref in bindings and bindings[image_ref] != digest:
             raise StickerCollectionError("ref_conflict", "此 image_ref 已绑定其他图片内容")
+        if image_ref:
+            bind(image_ref)
         for ref, info in _entries(document):
             if info["sha256"] != digest:
                 continue
@@ -257,6 +315,7 @@ def save_sticker(raw_bytes: bytes, mime: str, description: str, *, image_ref: st
         if len(entries) >= MAX_STICKERS:
             return None
         ref = image_ref or _new_ref(document)
+        bind(ref)
         filename = ref + _MIME_TO_EXT[mime]
         path = _image_path(filename)
         _IMAGES_DIR.mkdir(parents=True, exist_ok=True)

@@ -10,7 +10,6 @@ import base64
 import json
 import logging
 import re
-import uuid
 
 _seg_logger = logging.getLogger("AICQ.qq_adapter.segments")
 
@@ -464,11 +463,27 @@ def build_message_content(
         elif seg_type in ("image", "mface"):
             data = data if isinstance(data, dict) else {}
             is_sticker = seg_type == "mface" or get_image_sub_type(data) == 1
-            image_ref = uuid.uuid4().hex[:12]
+            from llm.media.media_storage import generate_time_ref
+            image_ref = generate_time_ref()
             parts.append({"type": "sticker" if is_sticker else "image", "image_ref": image_ref})
             label = "动画表情" if is_sticker else "图片"
             if raw_b64 := data.get("base64", ""):
-                images[image_ref] = {"base64": raw_b64, "mime": "image/jpeg", "label": label}
+                try:
+                    import base64 as _b64
+                    from llm.media.media_storage import save_media_bytes
+                    raw_bytes = _b64.b64decode(raw_b64, validate=False)
+                    _, disk_path = save_media_bytes(raw_bytes, mime="image/jpeg", image_ref=image_ref)
+                    images[image_ref] = {"file_path": str(disk_path), "mime": "image/jpeg", "label": label}
+                except Exception as exc:
+                    from llm.media.media_identity import MediaRefConflict, MediaIdentityUnavailable
+                    if isinstance(exc, (MediaRefConflict, MediaIdentityUnavailable)):
+                        raise
+                    images[image_ref] = {"base64": raw_b64, "mime": "image/jpeg", "label": label}
+                try:
+                    from llm.media.media_cache import cache_recent_image
+                    cache_recent_image(image_ref, images[image_ref], source="chat")
+                except Exception:
+                    pass
             elif url := data.get("url", ""):
                 images[image_ref] = {"pending": True, "label": label}
                 pending_downloads.append((image_ref, url, label))

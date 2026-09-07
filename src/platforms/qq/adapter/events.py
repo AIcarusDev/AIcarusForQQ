@@ -248,11 +248,24 @@ async def download_pending_images(entry: dict) -> bool:
             logger.warning("图片已过期，已标记 image_ref=%s", image_ref)
         elif result:
             b64, mime = result
-            images[image_ref] = {"base64": b64, "mime": mime, "label": label}
+            try:
+                import base64 as _b64
+                from llm.media.media_storage import save_media_bytes
+                raw_bytes = _b64.b64decode(b64, validate=False)
+                _, disk_path = save_media_bytes(raw_bytes, mime=mime, image_ref=image_ref)
+                images[image_ref] = {"file_path": str(disk_path), "mime": mime, "label": label}
+            except Exception as exc:
+                from llm.media.media_identity import MediaRefConflict, MediaIdentityUnavailable
+                if isinstance(exc, (MediaRefConflict, MediaIdentityUnavailable)):
+                    raise
+                images[image_ref] = {"base64": b64, "mime": mime, "label": label}
             downloaded_any = True
         else:
             images[image_ref] = {"failed": True, "label": label}
             logger.warning("图片下载失败，已标记 image_ref=%s", image_ref)
+        # Publish success, or invalidate any older cache entry on failure.
+        from llm.media.media_cache import cache_recent_image
+        cache_recent_image(image_ref, images[image_ref], source="chat")
     if images:
         entry["images"] = images
     return downloaded_any

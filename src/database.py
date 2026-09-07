@@ -31,6 +31,7 @@ import sqlite3
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Any
 
 import aiosqlite
 
@@ -503,14 +504,28 @@ async def init_db() -> None:
                 name       TEXT    PRIMARY KEY,
                 applied_at INTEGER NOT NULL DEFAULT 0
             );
+
+            -- 媒体资源凭据注册表：记录全系统 image_ref 的定位信息（聊天、工作区、浏览器、表情包等）
+            CREATE TABLE IF NOT EXISTS media_registry (
+                image_ref    TEXT    PRIMARY KEY,
+                source_type  TEXT    NOT NULL,
+                locator      TEXT    NOT NULL,
+                mime         TEXT    NOT NULL DEFAULT 'image/jpeg',
+                sha256       TEXT,
+                created_at   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_media_registry_created
+                ON media_registry(created_at);
         """)
         await db.commit()
 
         await _migrate_memory_schema_to_primary(db)
         await _migrate_schema(db)
+        await _backfill_media_registry(db)
         await _migrate_legacy(db)
         await _migrate_rename_tables(db)
         await _backfill_llm_usage_from_bot_turns(db)
+        await _migrate_chat_images_to_disk(db)
     try:
         from memory.repo.events import ensure_schema as _ensure_memory_schema
 
@@ -696,6 +711,25 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] chat_messages 迁移失败")
+        raise
+
+    # 媒体资源凭据注册表兼容
+    try:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS media_registry (
+                image_ref    TEXT    PRIMARY KEY,
+                source_type  TEXT    NOT NULL,
+                locator      TEXT    NOT NULL,
+                mime         TEXT    NOT NULL DEFAULT 'image/jpeg',
+                sha256       TEXT,
+                created_at   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_media_registry_created
+                ON media_registry(created_at);
+        """)
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] media_registry 迁移失败")
         raise
 
     # QQ 文件记录兼容 Agent 在会话中现场生成并发送的本地文件。
@@ -1037,6 +1071,92 @@ async def _migrate_focus_refs(db) -> None:
     except Exception:
         logger.exception("[schema] focus 引用迁移失败")
         raise
+
+
+async def _migrate_chat_images_to_disk(db: aiosqlite.Connection) -> None:
+    """自动迁移 chat_messages 中的历史 Base64 图片到 data/media/ 磁盘，并瘦身数据库（为其他用户自动执行）。"""
+    migration_key = "chat_images_slimming_to_disk_v1"
+    async with db.execute(
+        "SELECT 1 FROM _migrations WHERE name=? LIMIT 1",
+        (migration_key,),
+    ) as cur:
+        if await cur.fetchone():
+            return
+
+    import base64
+    from datetime import datetime, timezone
+    from llm.media.media_storage import save_media_bytes
+
+    async with db.execute(
+        "SELECT id, timestamp, created_at, session_key, message_id, images FROM chat_messages WHERE images != '[]' AND images != ''"
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    migrated_images = 0
+    updated_rows = 0
+
+    for row in rows:
+        row_id, ts, created_at, _session_key, _message_id, raw_images = (
+            row[0], str(row[1] or ""), row[2] or 0, str(row[3] or ""), str(row[4] or ""), row[5]
+        )
+        try:
+            images_dict = json.loads(raw_images)
+        except Exception:
+            continue
+        if not isinstance(images_dict, dict):
+            continue
+
+        row_changed = False
+        for ref, info in images_dict.items():
+            if not isinstance(info, dict):
+                continue
+            b64 = info.get("base64")
+            if not b64:
+                continue
+
+            try:
+                raw_bytes = base64.b64decode(b64, validate=False)
+            except Exception:
+                continue
+
+            dt = None
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts)
+                except Exception:
+                    pass
+            if dt is None and created_at > 0:
+                try:
+                    dt = datetime.fromtimestamp(created_at / 1000.0, tz=timezone.utc)
+                except Exception:
+                    pass
+
+            mime = str(info.get("mime") or "image/jpeg")
+            _, disk_path = save_media_bytes(raw_bytes, mime=mime, image_ref=str(ref), dt=dt)
+
+            del info["base64"]
+            info["file_path"] = str(disk_path)
+            row_changed = True
+            migrated_images += 1
+
+            import hashlib
+            await _store_media_registry(db, str(ref), "chat", str(disk_path), mime,
+                                        hashlib.sha256(raw_bytes).hexdigest(), created_at)
+
+        if row_changed:
+            await db.execute(
+                "UPDATE chat_messages SET images = ? WHERE id = ?",
+                (json.dumps(images_dict, ensure_ascii=False), row_id),
+            )
+            updated_rows += 1
+
+    await db.execute(
+        "INSERT OR REPLACE INTO _migrations (name, applied_at) VALUES (?, ?)",
+        (migration_key, _ms()),
+    )
+    await db.commit()
+    if updated_rows > 0:
+        logger.info("[migration] 历史图片已自动落盘瘦身: 迁移 %d 张图，更新 %d 条消息", migrated_images, updated_rows)
 
 
 async def _backfill_llm_usage_from_bot_turns(db) -> None:
@@ -1489,7 +1609,228 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                 (reply_to, session_key, entry.get("message_id", "")),
             )
         await _index_qq_file_message(db, session_key, entry, now)
+        await _index_media_registry(db, session_key, entry, now)
         await db.commit()
+
+
+def _media_payload_items(images: object) -> list[tuple[str, dict[str, Any]]]:
+    """Normalize current and legacy chat image containers."""
+    if isinstance(images, dict):
+        return [
+            (str(image_ref).strip(), info)
+            for image_ref, info in images.items()
+            if str(image_ref).strip() and isinstance(info, dict)
+        ]
+    if isinstance(images, list):
+        items: list[tuple[str, dict[str, Any]]] = []
+        for info in images:
+            if not isinstance(info, dict):
+                continue
+            image_ref = str(info.get("image_ref") or info.get("ref") or "").strip()
+            if image_ref:
+                items.append((image_ref, info))
+        return items
+    return []
+
+
+async def _index_media_registry(
+    db: aiosqlite.Connection,
+    session_key: str,
+    entry: dict,
+    created_at: int,
+    *,
+    replace_existing: bool = True,
+) -> int:
+    """自动将聊天消息中的图片注册到 media_registry。"""
+    message_id = str(entry.get("message_id", "") or "").strip()
+    if not message_id:
+        return 0
+    indexed = 0
+    for image_ref, info in _media_payload_items(entry.get("images")):
+        # 只要存在有效载荷或处于可用状态
+        if info.get("base64") or info.get("file_path") or not (info.get("failed") or info.get("expired")):
+            locator = str(info.get("file_path") or f"{session_key}::{message_id}")
+            mime = str(info.get("mime") or "image/jpeg")
+            sha256 = str(info.get("sha256") or "") or None
+            if info.get("base64"):
+                import base64
+                import hashlib
+                sha256 = hashlib.sha256(base64.b64decode(info["base64"], validate=True)).hexdigest()
+            indexed += await _store_media_registry(
+                db, image_ref, "chat", locator, mime, sha256, created_at,
+                replace_existing=replace_existing,
+            )
+    return indexed
+
+
+async def _store_media_registry(db, ref, source, locator, mime, digest, created_at, *, replace_existing=True) -> int:
+    """Update a locator only after proving its immutable content binding."""
+    import hashlib
+    from pathlib import Path
+    from llm.media.media_identity import bind_media_identity, MediaRefConflict
+
+    path = Path(locator)
+    if path.is_file():
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest and actual != digest:
+            raise MediaRefConflict("Media digest does not match file content")
+        digest = actual
+    bind_media_identity(ref, digest)
+    async with db.execute("SELECT source_type, locator, sha256 FROM media_registry WHERE image_ref=?", (ref,)) as cur:
+        old = await cur.fetchone()
+    if old:
+        if digest and old[2] and digest != old[2]:
+            raise MediaRefConflict("Media registry reference is bound to different content")
+        # An unresolved/pending reference must never displace a usable locator.
+        if not replace_existing or not digest:
+            return 0
+        await db.execute(
+            "UPDATE media_registry SET source_type=?, locator=?, mime=?, sha256=? WHERE image_ref=?",
+            (source, locator, mime, digest, ref),
+        )
+    else:
+        await db.execute(
+            "INSERT INTO media_registry(image_ref, source_type, locator, mime, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (ref, source, locator, mime, digest, created_at),
+        )
+    return 1
+
+
+async def _backfill_media_registry(db: aiosqlite.Connection) -> None:
+    """Build media_registry entries for chat images saved before the registry existed."""
+    migration_key = "media_registry_chat_images_v1"
+    async with db.execute(
+        "SELECT 1 FROM _migrations WHERE name=? LIMIT 1",
+        (migration_key,),
+    ) as cur:
+        if await cur.fetchone():
+            return
+
+    scanned = 0
+    indexed = 0
+    malformed = 0
+    try:
+        async with db.execute(
+            """SELECT session_key, message_id, images, created_at
+               FROM chat_messages
+               WHERE message_id<>'' AND images IS NOT NULL
+                 AND images NOT IN ('', '[]', '{}')
+               ORDER BY id ASC"""
+        ) as cur:
+            while rows := await cur.fetchmany(500):
+                for session_key, message_id, raw_images, created_at in rows:
+                    scanned += 1
+                    try:
+                        images = json.loads(raw_images)
+                    except (TypeError, ValueError):
+                        malformed += 1
+                        continue
+                    indexed += await _index_media_registry(
+                        db,
+                        str(session_key or ""),
+                        {"message_id": message_id, "images": images},
+                        int(created_at or 0),
+                        replace_existing=False,
+                    )
+        await db.execute(
+            "INSERT INTO _migrations(name, applied_at) VALUES (?, ?)",
+            (migration_key, _ms()),
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("[schema] media_registry 历史聊天图片回填失败")
+        raise
+    logger.info(
+        "[schema] media_registry 历史聊天图片回填完成: rows=%d refs=%d malformed=%d",
+        scanned,
+        indexed,
+        malformed,
+    )
+
+
+def lookup_media_ref_sync(image_ref: str) -> dict[str, Any] | None:
+    """同步按 image_ref 点查 media_registry。"""
+    ref = str(image_ref or "").strip()
+    if not ref:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT image_ref, source_type, locator, mime, sha256, created_at FROM media_registry WHERE image_ref = ? LIMIT 1",
+                (ref,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "image_ref": str(row["image_ref"]),
+                "source_type": str(row["source_type"]),
+                "locator": str(row["locator"]),
+                "mime": str(row["mime"]),
+                "sha256": row["sha256"],
+                "created_at": int(row["created_at"] or 0),
+            }
+    except Exception:
+        logger.exception("[database] lookup_media_ref_sync 查询失败: ref=%s", ref)
+        return None
+
+
+def load_chat_image_payload_sync(session_key: str, message_id: str, image_ref: str) -> dict[str, Any] | None:
+    """根据 session_key 和 message_id 从 chat_messages 精准读取对应 image_ref 的图片数据。"""
+    s_key = str(session_key or "").strip()
+    m_id = str(message_id or "").strip()
+    ref = str(image_ref or "").strip()
+    if not s_key or not m_id or not ref:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT images FROM chat_messages WHERE session_key = ? AND message_id = ? LIMIT 1",
+                (s_key, m_id),
+            ).fetchone()
+            if not row:
+                return None
+            raw_images = row["images"]
+            if not raw_images:
+                return None
+            import json as _json
+            data = _json.loads(raw_images)
+            for image_ref, info in _media_payload_items(data):
+                if image_ref == ref:
+                    return info
+            return None
+    except Exception:
+        logger.exception("[database] load_chat_image_payload_sync 失败 session=%s msg=%s ref=%s", s_key, m_id, ref)
+        return None
+
+
+async def register_media_ref(
+    image_ref: str,
+    source_type: str,
+    locator: str,
+    mime: str = "image/jpeg",
+    sha256: str | None = None,
+    created_at: int | None = None,
+) -> None:
+    """向 media_registry 注册或更新媒体凭据。"""
+    ref = str(image_ref or "").strip()
+    stype = str(source_type or "").strip()
+    loc = str(locator or "").strip()
+    if not ref or not stype or not loc:
+        return
+    now = _ms() if created_at is None else int(created_at)
+    async with _connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        await _store_media_registry(db, ref, stype, loc, mime, sha256, now)
+        await db.commit()
+
+
+async def lookup_media_ref(image_ref: str) -> dict[str, Any] | None:
+    """异步按 image_ref 点查 media_registry。"""
+    import asyncio as _asyncio
+    return await _asyncio.to_thread(lookup_media_ref_sync, image_ref)
 
 
 async def _index_qq_file_message(

@@ -280,15 +280,17 @@ class VisionBridge:
           4. 将 phash / description / examinations 写回 img_info（内存）
         """
         images: dict = entry.get("images") or {}
+        from .image_resolver import image_bytes
+
         for image_ref, img_info in images.items():
-            b64: str = img_info.get("base64", "")
-            mime: str = img_info.get("mime", "image/jpeg")
-            if not b64:
+            payload = image_bytes(img_info)
+            if payload is None:
                 continue
+            raw, mime = payload
+            b64 = base64.b64encode(raw).decode("ascii")
 
             # ── 1. 落盘 + pHash ──────────────────────
             try:
-                raw = base64.b64decode(b64)
                 phash, _ = cache_image(raw, mime)
             except Exception as exc:
                 logger.warning(

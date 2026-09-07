@@ -94,11 +94,11 @@ def inspect_image_payload(
 
 
 class ImageResolver:
-    """Resolve an ``image_ref`` using the same visibility order as the world view."""
+    """Resolve an ``image_ref`` via fast L1 memory cache and reliable L2 SQLite media_registry."""
 
     def __init__(
         self,
-        session: Any,
+        session: Any = None,
         *,
         history_loader: HistoryLoader | None = None,
         browser_image_reader: BrowserImageReader | None = None,
@@ -108,14 +108,14 @@ class ImageResolver:
         self.browser_image_reader = browser_image_reader or read_browser_image_file
 
     def resolve(self, image_ref: object, *, include_browser: bool = True) -> tuple[dict[str, Any], str] | None:
-        """Return the first visible image and its source, or ``None``."""
+        """Return the first resolved image and its source, or ``None``."""
 
         normalized_ref = normalize_image_ref(image_ref)
         if not normalized_ref:
             return None
 
+        # 收藏图片先检查内容完整性。
         from .sticker_collection import StickerCollectionError, get_sticker_image
-
         try:
             sticker = get_sticker_image(normalized_ref)
         except StickerCollectionError as exc:
@@ -123,38 +123,112 @@ class ImageResolver:
         if sticker is not None:
             return sticker, "sticker"
 
-        for entry in getattr(self.session, "context_messages", []) or []:
-            if image := image_from_entry(entry, normalized_ref):
-                return image, "chat"
+        # Visible entries own mutable status and vision metadata. Return the
+        # original object so examine_image writes back to the active message.
+        if self.session is not None:
+            for entry in getattr(self.session, "context_messages", []) or []:
+                if (image := image_from_entry(entry, normalized_ref)) is not None:
+                    return self._visible_result(normalized_ref, image, "chat")
+            if getattr(self.session, "is_browsing_history", lambda: False)():
+                view = getattr(self.session, "chat_window_view", {}) or {}
+                if top_db_id := view.get("top_db_id"):
+                    try:
+                        for entry in self.history_loader(self.session, int(top_db_id), int(view.get("page_size") or 10)):
+                            if (image := image_from_entry(entry, normalized_ref)) is not None:
+                                return self._visible_result(normalized_ref, image, "history")
+                    except Exception:
+                        logger.debug("[image_resolver] History lookup failed", exc_info=True)
+            for entry in visible_forward_entries(self.session):
+                if (image := image_from_entry(entry, normalized_ref)) is not None:
+                    return self._visible_result(normalized_ref, image, "forward")
 
-        if getattr(self.session, "is_browsing_history", lambda: False)():
-            view = getattr(self.session, "chat_window_view", {}) or {}
-            top_db_id = view.get("top_db_id")
-            if top_db_id:
-                try:
-                    page_size = int(view.get("page_size") or 10)
-                    for entry in self.history_loader(self.session, int(top_db_id), page_size):
-                        if image := image_from_entry(entry, normalized_ref):
-                            return image, "history"
-                except Exception:
-                    logger.debug("[tools] view_image: 历史窗口查找失败", exc_info=True)
-
-        for entry in visible_forward_entries(self.session):
-            if image := image_from_entry(entry, normalized_ref):
-                return image, "forward"
-
-        if not include_browser:
-            return None
+        # L1 跨会话缓存用于当前窗口之外的图片。
         try:
-            browser_image = self.browser_image_reader(normalized_ref)
+            from .media_cache import get_recent_image, cache_recent_image
+            if cached := get_recent_image(normalized_ref):
+                return cached
         except Exception:
-            logger.debug("[tools] view_image: browser 图片查找失败", exc_info=True)
-            browser_image = None
-        if browser_image is not None:
-            raw, mime = browser_image
-            return {"data": raw, "mime": mime or "image/jpeg"}, "browser"
+            pass
+
+        # 时序物理磁盘文件直读 (data/media/YYYY/MM/)
+        try:
+            from .media_storage import read_media_bytes
+            if media_res := read_media_bytes(normalized_ref):
+                raw_bytes, inferred_mime = media_res
+                img_dict = {"data": raw_bytes, "mime": inferred_mime}
+                from database import lookup_media_ref_sync
+                record = lookup_media_ref_sync(normalized_ref)
+                source = str(record.get("source_type") or "chat") if record else "chat"
+                try:
+                    from .media_cache import cache_recent_image
+                    cache_recent_image(normalized_ref, img_dict, source=source)
+                except Exception:
+                    pass
+                return img_dict, source
+        except Exception:
+            pass
+
+        # 浏览器临时图片
+        if include_browser:
+            try:
+                browser_image = self.browser_image_reader(normalized_ref)
+            except Exception:
+                browser_image = None
+            if browser_image is not None:
+                raw, mime = browser_image
+                img_dict = {"data": raw, "mime": mime or "image/jpeg"}
+                try:
+                    from .media_cache import cache_recent_image
+                    cache_recent_image(normalized_ref, img_dict, source="browser")
+                except Exception:
+                    pass
+                return img_dict, "browser"
+
+        # L2 SQLite media_registry 点查冷数据
+        try:
+            from database import lookup_media_ref_sync, load_chat_image_payload_sync
+            record = lookup_media_ref_sync(normalized_ref)
+            if record:
+                stype = record.get("source_type")
+                locator = record.get("locator", "")
+                mime = record.get("mime", "image/jpeg")
+                from pathlib import Path
+                path = Path(locator)
+                if path.is_file():
+                    try:
+                        raw = path.read_bytes()
+                        img_dict = {"data": raw, "mime": mime}
+                        try:
+                            from .media_cache import cache_recent_image
+                            cache_recent_image(normalized_ref, img_dict, source=stype)
+                        except Exception:
+                            pass
+                        return img_dict, stype
+                    except OSError:
+                        logger.debug("[image_resolver] 读取文件失败: %s", locator, exc_info=True)
+                elif stype == "chat":
+                    parts = locator.split("::", 1)
+                    if len(parts) == 2:
+                        s_key, m_id = parts
+                        payload = load_chat_image_payload_sync(s_key, m_id, normalized_ref)
+                        if payload and isinstance(payload, dict):
+                            try:
+                                from .media_cache import cache_recent_image
+                                cache_recent_image(normalized_ref, payload, source="chat")
+                            except Exception:
+                                pass
+                            return payload, "chat"
+        except Exception:
+            logger.debug("[image_resolver] L2 media_registry 查询异常", exc_info=True)
 
         return None
+
+    @staticmethod
+    def _visible_result(image_ref: str, image: dict[str, Any], source: str) -> tuple[dict[str, Any], str]:
+        from .media_cache import cache_recent_image
+
+        cache_recent_image(image_ref, image, source=source)
+        return image, source
 
     @staticmethod
     def payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
@@ -211,6 +285,16 @@ def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
         return data, mime
     if isinstance(data, str) and data:
         return data, mime
+
+    file_path = image.get("file_path")
+    if file_path:
+        from pathlib import Path
+        p = Path(str(file_path))
+        if p.is_file():
+            try:
+                return p.read_bytes(), mime
+            except OSError:
+                pass
 
     b64 = image.get("base64")
     if isinstance(b64, str) and b64:

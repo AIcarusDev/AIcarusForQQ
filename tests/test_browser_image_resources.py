@@ -73,7 +73,7 @@ def test_artifact_store_persists_only_validated_immutable_original(tmp_path) -> 
     registry = BrowserImageResourceRegistry()
     resource = _resource(registry)
     assert resource is not None
-    store = BrowserImageArtifactStore(tmp_path)
+    store = BrowserImageArtifactStore(tmp_path / "artifacts")
     original = _png()
 
     artifact = store.persist(
@@ -86,7 +86,7 @@ def test_artifact_store_persists_only_validated_immutable_original(tmp_path) -> 
     assert artifact.image_ref.startswith("img_")
     assert artifact.confirmation_reasons == ()
     assert store.read(artifact.image_ref)[:2] == (original, "image/png")
-    assert sorted(path.suffix for path in tmp_path.iterdir()) == [".json", ".png"]
+    assert sorted(path.suffix for path in store.root.iterdir()) == [".json", ".png"]
 
 
 def test_artifact_store_rejects_non_image_and_detects_tampering(tmp_path) -> None:

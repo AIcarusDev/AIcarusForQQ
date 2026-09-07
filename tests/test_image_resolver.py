@@ -12,35 +12,30 @@ from tools.core import view_image
 from tools.core.view_image import ViewImageArgs, make_handler
 
 
-def test_image_resolver_preserves_world_visibility_order() -> None:
-    image_ref = "image-1"
+def test_image_resolver_resolution_order() -> None:
+    from llm.media.media_cache import clear_recent_media_cache, cache_recent_image
+
+    clear_recent_media_cache()
+    image_ref = "image-order-test"
     session = SimpleNamespace(
         context_messages=[{"images": {image_ref: {"data": b"chat"}}}],
-        is_browsing_history=lambda: True,
-        chat_window_view={"top_db_id": 12, "page_size": 5},
-        forward_browser_stack=[
-            {
-                "page_offset": 1,
-                "page_size": 1,
-                "nodes": [
-                    {"images": {image_ref: {"data": b"hidden"}}},
-                    {"images": {image_ref: {"data": b"forward"}}},
-                ],
-            }
-        ],
     )
     resolver = ImageResolver(
         session,
-        history_loader=lambda *_args: [{"images": {image_ref: {"data": b"history"}}}],
         browser_image_reader=lambda _ref: (b"browser", "image/png"),
     )
 
+    # 1. 命中 context_messages（并自动回填 L1）
     assert resolver.resolve(image_ref) == ({"data": b"chat"}, "chat")
+
+    # 2. 如果 context_messages 为空，命中 L1 缓存
+    clear_recent_media_cache()
     session.context_messages = []
-    assert resolver.resolve(image_ref) == ({"data": b"history"}, "history")
-    session.is_browsing_history = lambda: False
-    assert resolver.resolve(image_ref) == ({"data": b"forward"}, "forward")
-    session.forward_browser_stack = []
+    cache_recent_image(image_ref, {"data": b"l1_cache"}, source="cache")
+    assert resolver.resolve(image_ref) == ({"data": b"l1_cache"}, "cache")
+
+    # 3. 如果 L1 缓存未命中，回退到浏览器
+    clear_recent_media_cache()
     assert resolver.resolve(image_ref) == ({"data": b"browser", "mime": "image/png"}, "browser")
 
 

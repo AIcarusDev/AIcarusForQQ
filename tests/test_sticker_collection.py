@@ -29,6 +29,43 @@ def gif() -> bytes:
     return output.getvalue()
 
 
+@pytest.mark.parametrize("failure", ["before_commit", "after_commit"])
+def test_v2_migration_interruption_preserves_images_and_old_refs(monkeypatch, failure):
+    refs = ["a" * 12, "b" * 12]
+    originals = [png(), gif()]
+    for ref, raw, mime in zip(refs, originals, ("image/png", "image/gif")):
+        stickers.save_sticker(raw, mime, "fixture", image_ref=ref)
+    document = json.loads(stickers._INDEX_PATH.read_bytes())
+    document["version"] = 2
+    stickers._INDEX_PATH.write_text(json.dumps(document), encoding="utf-8")
+    old_index = stickers._INDEX_PATH.read_bytes()
+    save = stickers._save_index
+
+    def interrupted(doc):
+        if failure == "after_commit":
+            save(doc)
+        raise OSError("simulated interruption")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(stickers, "_save_index", interrupted)
+        with pytest.raises(OSError):
+            stickers.list_all()
+
+    if failure == "before_commit":
+        assert stickers._INDEX_PATH.read_bytes() == old_index
+    for ref, raw in zip(refs, originals):
+        assert (stickers._IMAGES_DIR / document["stickers"][ref]["filename"]).read_bytes() == raw
+        assert stickers.load_sticker_bytes(ref)[0] == raw
+    items = stickers.list_all()
+    assert len(items) == 2
+    assert stickers.list_all() == items
+    assert stickers._INDEX_PATH.with_name("index.v2.backup.json").read_bytes() == old_index
+    for item in items:
+        assert stickers.load_sticker_bytes(item["image_ref"]) is not None
+    stickers.reconcile_stickers()
+    assert stickers.list_all() == items
+
+
 def legacy_collection():
     stickers._IMAGES_DIR.mkdir(parents=True)
     entries = {}

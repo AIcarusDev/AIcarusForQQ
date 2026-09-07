@@ -416,6 +416,11 @@ class BrowserImageArtifactStore:
             manifest_path = self.root / f"{image_ref}.json"
             if data_path.exists() and data_path.read_bytes() != data:
                 raise BrowserImageValidationError("browser image_ref collision")
+            from llm.media.media_identity import bind_media_identity, MediaRefConflict
+            try:
+                bind_media_identity(image_ref, digest)
+            except MediaRefConflict as exc:
+                raise BrowserImageValidationError("browser image_ref collision") from exc
             if manifest_path.exists():
                 if self.read(image_ref) is None:
                     raise BrowserImageValidationError(

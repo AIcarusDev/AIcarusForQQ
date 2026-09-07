@@ -92,8 +92,12 @@ _WORLD_VIEW_LOCK = threading.Lock()
 
 
 def _write_browser_image(ref: str, data: bytes, ext: str) -> Path:
+    from llm.media.media_identity import bind_media_identity, MediaRefConflict
     BROWSER_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     path = BROWSER_IMAGE_DIR / f"{ref}{ext}"
+    if path.exists() and path.read_bytes() != data:
+        raise MediaRefConflict("Browser reference is bound to different content")
+    bind_media_identity(ref, hashlib.sha256(data).hexdigest())
     path.write_bytes(data)
     return path
 
@@ -678,7 +682,13 @@ class BrowserSession:
                 page.evaluate(_CLEAR_TARGET_OVERLAY_JS)
         digest = hashlib.sha256(png).hexdigest()
         image_ref = digest[:12]
-        _write_browser_image(image_ref, png, ".png")
+        from llm.media.media_identity import MediaRefConflict
+        try:
+            _write_browser_image(image_ref, png, ".png")
+        except MediaRefConflict:
+            from llm.media.media_storage import generate_time_ref
+            image_ref = generate_time_ref()
+            _write_browser_image(image_ref, png, ".png")
         global _LATEST_VIEWPORT_REF
         _LATEST_VIEWPORT_REF = image_ref
         return {

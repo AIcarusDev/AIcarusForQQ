@@ -552,6 +552,9 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
     确保 caller 传入的 images dict 不完整时，残留哨兵不会原样泄漏到
     下游请求体（\x00 进 OpenAI JSON 会触发部分服务端解析器崩溃）。
     """
+    import base64
+    from llm.media.image_resolver import image_bytes
+
     parts: list[dict] = []
     last_end = 0
     for m in _IMG_SENTINEL_RE.finditer(text):
@@ -560,13 +563,13 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
         img = images.get(image_ref)
         before = _resolve_sentinels(text[last_end:m.start()], images)
         data_url = None
-        if img and not img.get("failed") and not img.get("pending") and img.get("base64"):
+        if img and not img.get("failed") and not img.get("pending"):
             data_url = img.get("_llm_data_url")
             if data_url is None and not img.get("_llm_image_failed"):
-                data_url = make_data_url(
-                    str(img.get("base64") or ""),
-                    str(img.get("mime") or "image/jpeg"),
-                )
+                payload = image_bytes(img)
+                if payload is not None:
+                    raw, mime = payload
+                    data_url = make_data_url(base64.b64encode(raw).decode("ascii"), mime)
                 if data_url:
                     img["_llm_data_url"] = data_url
                 else:

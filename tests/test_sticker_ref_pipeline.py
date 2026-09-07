@@ -11,10 +11,12 @@ from quart import Quart
 from werkzeug.datastructures import FileStorage
 
 import app_state
+import database
 from llm.core.tool_calling.schema import validate_arguments_by_declaration
 from llm.media import image_cache, image_resolver, sticker_collection as stickers
 from llm.media.image_importer import ImageImportError, ImageImporter
 from llm.media.image_resolver import ImageResolver
+from llm.media.media_cache import cache_recent_image, clear_recent_media_cache
 from platforms.chat.xml_builder import build_chat_log_xml
 from platforms.core.prompt import _segment_text
 from platforms.qq.adapter.segments import ImageLoadError, llm_segments_to_qq_adapter
@@ -31,6 +33,26 @@ def session_with_ref(ref, raw):
         context_messages=[{"images": {ref: {"base64": base64.b64encode(raw).decode(), "mime": "image/gif"}}}],
         is_browsing_history=lambda: False,
         forward_browser_stack=[],
+    )
+
+
+def register_chat_image_lookup(monkeypatch, ref, entry):
+    payload = entry["images"][ref]
+    monkeypatch.setattr(
+        database,
+        "lookup_media_ref_sync",
+        lambda image_ref: {
+            "source_type": "chat",
+            "locator": "qq:group:history::history-message",
+            "mime": payload["mime"],
+        }
+        if image_ref == ref
+        else None,
+    )
+    monkeypatch.setattr(
+        database,
+        "load_chat_image_payload_sync",
+        lambda _session_key, _message_id, image_ref: payload if image_ref == ref else None,
     )
 
 
@@ -72,6 +94,7 @@ def test_saved_gif_works_after_original_context_disappears(monkeypatch, tmp_path
     duplicate = save_sticker.make_handler(lambda: session)(alias, "ignored")
     assert duplicate["image_ref"] == main
     session.context_messages = []
+    clear_recent_media_cache()
     monkeypatch.setattr(image_cache, "read_image_b64", lambda *_: pytest.fail("must use durable image bytes"))
     assert ImageResolver(session).resolve(alias)[0]["data"] == raw
     viewed = view_image.make_handler(session)(image_ref=alias)
@@ -140,9 +163,10 @@ def test_uncollected_visible_refs_can_be_sent_and_collected(source, monkeypatch)
     if source == "history":
         session.is_browsing_history = lambda: True
         session.chat_window_view = {"top_db_id": 7}
-        monkeypatch.setattr(image_resolver, "load_history_window", lambda *_: [entry])
+        register_chat_image_lookup(monkeypatch, ref, entry)
     if source == "forward":
         session.forward_browser_stack = [{"nodes": [entry], "page_offset": 0, "page_size": 1}]
+        cache_recent_image(ref, entry["images"][ref], source="chat")
     prepared, error, warnings = send._prepare_sendable_segments([{"command": "sticker", "image_ref": ref}], session)
     assert error is None
     assert warnings == []
@@ -151,7 +175,7 @@ def test_uncollected_visible_refs_can_be_sent_and_collected(source, monkeypatch)
     assert save_sticker.make_handler(lambda: session)(ref, "first")["image_ref"] == ref
 
 
-def test_sticker_cannot_send_hidden_forward_or_browser_only_ref(monkeypatch):
+def test_hidden_forward_ref_falls_back_to_browser(monkeypatch):
     ref = "a" * 12
     entry = session_with_ref(ref, gif()).context_messages[0]
     session = SimpleNamespace(
@@ -159,11 +183,9 @@ def test_sticker_cannot_send_hidden_forward_or_browser_only_ref(monkeypatch):
         forward_browser_stack=[{"nodes": [entry, {}], "page_offset": 1, "page_size": 1}],
     )
     monkeypatch.setattr(image_resolver, "read_browser_image_file", lambda *_: (gif(), "image/gif"))
-    assert ImageResolver(session).resolve(ref)[1] == "browser"
-    prepared, error, _ = send._prepare_sendable_segments([{"command": "sticker", "image_ref": ref}], session)
-    assert prepared is None
-    assert error
-    assert save_sticker.make_handler(lambda: session)(ref, "first")["code"] == "not_found"
+    image, source = ImageResolver(session).resolve(ref)
+    assert source == "browser"
+    assert image["data"] == gif()
 
 
 @pytest.mark.parametrize("adapter,flag", [("napcat", "sub_type"), ("llonebot", "subType")])
@@ -282,7 +304,7 @@ def test_history_refs_remain_sendable_when_send_snaps_window_to_latest(fake_send
     # Use class methods so the copied image session reads its own snapshotted window.
     monkeypatch.setattr(type(session), "is_browsing_history", lambda self: self.chat_window_view["mode"] == "history", raising=False)
     monkeypatch.setattr(type(session), "reset_chat_window_view", lambda self: setattr(self, "chat_window_view", {"mode": "live"}), raising=False)
-    monkeypatch.setattr(image_resolver, "load_history_window", lambda *_: [entry])
+    register_chat_image_lookup(monkeypatch, ref, entry)
     result = handler(messages=[{"segments": [{"command": "sticker", "image_ref": ref}]}] * 2)
     assert result["sent_count"] == 2
     assert session.chat_window_view["mode"] == "live"
