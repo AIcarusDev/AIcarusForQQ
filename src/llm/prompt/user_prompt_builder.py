@@ -12,7 +12,6 @@
 - <platform> 内层包裹
 - <des> 平台说明块
 - 聊天记录 XML / 多模态内容
-- <system_reminder> 末尾附加块
 """
 
 import html
@@ -25,7 +24,6 @@ from platforms.registry import get_platform
 from skills import build_skill_block_for_namespaces
 from tools.namespaces import load_namespace_registry
 
-from .final_reminder import append_final_reminder
 from platforms.chat.history_window import has_previous_messages, load_history_window
 from platforms.chat.xml_builder import build_forward_browser_content, build_multimodal_content
 from ..compression.config import (
@@ -383,4 +381,4 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         prefix_parts.append(skill_block)
     prefix = "\n".join(prefix_parts)
     user_prompt = _prepend_text_block(user_prompt, prefix)
-    return append_final_reminder(user_prompt, session)
+    return user_prompt
