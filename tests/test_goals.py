@@ -35,6 +35,13 @@ def test_goal_manage_persists_creation_and_resolution(monkeypatch, resolution):
     spec = collection.active_specs["core.goal_manage"]
     created = spec.handler(action="create", goal=" 测试目标 ", background=" 测试背景 ")
     assert created["ok"] is True
+    from llm.prompt.container import build_container_xml
+    from xml.etree import ElementTree as ET
+
+    goal_block = ET.fromstring(build_container_xml()).find("preset/goal")
+    assert goal_block is not None
+    assert goal_block.find("des") is not None
+    assert goal_block.findtext("active/item/goal") == "测试目标"
     goal_id = created["created"]["goal_id"]
     loaded = asyncio.run(database.load_goals())
     assert [(row["goal"], row["background"]) for row in loaded] == [("测试目标", "测试背景")]
@@ -46,6 +53,7 @@ def test_goal_manage_persists_creation_and_resolution(monkeypatch, resolution):
     assert deleted["ok"] is True
     assert deleted["action"] == "delete"
     assert goals.get_all() == []
+    assert build_container_xml() == "<container/>"
     assert asyncio.run(database.load_goals()) == []
     with sqlite3.connect(database.DB_PATH) as connection:
         assert connection.execute(
@@ -85,10 +93,7 @@ def test_goal_manage_rejects_invalid_arguments_without_writes(monkeypatch, argum
 def test_empty_active_goals_xml():
     goals.restore([])
     xml = goals.build_active_goals_xml()
-    assert '<active items="0/10">' in xml
-    assert "<origin>" not in xml
-    assert "<title>" not in xml
-    assert "<content>" not in xml
+    assert xml == ""
 
 
 @pytest.mark.anyio

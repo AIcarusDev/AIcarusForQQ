@@ -3,7 +3,7 @@
 统一组装主模型每轮调用的 user content。
 当前包括：
 - <memory> 块
-- <goals> 块
+- <container> 块
 - <skills> 块（仅在 active namespace 绑定主 skill 时出现）
 - <world> 顶层包裹
 - <current_time> 块
@@ -386,7 +386,6 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     user_prompt = _append_browser_content_to_world(user_prompt, confirmation_content)
     prefix_parts = [
         _build_prompt_block("memory", dynamic_blocks["memory"]),
-        _build_prompt_block("goals", dynamic_blocks["goals"]),
     ]
     if skill_block := _build_active_skill_prompt_block():
         prefix_parts.append(skill_block)

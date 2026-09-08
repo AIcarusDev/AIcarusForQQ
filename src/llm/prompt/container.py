@@ -9,11 +9,45 @@
 import html
 import secrets
 import time
-from typing import Any
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Callable, Iterable
 
 
 _items: list[dict] = []
 VALID_SECTIONS: tuple[str, ...] = ("preset", "custom")
+
+
+@dataclass(frozen=True)
+class ContainerContract:
+    """由内容所属逻辑声明注入格式和语义。
+
+    render 返回受信任的内部 XML（动态文本须自行转义）；返回空串则不注入，
+    连同 des 一起省略。状态和持久化由提供方负责，容器只负责组合。
+    """
+
+    tag: str
+    section: str
+    description: str
+    render: Callable[[datetime], str]
+
+    def __post_init__(self) -> None:
+        if self.section not in VALID_SECTIONS:
+            raise ValueError(f"无效的 container section: {self.section}")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", self.tag):
+            raise ValueError(f"无效的 container tag: {self.tag}")
+        if not self.description.strip():
+            raise ValueError("container description 不能为空")
+
+    def build_xml(self, now: datetime) -> str:
+        body = self.render(now)
+        if not body.strip():
+            return ""
+        return (
+            f"<{self.tag}>\n<des>{html.escape(self.description)}</des>\n"
+            f"{body}\n</{self.tag}>"
+        )
 
 
 def restore(rows: list[dict]) -> None:
@@ -42,11 +76,13 @@ def _next_id() -> str:
             return candidate
 
 
-def _render_section(tag: str, items: list[dict]) -> list[str]:
+def _render_section(tag: str, items: list[dict], blocks: list[str]) -> list[str]:
     """渲染分节 XML。若为空则输出自闭合标签保留骨架结构。"""
-    if not items:
+    if not items and not blocks:
         return [f"  <{tag}/>"]
     lines = [f"  <{tag}>"]
+    for block in blocks:
+        lines.extend(f"    {line}" for line in block.splitlines())
     for it in items:
         item_id = html.escape(str(it.get("item_id", "")))
         key = html.escape(str(it.get("item_key", "") or it.get("key", "")))
@@ -60,21 +96,36 @@ def _render_section(tag: str, items: list[dict]) -> list[str]:
     return lines
 
 
-def build_container_xml() -> str:
+def build_container_xml(
+    now: datetime | None = None,
+    *,
+    contracts: Iterable[ContainerContract] | None = None,
+) -> str:
     """构建 container 上下文 XML 字符串。
 
     - 当完全无条目时，直接返回自闭合的 `<container/>`。
     - 当有条目时，返回包含 `<preset>` 与 `<custom>` 的完整骨架结构。
     """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if contracts is None:
+        from .container_providers import CONTRACTS
+
+        contracts = CONTRACTS
+    blocks: dict[str, list[str]] = {section: [] for section in VALID_SECTIONS}
+    for contract in contracts:
+        if block := contract.build_xml(now):
+            blocks[contract.section].append(block)
+
     preset_items = [it for it in _items if it.get("section") == "preset"]
     custom_items = [it for it in _items if it.get("section") == "custom"]
 
-    if not preset_items and not custom_items:
+    if not preset_items and not custom_items and not any(blocks.values()):
         return "<container/>"
 
     lines = ["<container>"]
-    lines.extend(_render_section("preset", preset_items))
-    lines.extend(_render_section("custom", custom_items))
+    lines.extend(_render_section("preset", preset_items, blocks["preset"]))
+    lines.extend(_render_section("custom", custom_items, blocks["custom"]))
     lines.append("</container>")
     return "\n".join(lines)
 

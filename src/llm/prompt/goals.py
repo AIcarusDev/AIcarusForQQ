@@ -12,6 +12,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from .container import ContainerContract
+
 
 _goals: list[dict] = []
 _max_entries: int = 10
@@ -64,23 +66,17 @@ def _age_text(created_at_ms: int, now: datetime) -> str:
 
 
 def build_active_goals_xml(now: datetime | None = None) -> str:
+    if not _goals:
+        return ""
+
     if now is None:
         now = datetime.now(timezone.utc)
 
     total = len(_goals)
     cap = _max_entries
-    if not _goals:
-        return "\n".join(
-            [
-                f'<active items="0/{cap}">',
-                "  你现在漫无目的，如果需要的话，使用 `core.goal_manage`（action=create） 创建目标。",
-                "</active>",
-            ]
-        )
-
     lines = [f'<active items="{total}/{cap}">']
     for goal in _goals:
-        goal_id = goal["goal_id"]
+        goal_id = html.escape(str(goal["goal_id"]), quote=True)
         age = _age_text(goal["created_at"], now)
         goal_text = goal.get("goal") or goal.get("title") or ""
         bg_text = goal.get("background") or goal.get("reason") or ""
@@ -91,6 +87,22 @@ def build_active_goals_xml(now: datetime | None = None) -> str:
         lines.append("  </item>")
     lines.append("</active>")
     return "\n".join(lines)
+
+
+def _render_container_goals(now: datetime) -> str:
+    return build_active_goals_xml(now)
+
+
+CONTAINER_CONTRACT = ContainerContract(
+    tag="goal",
+    section="preset",
+    description=(
+        "These are the goals and the context you have established; "
+        "you will continue to work towards achieving them until you encounter an insurmountable blocker or the goals cease to be valuable or meaningful. "
+        "Remember to clear them out when a goal no longer needs to be pursued for any reason."
+    ),
+    render=_render_container_goals,
+)
 
 
 def _next_id() -> str:

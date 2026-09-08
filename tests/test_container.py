@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+from datetime import datetime, timezone
+from xml.etree import ElementTree as ET
 
 import database
-from llm.prompt import container
+from llm.prompt import container, goals
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from llm.session import create_session
 from platforms import PlatformRegistry
@@ -14,9 +16,63 @@ from platforms.qq import QQRuntime
 @pytest.fixture(autouse=True)
 def clean_container_state():
     """每个测试前后确保 container 内存状态被清空。"""
+    previous_goals = goals.get_all()
+    goals.restore([])
     container.restore([])
     yield
     container.restore([])
+    goals.restore(previous_goals)
+
+
+def test_provider_controls_format_description_and_visibility():
+    now = datetime(2026, 9, 9, tzinfo=timezone.utc)
+    seen = []
+
+    def render(timestamp):
+        seen.append(timestamp)
+        return '<entry code="fixture">safe &amp; text</entry>'
+
+    contract = container.ContainerContract(
+        tag="fixture", section="custom", description="concept <&>", render=render,
+    )
+    root = ET.fromstring(container.build_container_xml(now, contracts=[contract]))
+    assert seen == [now]
+    assert root.findtext("custom/fixture/des") == "concept <&>"
+    assert root.findtext("custom/fixture/entry") == "safe & text"
+    hidden = container.ContainerContract(
+        tag="hidden", section="preset", description="unused", render=lambda _: "",
+    )
+    assert container.build_container_xml(contracts=[hidden]) == "<container/>"
+
+
+@pytest.mark.parametrize("multimodal", [False, True])
+def test_goal_provider_reaches_main_prompt_with_escaped_content(monkeypatch, multimodal):
+    import llm.prompt.user_prompt_builder as builder
+
+    goals.restore([{
+        "goal_id": 'goal_"<&', "created_at": 0,
+        "goal": "目标 <&>", "background": "背景 <&>",
+    }])
+    world = "<world><platform/></world>"
+    image_part = {"type": "image_url", "image_url": {"url": "fixture"}}
+    content = [{"type": "text", "text": world}, image_part] if multimodal else world
+    monkeypatch.setattr(builder, "_wrap_platform_block_with_world", lambda *args: content)
+    monkeypatch.setattr(builder.browser, "build_browser_world_content", lambda: "")
+    prompt = builder.build_main_user_prompt(create_session("group_123456"))
+    if multimodal:
+        assert image_part in prompt
+        text = "".join(part["text"] for part in prompt if part["type"] == "text")
+    else:
+        text = prompt
+    root = ET.fromstring(text[text.index("<container>"):])
+    block = root.find("preset/goal")
+    assert block is not None
+    assert block.findtext("des") == goals.CONTAINER_CONTRACT.description
+    item = block.find("active/item")
+    assert item is not None
+    assert item.attrib["id"] == 'goal_"<&'
+    assert item.findtext("goal") == "目标 <&>"
+    assert item.findtext("background") == "背景 <&>"
 
 
 def test_container_empty_renders_self_closing_tag():

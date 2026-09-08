@@ -27,7 +27,6 @@ from .prompt.prompt import (
     SYSTEM_PROMPT,
     get_formatted_time_for_llm,
 )
-from .prompt.goals import build_active_goals_xml
 
 logger = logging.getLogger("AICQ.llm.session")
 
@@ -545,7 +544,6 @@ class ConversationSession:
                 sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
                 nickname_map=self._nick_cache or None,
             ),
-            "goals": build_active_goals_xml(now),
         }
 
 
