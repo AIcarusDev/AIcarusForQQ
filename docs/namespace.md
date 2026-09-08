@@ -252,7 +252,7 @@ qq_social:
 
 说明：
 
-1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema `if/then` 明确约束：`action=create` 时要求创建目标所需字段，`action=resolve` 时要求 `goal_ids` 和 `resolution`。
+1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema 联合分支 明确约束：`action=create` 时要求 `goal` 和 `background`，`action=delete` 时要求 `goal_id` 和 `resolution`。
 2. 图像工具必须二选一：
    - 主模型支持直接看图：使用 `view_image`，可查看 `<world>` 中因为上下文预算或注入策略而只展示 image_ref 的图片，也可查看 `/home/agent` 内已有的 Linux 图片。
    - `save_image` 常驻 core，将可见 `image_ref` 或公开 HTTP(S) URL 的图片无覆盖地原子保存到 `/home/agent`。
@@ -568,7 +568,7 @@ namespace 重构后：
 19. `namespace_manage.open` 已确定下一轮生效；同轮先 open 再调用新 namespace 工具时拒绝执行，并返回明确原因。
 20. `namespace_manage.close` 已确定立即按顺序生效；先工具后 close 可执行但 close 覆盖续命，先 close 后工具则拒绝。
 21. `open`、`close`、`preview` 都支持一次传入多个 namespace。
-22. `create_goal` / `resolve_goal` 已确定合并为 core 常驻 `goal_manage`，并用 `action` + JSON Schema `if/then` 区分 create / resolve。
+22. `create_goal` / `resolve_goal` 已确定合并为 core 常驻 `goal_manage`，并用 `action` + JSON Schema 联合分支 区分 create / delete。
 23. 新工具不默认加 `additionalProperties: false`。
 24. `send_voice` 常驻在 `qq_social`；TTS 不可用时由执行层返回错误，暂不按配置摘除。
 25. `web_search`、`web_extract`、`get_weather` 固定放在 core 常驻。

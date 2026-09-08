@@ -151,21 +151,13 @@
       "zh_name": "核心·主动回忆",
       "zh_definition": "根据联想词或相关概念主动回忆细节。"
     },
-    "goal_create": {
-      "zh_name": "创建目标",
-      "zh_definition": "创建一个新的活跃目标并记录其背景。"
+    "goal_manage": {
+      "zh_name": "管理目标",
+      "zh_definition": "创建目标，或移除活跃目标并保留历史记录及结束方式。"
     },
-    "goals.goal_create": {
-      "zh_name": "目标·创建目标",
-      "zh_definition": "创建一个新的活跃目标并记录其背景。"
-    },
-    "goal_resolve": {
-      "zh_name": "结束目标",
-      "zh_definition": "结束一个指定的活跃目标并记录结束原因。"
-    },
-    "goals.goal_resolve": {
-      "zh_name": "目标·结束目标",
-      "zh_definition": "结束一个指定的活跃目标并记录结束原因。"
+    "core.goal_manage": {
+      "zh_name": "核心·管理目标",
+      "zh_definition": "创建目标，或移除活跃目标并保留历史记录及结束方式。"
     },
     "get_weather": {
       "zh_name": "查询天气",

@@ -109,16 +109,16 @@ def test_discriminated_union_repair_does_not_guess_unknown_branch():
     assert changes == []
 
 
-def test_goal_create_and_resolve_schema():
-    from tools.goals import goal_create
-    from tools.goals import goal_resolve
+def test_goal_manage_schema():
+    from tools.core import goal_manage
 
-    create_decl = goal_create.TOOL_CONTRACT.declaration()
+    create_decl = goal_manage.TOOL_CONTRACT.declaration()
 
     ok, errors, summary = validate_arguments_by_declaration(
         {
+            "action": "create",
             "goal": "整理目标管理",
-            "background": "升级为独立 goals 命名空间",
+            "background": "合并目标工具",
         },
         create_decl,
     )
@@ -128,6 +128,7 @@ def test_goal_create_and_resolve_schema():
 
     ok, errors, summary = validate_arguments_by_declaration(
         {
+            "action": "create",
             "goal": "缺少 background 应该被拒绝",
         },
         create_decl,
@@ -136,10 +137,11 @@ def test_goal_create_and_resolve_schema():
     assert summary is not None
     assert errors
 
-    resolve_decl = goal_resolve.TOOL_CONTRACT.declaration()
+    resolve_decl = goal_manage.TOOL_CONTRACT.declaration()
 
     ok, errors, summary = validate_arguments_by_declaration(
         {
+            "action": "delete",
             "goal_id": "goal_12345678",
             "resolution": "completed",
         },
@@ -150,6 +152,7 @@ def test_goal_create_and_resolve_schema():
 
     ok, errors, summary = validate_arguments_by_declaration(
         {
+            "action": "delete",
             "goal_id": "goal_12345678",
             "resolution": "invalid_status",
         },

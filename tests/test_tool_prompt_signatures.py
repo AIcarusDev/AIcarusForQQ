@@ -247,19 +247,20 @@ def test_query_group_members_contract_is_action_specific():
     assert (query["minLength"], query["maxLength"]) == (1, 32)
 
 
-def test_goal_create_and_resolve_contract():
-    from tools.goals import goal_create
-    from tools.goals import goal_resolve
+def test_goal_manage_contract():
+    from tools.core import goal_manage
 
-    create_decl = goal_create.TOOL_CONTRACT.declaration()
-    assert create_decl["name"] == "goal_create"
-    assert set(create_decl["parameters"]["properties"].keys()) == {"goal", "background"}
-    assert set(create_decl["parameters"]["required"]) == {"goal", "background"}
+    declaration = goal_manage.TOOL_CONTRACT.declaration()
+    assert declaration["name"] == "goal_manage"
+    branches = declaration["parameters"]["$defs"].values()
+    actions = {branch["properties"]["action"]["const"]: branch for branch in branches}
+    for action, fields in {
+        "create": {"action", "goal", "background"},
+        "delete": {"action", "goal_id", "resolution"},
+    }.items():
+        assert set(actions[action]["properties"]) == fields
+        assert set(actions[action]["required"]) == fields
 
-    resolve_decl = goal_resolve.TOOL_CONTRACT.declaration()
-    assert resolve_decl["name"] == "goal_resolve"
-    assert set(resolve_decl["parameters"]["properties"].keys()) == {"goal_id", "resolution"}
-    assert set(resolve_decl["parameters"]["required"]) == {"goal_id", "resolution"}
 
 
 def test_browser_locator_contract_is_operation_specific():
