@@ -346,6 +346,8 @@ async def init_db() -> None:
                 goal_id      TEXT    PRIMARY KEY,
                 created_at   INTEGER NOT NULL DEFAULT 0,
                 updated_at   INTEGER NOT NULL DEFAULT 0,
+                goal         TEXT    NOT NULL DEFAULT '',
+                background   TEXT    NOT NULL DEFAULT '',
                 title        TEXT    NOT NULL DEFAULT '',
                 content      TEXT    NOT NULL DEFAULT '',
                 reason       TEXT    NOT NULL DEFAULT '',
@@ -771,6 +773,35 @@ async def _migrate_schema(db) -> None:
         logger.info("[schema] bot_goals 已添加 resolution 列")
     except Exception:
         pass  # 列已存在则跳过
+
+    # bot_goals 新增 goal 与 background 列
+    for col in ("goal", "background"):
+        try:
+            await db.execute(f"ALTER TABLE bot_goals ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+            await db.commit()
+            logger.info("[schema] bot_goals 已添加 %s 列", col)
+        except Exception:
+            pass
+
+    # 将旧版 title/content/reason 回填到新版 goal/background。
+    # content 与 reason 都存在时用换行直接拼接，避免丢失目标的具体描述。
+    try:
+        await db.execute(
+            "UPDATE bot_goals SET goal=title "
+            "WHERE (goal='' OR goal IS NULL) AND title<>''"
+        )
+        await db.execute(
+            "UPDATE bot_goals SET background="
+            "CASE "
+            "WHEN content<>'' AND reason<>'' THEN content || char(10) || reason "
+            "ELSE content || reason "
+            "END "
+            "WHERE (background='' OR background IS NULL) AND (content<>'' OR reason<>'')"
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] bot_goals 旧字段回填失败")
+        raise
 
     # 兼容旧版：此前 complete_goal 会把 status 直接写成 completed
     try:
@@ -2661,44 +2692,25 @@ async def soft_delete_event(event_id: int) -> bool:
 
 async def write_goal(
     goal_id: str,
-    title: str,
-    content: str,
-    reason: str,
-    conv_type: str = "",
-    conv_id: str = "",
-    conv_name: str = "",
+    goal: str,
+    background: str,
     status: str = "active",
     resolution: str = "",
 ) -> None:
     """写入一条新目标。"""
     now = _ms()
-    platform, focus_type, focus_id, focus_name, _focus_key, focus_json = _focus_tuple_from_legacy(
-        conv_type=conv_type,
-        conv_id=conv_id,
-        conv_name=conv_name,
-    )
     async with _connect() as db:
         await db.execute(
             """INSERT INTO bot_goals
-               (goal_id, created_at, updated_at, title, content, reason,
-                focus_platform, focus_type, focus_id, focus_name, focus_ref_json,
-                conv_type, conv_id, conv_name, status, resolution, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+               (goal_id, created_at, updated_at, goal, background,
+                status, resolution, is_deleted)
+               VALUES (?,?,?,?,?,?,?,0)""",
             (
                 goal_id,
                 now,
                 now,
-                title,
-                content,
-                reason,
-                platform,
-                focus_type,
-                focus_id,
-                focus_name,
-                focus_json,
-                focus_type or conv_type,
-                focus_id or conv_id,
-                focus_name or conv_name,
+                goal,
+                background,
                 status,
                 resolution,
             ),
@@ -2735,7 +2747,15 @@ async def load_goals(limit: int = 10) -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT goal_id, created_at, updated_at, title, content, reason,
+            """SELECT goal_id, created_at, updated_at,
+                      COALESCE(NULLIF(goal, ''), title) AS goal,
+                      COALESCE(
+                          NULLIF(background, ''),
+                          CASE
+                              WHEN content<>'' AND reason<>'' THEN content || char(10) || reason
+                              ELSE content || reason
+                          END
+                      ) AS background,
                       COALESCE(NULLIF(focus_platform, ''), 'qq') AS focus_platform,
                       COALESCE(NULLIF(focus_type, ''), conv_type) AS focus_type,
                       COALESCE(NULLIF(focus_id, ''), conv_id) AS focus_id,

@@ -247,14 +247,19 @@ def test_query_group_members_contract_is_action_specific():
     assert (query["minLength"], query["maxLength"]) == (1, 32)
 
 
-def test_goal_manage_contract_preserves_business_title_property():
-    from tools.core import goal_manage
+def test_goal_create_and_resolve_contract():
+    from tools.goals import goal_create
+    from tools.goals import goal_resolve
 
-    declaration = goal_manage.TOOL_CONTRACT.declaration()
-    goal_item = declaration["parameters"]["$defs"]["GoalItem"]
+    create_decl = goal_create.TOOL_CONTRACT.declaration()
+    assert create_decl["name"] == "goal_create"
+    assert set(create_decl["parameters"]["properties"].keys()) == {"goal", "background"}
+    assert set(create_decl["parameters"]["required"]) == {"goal", "background"}
 
-    assert "title" in goal_item["properties"]
-    assert goal_item["required"] == ["title", "content", "reason"]
+    resolve_decl = goal_resolve.TOOL_CONTRACT.declaration()
+    assert resolve_decl["name"] == "goal_resolve"
+    assert set(resolve_decl["parameters"]["properties"].keys()) == {"goal_id", "resolution"}
+    assert set(resolve_decl["parameters"]["required"]) == {"goal_id", "resolution"}
 
 
 def test_browser_locator_contract_is_operation_specific():

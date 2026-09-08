@@ -5,6 +5,12 @@ modules:
     namespaces:
       - core
 
+  goals:
+    path: goals
+    always_active: true
+    namespaces:
+      - goals
+
   browser:
     path: browser
     active_when: browser_available

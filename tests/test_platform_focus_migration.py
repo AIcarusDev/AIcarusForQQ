@@ -99,8 +99,12 @@ def test_legacy_qq_conversation_rows_migrate_to_focus_refs(monkeypatch, tmp_path
                 VALUES ('turn1', 1000, 'group', '123', '{"cognition":"old"}', '[]');
             INSERT INTO watcher_cycles (cycle_id, created_at, conv_type, conv_id, result_json)
                 VALUES ('cycle1', 1000, 'group', '123', '{}');
-            INSERT INTO bot_goals (goal_id, created_at, updated_at, title, conv_type, conv_id, conv_name)
-                VALUES ('goal1', 1000, 1000, 'goal', 'group', '123', '旧群');
+            INSERT INTO bot_goals
+                (goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name)
+                VALUES (
+                    'goal1', 1000, 1000, 'goal', '旧目标的具体描述', '旧目标的创建原因',
+                    'group', '123', '旧群'
+                );
             INSERT INTO archive_signatures (conv_key, signature)
                 VALUES ('group/123', 'sig-old');
             INSERT INTO pending_archive_jobs (conv_type, conv_id, conv_name, sender_id, dialogue, signature, prev_signature, valid_candidate_ids)
@@ -110,6 +114,12 @@ def test_legacy_qq_conversation_rows_migrate_to_focus_refs(monkeypatch, tmp_path
         conn.commit()
 
     asyncio.run(database.init_db())
+
+    with sqlite3.connect(db_path) as conn:
+        migrated_goal = conn.execute(
+            "SELECT goal, background FROM bot_goals WHERE goal_id='goal1'"
+        ).fetchone()
+    assert migrated_goal == ("goal", "旧目标的具体描述\n旧目标的创建原因")
 
     async def scenario():
         sessions = await database.load_chat_sessions()
@@ -137,6 +147,8 @@ def test_legacy_qq_conversation_rows_migrate_to_focus_refs(monkeypatch, tmp_path
     assert turns[0]["session_key"] == "qq:group:123"
     assert goals[0]["focus_type"] == "group"
     assert goals[0]["focus_id"] == "123"
+    assert goals[0]["goal"] == "goal"
+    assert goals[0]["background"] == "旧目标的具体描述\n旧目标的创建原因"
     assert signatures == {("group", "123"): "sig-old"}
     assert jobs[0]["focus_type"] == "group"
     assert jobs[0]["focus_id"] == "123"

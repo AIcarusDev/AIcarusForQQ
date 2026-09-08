@@ -109,23 +109,18 @@ def test_discriminated_union_repair_does_not_guess_unknown_branch():
     assert changes == []
 
 
-def test_goal_manage_schema_accepts_create_with_required_title():
-    from tools.core import goal_manage
+def test_goal_create_and_resolve_schema():
+    from tools.goals import goal_create
+    from tools.goals import goal_resolve
 
-    declaration = goal_manage.TOOL_CONTRACT.declaration()
+    create_decl = goal_create.TOOL_CONTRACT.declaration()
 
     ok, errors, summary = validate_arguments_by_declaration(
         {
-            "action": "create",
-            "goals": [
-                {
-                    "title": "整理目标管理",
-                    "content": "修复 goal_manage create 参数声明",
-                    "reason": "模型可见签名和后端校验必须一致",
-                }
-            ],
+            "goal": "整理目标管理",
+            "background": "升级为独立 goals 命名空间",
         },
-        declaration,
+        create_decl,
     )
     assert ok is True
     assert errors == []
@@ -133,18 +128,34 @@ def test_goal_manage_schema_accepts_create_with_required_title():
 
     ok, errors, summary = validate_arguments_by_declaration(
         {
-            "action": "create",
-            "goals": [
-                {
-                    "content": "修复 goal_manage create 参数声明",
-                    "reason": "缺少 title 应该被拒绝",
-                }
-            ],
+            "goal": "缺少 background 应该被拒绝",
         },
-        declaration,
+        create_decl,
     )
     assert ok is False
     assert summary is not None
+    assert errors
+
+    resolve_decl = goal_resolve.TOOL_CONTRACT.declaration()
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {
+            "goal_id": "goal_12345678",
+            "resolution": "completed",
+        },
+        resolve_decl,
+    )
+    assert ok is True
+    assert errors == []
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {
+            "goal_id": "goal_12345678",
+            "resolution": "invalid_status",
+        },
+        resolve_decl,
+    )
+    assert ok is False
     assert errors
 
 

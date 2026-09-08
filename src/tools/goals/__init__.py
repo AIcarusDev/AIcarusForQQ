@@ -1,0 +1,1 @@
+"""Goals namespace tools."""
