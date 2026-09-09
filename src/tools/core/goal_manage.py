@@ -31,7 +31,7 @@ class GoalManageArgs(RootModel[Annotated[GoalCreateArgs | GoalDeleteArgs, Field(
 
 @tool(
     name="goal_manage",
-    description="创建目标，或从活跃目标中移除指定目标。删除时保留历史记录及结束方式。",
+    description="目标管理工具，用于创建需要持续追求、跟进、完成的目标，或从活跃目标中移除指定目标。",
     args_model=GoalManageArgs,
 )
 def execute(args: GoalManageArgs) -> dict:
