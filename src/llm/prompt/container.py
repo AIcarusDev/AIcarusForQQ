@@ -6,6 +6,7 @@
 全空状态下理论上永远输出: <container/>
 """
 
+import asyncio
 import html
 import secrets
 import time
@@ -16,6 +17,7 @@ from typing import Any, Callable, Iterable
 
 
 _items: list[dict] = []
+_update_lock = asyncio.Lock()
 VALID_SECTIONS: tuple[str, ...] = ("preset", "custom")
 
 
@@ -52,8 +54,9 @@ class ContainerContract:
 
 def restore(rows: list[dict]) -> None:
     """从外部数据源（如数据库）恢复内存条目列表。"""
-    global _items
+    global _items, _update_lock
     _items = list(rows)
+    _update_lock = asyncio.Lock()
 
 
 def get_all() -> list[dict]:
@@ -142,54 +145,50 @@ async def add_item(
     if section not in VALID_SECTIONS:
         raise ValueError(f"无效的 container section: {section}，必须为 {VALID_SECTIONS} 之一")
 
-    now = int(time.time() * 1000)
-    item_id = _next_id()
-    entry = {
-        "item_id": item_id,
-        "section": section,
-        "item_key": key,
-        "content": content,
-        "metadata": dict(metadata or {}),
-        "created_at": now,
-        "updated_at": now,
-        "is_deleted": 0,
-    }
-    _items.append(entry)
+    async with _update_lock:
+        now = int(time.time() * 1000)
+        item_id = _next_id()
+        entry = {
+            "item_id": item_id,
+            "section": section,
+            "item_key": key,
+            "content": content,
+            "metadata": dict(metadata or {}),
+            "created_at": now,
+            "updated_at": now,
+            "is_deleted": 0,
+        }
 
-    if persist:
-        from database import write_container_item
+        if persist:
+            from database import write_container_item
 
-        await write_container_item(
-            item_id=item_id,
-            section=section,
-            item_key=key,
-            content=content,
-            metadata=metadata,
-        )
+            await write_container_item(
+                item_id=item_id,
+                section=section,
+                item_key=key,
+                content=content,
+                metadata=metadata,
+            )
 
-    return entry
+        _items.append(entry)
+        return entry
 
 
-async def remove_item(item_id: str, *, persist: bool = True) -> bool:
-    """根据 item_id 移除条目，并可选在数据库中进行软删除。"""
-    global _items
-    target_idx = -1
-    for idx, it in enumerate(_items):
-        if it.get("item_id") == item_id:
-            target_idx = idx
-            break
+async def remove_item(
+    item_id: str, *, section: str | None = None, persist: bool = True,
+) -> bool:
+    """按 ID 删除条目；指定 section 时只允许删除该分节的条目。"""
+    async with _update_lock:
+        target = next((it for it in _items if it.get("item_id") == item_id
+                       and (section is None or it.get("section") == section)), None)
+        if target is None:
+            return False
+        if persist:
+            from database import soft_delete_container_item
 
-    if target_idx == -1:
-        return False
-
-    _items.pop(target_idx)
-
-    if persist:
-        from database import soft_delete_container_item
-
-        await soft_delete_container_item(item_id)
-
-    return True
+            await soft_delete_container_item(item_id)
+        _items.remove(target)
+        return True
 
 
 async def clear(section: str | None = None) -> None:
