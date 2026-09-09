@@ -389,6 +389,13 @@ async def init_db() -> None:
                 timestamps   TEXT    NOT NULL DEFAULT '[]'
             );
 
+            CREATE TABLE IF NOT EXISTS bot_todo_snapshot (
+                id           INTEGER PRIMARY KEY CHECK (id = 1),
+                updated_at   INTEGER NOT NULL,
+                plan_json    TEXT NOT NULL,
+                explanation  TEXT
+            );
+
             -- namespace 运行时状态：独立于意识流历史，作为跨重启恢复的事实来源
             CREATE TABLE IF NOT EXISTS namespace_runtime_state (
                 key          TEXT    PRIMARY KEY,
@@ -2880,6 +2887,33 @@ async def load_adapter_contents() -> "tuple[str, list, list] | None":
         return str(row[0]), contents, timestamps
     except Exception:
         return None
+
+
+async def save_todo_snapshot(snapshot: dict) -> None:
+    """Atomically replace the single global checklist snapshot."""
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO bot_todo_snapshot (id, updated_at, plan_json, explanation)
+               VALUES (1, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   updated_at = excluded.updated_at,
+                   plan_json = excluded.plan_json,
+                   explanation = excluded.explanation""",
+            (snapshot["updated_at"], json.dumps(snapshot["plan"], ensure_ascii=False), snapshot["explanation"]),
+        )
+        await db.commit()
+
+
+async def load_todo_snapshot() -> dict | None:
+    """Read the latest checklist, including an explicitly cleared list."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT updated_at, plan_json, explanation FROM bot_todo_snapshot WHERE id = 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if row is None:
+        return None
+    return {"updated_at": row[0], "plan": json.loads(row[1]), "explanation": row[2]}
 
 
 async def save_namespace_runtime_state(state: dict) -> None:

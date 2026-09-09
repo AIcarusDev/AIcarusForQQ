@@ -159,6 +159,14 @@
       "zh_name": "核心·管理目标",
       "zh_definition": "创建目标，或移除活跃目标并保留历史记录及结束方式。"
     },
+    "update_plan": {
+      "zh_name": "更新待办",
+      "zh_definition": "完整更新全局待办列表及步骤状态，保存并在容器预设中展示。"
+    },
+    "core.update_plan": {
+      "zh_name": "核心·更新待办",
+      "zh_definition": "完整更新全局待办列表及步骤状态，保存并在容器预设中展示。"
+    },
     "get_weather": {
       "zh_name": "查询天气",
       "zh_definition": "查询指定城市的实时天气和未来三天预报。"

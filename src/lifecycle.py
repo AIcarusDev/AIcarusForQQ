@@ -32,6 +32,7 @@ from database import (
     load_chat_sessions,
     load_chat_messages,
     load_goals,
+    load_todo_snapshot,
     load_container_items,
     load_adapter_contents,
     save_adapter_contents,
@@ -45,6 +46,7 @@ from llm.session import (
     update_bot_info,
 )
 import llm.prompt.goals as _goals
+import llm.prompt.todo as _todo
 import llm.prompt.container as _container
 from memory.tokenizer import (
     load_custom_dict_from_events,
@@ -122,6 +124,9 @@ async def startup() -> None:
     _goal_rows = await load_goals(limit=_goals.get_max_entries())
     _goals.restore(_goal_rows)
     logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
+
+    _todo.restore(await load_todo_snapshot())
+    logger.info("[startup] 已恢复待办: %d 条", len(_todo.get_snapshot()["plan"]))
 
     # 恢复上下文契约 container
     try:

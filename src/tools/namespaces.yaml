@@ -13,6 +13,7 @@ namespaces:
       - close_platform
       - runtime_manage
       - goal_manage
+      - update_plan
       - recall_memory
       - recall_skill_resource
       - restart
