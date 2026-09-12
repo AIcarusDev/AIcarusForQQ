@@ -16,8 +16,10 @@
 
 import html
 import logging
+from datetime import datetime
 
 import browser
+import memory as _memory
 from platforms.attention import build_attention_events_xml
 from platforms.base import PlatformWorldBlock
 from platforms.registry import get_platform
@@ -40,6 +42,42 @@ WORLD_DESCRIPTION = (
     "This is the external world currently visible to you. It is rebuilt for each "
     "observation and may change between rounds."
 )
+
+
+def _format_world_time(now: datetime) -> str:
+    hour = now.hour
+    month = now.month
+
+    if 0 <= hour < 5:
+        period = "凌晨"
+    elif 5 <= hour < 8:
+        period = "清晨"
+    elif 8 <= hour < 11:
+        period = "上午"
+    elif 11 <= hour < 13:
+        period = "中午"
+    elif 13 <= hour < 17:
+        period = "下午"
+    elif 17 <= hour < 19:
+        period = "傍晚"
+    elif 19 <= hour < 22:
+        period = "晚上"
+    else:
+        period = "深夜"
+
+    if 3 <= month <= 5:
+        season = "春天"
+    elif 6 <= month <= 8:
+        season = "夏天"
+    elif 9 <= month <= 11:
+        season = "秋天"
+    else:
+        season = "冬天"
+
+    return (
+        f"{now.year}年 {season}，{now.month}月{now.day}日，"
+        f"{period}{now.hour}点{now.minute}分"
+    )
 
 
 def _build_active_skill_prompt_block() -> str:
@@ -334,7 +372,7 @@ def _build_browsing_chat_log(
 
 def _build_world_prompt(
     session,
-    dynamic_blocks: dict[str, str],
+    current_time: str,
     *,
     consume_unread: bool,
 ) -> "str | list":
@@ -362,7 +400,7 @@ def _build_world_prompt(
     if runtime is not None:
         platform_block = runtime.world_block(
             session,
-            current_time=dynamic_blocks["current_time"],
+            current_time=current_time,
             chat_log=chat_log,
             forward_content=forward_content,
         )
@@ -370,7 +408,7 @@ def _build_world_prompt(
         platform_block = _fallback_platform_block(session, chat_log, forward_content)
     user_prompt = _wrap_platform_block_with_world(
         platform_block,
-        dynamic_blocks["current_time"],
+        current_time,
     )
     user_prompt = _limit_multimodal_image_parts(
         user_prompt,
@@ -390,10 +428,10 @@ def _build_world_prompt(
 
 def build_world_prompt(session, *, consume_unread: bool = True) -> "str | list":
     """Build one world snapshot without constructing unrelated prompt sources."""
-    dynamic_blocks = session.build_dynamic_prompt_blocks()
+    current_time = _format_world_time(datetime.now(session._timezone))
     return _build_world_prompt(
         session,
-        dynamic_blocks,
+        current_time,
         consume_unread=consume_unread,
     )
 
@@ -404,10 +442,17 @@ def build_main_user_prompt_sections(
     consume_unread: bool = True,
 ) -> UserPromptSections:
     """Build each trailing user source exactly once for one request attempt."""
-    dynamic_blocks = session.build_dynamic_prompt_blocks()
+    now = datetime.now(session._timezone)
+    current_time = _format_world_time(now)
+    memory_body = _memory.build_memory_xml(
+        now,
+        recalled_events=session.recalled_events or None,
+        sender_entity=(f"User:qq_{session.last_sender_id}" if session.last_sender_id else ""),
+        nickname_map=session._nick_cache or None,
+    )
     world = _build_world_prompt(
         session,
-        dynamic_blocks,
+        current_time,
         consume_unread=consume_unread,
     )
     try:
@@ -418,7 +463,7 @@ def build_main_user_prompt_sections(
         logger.warning("构建 container prompt block 失败", exc_info=True)
         container_block = "<container/>"
     return UserPromptSections(
-        memory=build_memory_block(dynamic_blocks["memory"]),
+        memory=build_memory_block(memory_body),
         skills=_build_active_skill_prompt_block(),
         world=world,
         container=container_block,

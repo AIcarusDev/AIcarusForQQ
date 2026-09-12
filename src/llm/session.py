@@ -7,11 +7,9 @@ ConversationSession: 每个平台会话独立的上下文状态。
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import memory as _memory
 from config_loader import AGENT_PROMPT_KEYS, PromptDocumentError, load_agent_prompt_docs
 from memory.recall.activation import (
     RecallActivationDecision,
@@ -21,9 +19,6 @@ from memory.recall.activation import (
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import (
-    get_formatted_time_for_llm,
-)
 from .prompt.sections import (
     PromptPrelude,
     build_guardian_card_block,
@@ -549,21 +544,6 @@ class ConversationSession:
             latent_names=latent_names,
             native_reasoning_as_cognition=native_reasoning_as_cognition,
         ).system_prompt
-
-    def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
-        """构建每轮随上下文变化的 user prompt 块内容。"""
-        if now is None:
-            now = datetime.now(self._timezone)
-        return {
-            "current_time": get_formatted_time_for_llm(now),
-            "memory": _memory.build_memory_xml(
-                now,
-                recalled_events=self.recalled_events or None,
-                sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
-                nickname_map=self._nick_cache or None,
-            ),
-        }
-
 
 # ── 全局默认参数（由 app.py 启动时设置） ─────────────────
 
