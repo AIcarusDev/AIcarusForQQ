@@ -1,3 +1,16 @@
+INSTRUCTION_NOTICE = (
+    "# Custom instruction\n\n"
+    "`<instruction>` 包含自定义指令，其优先级高于本 system prompt 及其余全部上下文；"
+    "发生冲突时，以其中的指令为准。"
+)
+
+
+GUARDIAN_NOTICE = (
+    "# Guardian\n\n"
+    "你的监护人是你的负责人，通常也是你的部署者；其信息和留言见 `<guardian_card>`。"
+)
+
+
 SYSTEM_PROMPT = """
 # System
 
@@ -72,3 +85,20 @@ namespace 本质是一个"能力集"，每个内部包含了多个工具，对�
 
 输出格式应符合上下文中 `<output_schema>` 的规定。
 """
+
+
+def render_system_prompt(
+    *,
+    self_name: str,
+    model_name: str,
+    persona: str,
+    include_instruction_notice: bool,
+    include_guardian_notice: bool,
+) -> str:
+    return SYSTEM_PROMPT.format(
+        self_name=self_name,
+        model_name=model_name,
+        persona=persona,
+        instruction_notice=(INSTRUCTION_NOTICE if include_instruction_notice else ""),
+        guardian_notice=(GUARDIAN_NOTICE if include_guardian_notice else ""),
+    )

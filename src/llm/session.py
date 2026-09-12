@@ -25,13 +25,11 @@ from .prompt.prompt import (
     get_formatted_time_for_llm,
 )
 from .prompt.sections import (
-    GUARDIAN_SYSTEM_NOTICE,
-    INSTRUCTION_SYSTEM_NOTICE,
     PromptPrelude,
     build_guardian_card_block,
     build_instruction_block,
 )
-from .prompt.system.prompt import SYSTEM_PROMPT
+from .prompt.system import render_system_prompt
 
 logger = logging.getLogger("AICQ.llm.session")
 
@@ -525,14 +523,12 @@ class ConversationSession:
             agent_prompt_docs.get("instruction", "")
         )
         guardian_block = build_guardian_card_block(self._guardian_info)
-        system_prompt = SYSTEM_PROMPT.format(
+        system_prompt = render_system_prompt(
             persona=self._persona,
             self_name=self._self_name,
             model_name=self._model_name,
-            instruction_notice=(
-                INSTRUCTION_SYSTEM_NOTICE if instruction_block else ""
-            ),
-            guardian_notice=(GUARDIAN_SYSTEM_NOTICE if guardian_block else ""),
+            include_instruction_notice=bool(instruction_block),
+            include_guardian_notice=bool(guardian_block),
         )
         return PromptPrelude(
             system_prompt=system_prompt,

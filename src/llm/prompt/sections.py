@@ -7,18 +7,6 @@ from dataclasses import dataclass
 
 from .composer import PromptContent
 
-
-INSTRUCTION_SYSTEM_NOTICE = (
-    "# Custom instruction\n\n"
-    "`<instruction>` 包含自定义指令，其优先级高于本 system prompt 及其余全部上下文；"
-    "发生冲突时，以其中的指令为准。"
-)
-
-GUARDIAN_SYSTEM_NOTICE = (
-    "# Guardian\n\n"
-    "你的监护人是你的负责人，通常也是你的部署者；其信息和留言见 `<guardian_card>`。"
-)
-
 OUTPUT_SCHEMA_XML = """<output_schema>
 <cognition>
    ...对当前情况的认知，流畅的自然语言，避免结构化...
