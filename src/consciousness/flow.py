@@ -581,13 +581,33 @@ class ConsciousnessFlow:
 
         当 ToolResponse 含有 multimodal_parts 时，响应文本作为 text part，图片紧随其后。
         """
+        messages: list[dict] = []
+        if summary_message := self.summary_message():
+            messages.append(summary_message)
+        messages.extend(self.timeline_messages(
+            reference_time=reference_time,
+            native_reasoning_as_cognition=native_reasoning_as_cognition,
+        ))
+        return messages
+
+    def summary_message(self) -> dict | None:
+        """Return the active lossy summary as its own source-owned message."""
+        if self._compression_summary is None:
+            return None
+        return {
+            "role": "user",
+            "content": _format_context_summary_xml(self._compression_summary),
+        }
+
+    def timeline_messages(
+        self,
+        reference_time: float | None = None,
+        *,
+        native_reasoning_as_cognition: bool = False,
+    ) -> list[dict]:
+        """Render ordered old cycles, raw rounds, restart markers, and system info."""
         reference_time = time.time() if reference_time is None else float(reference_time)
         messages: list[dict] = []
-        if self._compression_summary is not None:
-            messages.append({
-                "role": "user",
-                "content": _format_context_summary_xml(self._compression_summary),
-            })
         covered_seq = (
             self._compression_summary.coverage_end_seq
             if self._compression_summary is not None
@@ -860,6 +880,11 @@ def _format_old_cycles_content(
 ) -> str | list:
     parts: list[dict] = []
     _append_text_content(parts, "<old_cycles>")
+    _append_text_content(
+        parts,
+        "\n  <des>These are earlier cognition cycles. You remember their actions, "
+        "motives, and results, but not their full cognition.</des>",
+    )
     for rnd in rounds:
         start_ago, end_ago = _flow_round_ago(rnd, reference_time=reference_time)
         _append_text_content(
@@ -985,6 +1010,9 @@ def _format_action_xml(tool_calls: list[ToolCall]) -> str:
 def _format_context_summary_xml(summary: CompressionSummary) -> str:
     return (
         "<summary>\n"
+        "<des>This is a lossy summary of earlier context. It may omit details or "
+        "contain semantic drift, so treat it as fallible context rather than "
+        "absolute fact.</des>\n"
         f"{_escape_xml_text(summary.text)}"
         "\n</summary>"
     )

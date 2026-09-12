@@ -234,4 +234,8 @@ def build_skill_block_for_namespaces(
             )
     if not skill_blocks:
         return ""
-    return "<skills>\n" + "\n".join(skill_blocks) + "\n</skills>"
+    description = (
+        "<des>These are relevant skills recalled for the active namespaces. "
+        "Follow a skill when it applies to the current situation.</des>"
+    )
+    return "<skills>\n" + description + "\n" + "\n".join(skill_blocks) + "\n</skills>"

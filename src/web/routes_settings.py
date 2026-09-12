@@ -133,7 +133,7 @@ def _agent_prompt_snapshot(config: dict) -> dict:
     values = load_agent_prompt_docs(config)
     return {
         "domain": "agent-prompt",
-        "schema_version": "agent-prompt-v1",
+        "schema_version": "agent-prompt-v2",
         "revision": _agent_prompt_revision(values),
         "values": values,
         "secrets": {},
@@ -1194,6 +1194,7 @@ async def settings_save():
         self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_info=new_cfg.get("guardian"),
+        prompt_files=new_cfg.get("prompt_files", {}) or {},
     )
 
     try:
@@ -1589,5 +1590,4 @@ async def stickers_reconcile():
     from llm.media.sticker_collection import reconcile_stickers
     stats = await asyncio.to_thread(reconcile_stickers)
     return jsonify({"success": True, "stats": stats})
-
 

@@ -37,7 +37,10 @@ from llm.core.duplicate_response_guard import (
     normalize_duplicate_model_response_guard_config,
 )
 from llm.compression.worker import schedule_cognition_compression
-from llm.prompt.user_prompt_builder import build_main_user_prompt
+from llm.prompt.user_prompt_builder import (
+    build_main_user_prompt_sections,
+    build_world_prompt,
+)
 from platforms.focus import FocusRef, current_focus_key, focus_from_session_key, normalize_focus
 from platforms.registry import get_platform
 from platforms.core.session_context import resolve_current_core_session
@@ -150,7 +153,7 @@ def _current_focus_session_or(fallback_session):
 
 def _build_current_focus_world(fallback_session, *, consume_unread: bool = False):
     """Build guard world from the same focus/session path as the main loop."""
-    return build_main_user_prompt(
+    return build_world_prompt(
         _current_focus_session_or(fallback_session),
         consume_unread=consume_unread,
     )
@@ -395,7 +398,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         *,
         native_reasoning_as_cognition=False,
     ):
-        return session.build_system_prompt(
+        return session.build_prompt_prelude(
             activated_names=activated_names,
             latent_names=latent_names,
             native_reasoning_as_cognition=native_reasoning_as_cognition,
@@ -425,7 +428,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         if stale_checker():
             return maintenance_service.mark_result_aborted_by_reset(RoundResult(), round_epoch)
         while True:
-            chat_log = build_main_user_prompt(session)
+            prompt_sections = build_main_user_prompt_sections(session)
+            chat_log = prompt_sections.world
             decision_guard_snapshot = build_qq_guard_snapshot(session)
 
             def current_world_provider():
@@ -455,6 +459,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 agent_context=agent_context,
                 assistant_prefill=assistant_prefill,
                 prefill_exclusions=tuple(used_cognition_prefills),
+                prompt_sections=prompt_sections,
                 thread_name="main-llm-round",
             )
             result.runtime_reset_epoch = round_epoch
@@ -584,7 +589,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 retry_count=1,
                 **agent_context,
             )
-            chat_log = build_main_user_prompt(session)
+            prompt_sections = build_main_user_prompt_sections(session)
+            chat_log = prompt_sections.world
             decision_guard_snapshot = build_qq_guard_snapshot(session)
 
             def retry_current_world_provider():
@@ -611,6 +617,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 current_guard_snapshot_provider=retry_current_guard_snapshot_provider,
                 agent_run_id=agent_run_id,
                 agent_context=agent_context,
+                prompt_sections=prompt_sections,
                 thread_name="main-llm-round-retry",
             )
             result2.runtime_reset_epoch = round_epoch

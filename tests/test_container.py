@@ -7,7 +7,10 @@ from xml.etree import ElementTree as ET
 
 import database
 from llm.prompt import container, goals
-from llm.prompt.user_prompt_builder import build_main_user_prompt
+from llm.prompt.user_prompt_builder import (
+    build_main_user_prompt,
+    build_main_user_prompt_sections,
+)
 from llm.session import create_session
 from platforms import PlatformRegistry
 from platforms.qq import QQRuntime
@@ -58,13 +61,14 @@ def test_goal_provider_reaches_main_prompt_with_escaped_content(monkeypatch, mul
     content = [{"type": "text", "text": world}, image_part] if multimodal else world
     monkeypatch.setattr(builder, "_wrap_platform_block_with_world", lambda *args: content)
     monkeypatch.setattr(builder.browser, "build_browser_world_content", lambda: "")
-    prompt = builder.build_main_user_prompt(create_session("group_123456"))
+    sections = builder.build_main_user_prompt_sections(create_session("group_123456"))
+    prompt = sections.world
     if multimodal:
         assert image_part in prompt
         text = "".join(part["text"] for part in prompt if part["type"] == "text")
     else:
         text = prompt
-    root = ET.fromstring(text[text.index("<container>"):])
+    root = ET.fromstring(sections.container)
     block = root.find("preset/goal")
     assert block is not None
     assert block.findtext("des") == goals.CONTAINER_CONTRACT.description
@@ -90,7 +94,8 @@ def test_container_renders_strict_skeleton_with_items():
         }
     ])
     xml = container.build_container_xml()
-    assert xml.startswith("<container>\n  <preset/>\n  <custom>\n")
+    assert xml.startswith("<container>\n  <des>")
+    assert xml.index("  <preset/>") < xml.index("  <custom>")
     assert '<item id="cont_001" key="user_note">some custom content</item>' in xml
     assert xml.endswith("</custom>\n</container>")
 
@@ -174,7 +179,7 @@ def test_container_database_persistence(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_container_injected_at_the_end_of_user_prompt():
+def test_output_schema_follows_container_at_the_end_of_user_prompt():
     import app_state
 
     previous = getattr(app_state, "platform_registry", None)
@@ -185,10 +190,11 @@ def test_container_injected_at_the_end_of_user_prompt():
         prompt = build_main_user_prompt(session)
 
         if isinstance(prompt, str):
-            assert prompt.strip().endswith("<container/>")
-            assert "</world>\n<container/>" in prompt
+            assert prompt.strip().endswith("</output_schema>")
+            assert "</world>\n<container/>\n<output_schema>" in prompt
         elif isinstance(prompt, list):
             last_text = prompt[-1]["text"]
-            assert last_text.strip().endswith("<container/>")
+            assert last_text.strip().endswith("</output_schema>")
+            assert "<container/>\n<output_schema>" in last_text
     finally:
         app_state.platform_registry = previous

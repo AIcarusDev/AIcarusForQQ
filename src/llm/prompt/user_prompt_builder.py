@@ -1,11 +1,11 @@
-"""user_prompt_builder.py — 主模型 user prompt 总装
+"""Build the source-owned pieces of the main model's trailing user message.
 
-统一组装主模型每轮调用的 user content。
 当前包括：
 - <memory> 块
-- <container> 块
 - <skills> 块（仅在 active namespace 绑定主 skill 时出现）
 - <world> 顶层包裹
+- <container> 块
+- <output_schema> 块
 - <current_time> 块
 - <attention_events> 块
 - <unread_info> 块
@@ -31,34 +31,15 @@ from ..compression.config import (
     normalize_generation_config,
     normalize_world_multimodal_image_limit,
 )
+from .composer import merge_prompt_contents
+from .sections import UserPromptSections, build_memory_block
 
 logger = logging.getLogger("AICQ.llm.prompt.user_prompt_builder")
 
-
-def _build_prompt_block(tag: str, content: str) -> str:
-    """构建一个简单的 XML 文本块。"""
-    body = content.strip("\r\n")
-    if body.strip():
-        return f"<{tag}>\n{body}\n</{tag}>"
-    return f"<{tag}>\n</{tag}>"
-
-
-def _prepend_text_block(content: "str | list", text: str) -> "str | list":
-    """给 user prompt 前部插入纯文本块。"""
-    if isinstance(content, str):
-        return text + "\n" + content
-    return [{"type": "text", "text": text + "\n"}] + content
-
-
-def _append_text_block(content: "str | list", text: str) -> "str | list":
-    """给 user prompt 尾部插入纯文本块。"""
-    if not text:
-        return content
-    if isinstance(content, str):
-        return content + "\n" + text
-    new_parts = list(content)
-    _append_text_part(new_parts, "\n" + text)
-    return new_parts
+WORLD_DESCRIPTION = (
+    "This is the external world currently visible to you. It is rebuilt for each "
+    "observation and may change between rounds."
+)
 
 
 def _build_active_skill_prompt_block() -> str:
@@ -163,17 +144,22 @@ def _wrap_platform_block_with_world(
     current_time: str,
 ) -> "str | list":
     """Wrap a platform-provided content block in the stable world shell."""
+    world_description = f"<des>{WORLD_DESCRIPTION}</des>"
     current_time_block = f"<current_time>{current_time}</current_time>"
     attention_events_block = build_attention_events_xml(current_platform=block.name)
     if block.content is None:
         platform_tag = _platform_self_closing_tag(block.name, block.attrs)
-        return f"<world>\n{current_time_block}\n{attention_events_block}\n{platform_tag}\n</world>"
+        return (
+            f"<world>\n{world_description}\n{current_time_block}\n"
+            f"{attention_events_block}\n{platform_tag}\n</world>"
+        )
 
     platform_open = _platform_open_tag(block.name, block.attrs)
     content = block.content or ""
     if isinstance(content, str):
         return (
-            f"<world>\n{current_time_block}\n{attention_events_block}\n{platform_open}\n"
+            f"<world>\n{world_description}\n{current_time_block}\n"
+            f"{attention_events_block}\n{platform_open}\n"
             f"{content}\n"
             "</platform>\n</world>"
         )
@@ -181,7 +167,10 @@ def _wrap_platform_block_with_world(
     new_parts: list = [
         {
             "type": "text",
-            "text": f"<world>\n{current_time_block}\n{attention_events_block}\n{platform_open}\n",
+            "text": (
+                f"<world>\n{world_description}\n{current_time_block}\n"
+                f"{attention_events_block}\n{platform_open}\n"
+            ),
         }
     ]
     new_parts.extend(content)
@@ -307,7 +296,11 @@ def _has_current_session(session) -> bool:
     return True
 
 
-def _build_browsing_chat_log(session) -> "str | list":
+def _build_browsing_chat_log(
+    session,
+    *,
+    consume_unread: bool = True,
+) -> "str | list":
     """浏览态聊天记录构建：统一输出 history 模式、has_previous 与未读气泡。"""
     view = session.chat_window_view
     top_db_id = view.get("top_db_id")
@@ -320,7 +313,11 @@ def _build_browsing_chat_log(session) -> "str | list":
     if not msgs:
         return _build_current_chat_log(session)
 
-    unread = session.consume_visible_unread_messages(msgs)
+    unread = (
+        session.consume_visible_unread_messages(msgs)
+        if consume_unread
+        else int(getattr(session, "unread_count", 0) or 0)
+    )
 
     conv_meta = session._get_conv_meta()
     world_image_limit = _world_multimodal_image_limit()
@@ -335,13 +332,15 @@ def _build_browsing_chat_log(session) -> "str | list":
     )
 
 
-def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | list":
-    """组装主模型本轮 user prompt。
+def _build_world_prompt(
+    session,
+    dynamic_blocks: dict[str, str],
+    *,
+    consume_unread: bool,
+) -> "str | list":
+    """Build only the current ``<world>`` source block.
 
-    浏览态（session.is_browsing_history() 为真）下：
-    - 聊天记录 XML 统一输出 <chat_logs mode="..." has_previous="...">
-    - 浏览态不消费 unread_count，未读新消息以 <bubble> 出现在 <chat_logs> 内
-    - 聊天记录从 DB 加载历史窗口，而非渲染最新 context
+    浏览态从 DB 加载历史窗口；只读构建不消费 unread 状态。
     """
     browsing = session.is_browsing_history()
 
@@ -349,13 +348,15 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         session.clear_unread_messages()
 
     if browsing:
-        chat_log = _build_browsing_chat_log(session)
+        chat_log = _build_browsing_chat_log(
+            session,
+            consume_unread=consume_unread,
+        )
     elif not _has_current_session(session):
         chat_log = "<current_session/>"
     else:
         chat_log = _build_current_chat_log(session)
     forward_content = build_forward_browser_content(session)
-    dynamic_blocks = session.build_dynamic_prompt_blocks()
     browser_content = browser.build_browser_world_content()
     runtime = get_platform(session.get_platform_key())
     if runtime is not None:
@@ -384,13 +385,31 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         logger.warning("构建浏览器图片确认块失败", exc_info=True)
         confirmation_content = ""
     user_prompt = _append_browser_content_to_world(user_prompt, confirmation_content)
-    prefix_parts = [
-        _build_prompt_block("memory", dynamic_blocks["memory"]),
-    ]
-    if skill_block := _build_active_skill_prompt_block():
-        prefix_parts.append(skill_block)
-    prefix = "\n".join(prefix_parts)
-    user_prompt = _prepend_text_block(user_prompt, prefix)
+    return user_prompt
+
+
+def build_world_prompt(session, *, consume_unread: bool = True) -> "str | list":
+    """Build one world snapshot without constructing unrelated prompt sources."""
+    dynamic_blocks = session.build_dynamic_prompt_blocks()
+    return _build_world_prompt(
+        session,
+        dynamic_blocks,
+        consume_unread=consume_unread,
+    )
+
+
+def build_main_user_prompt_sections(
+    session,
+    *,
+    consume_unread: bool = True,
+) -> UserPromptSections:
+    """Build each trailing user source exactly once for one request attempt."""
+    dynamic_blocks = session.build_dynamic_prompt_blocks()
+    world = _build_world_prompt(
+        session,
+        dynamic_blocks,
+        consume_unread=consume_unread,
+    )
     try:
         from .container import build_container_xml
 
@@ -398,6 +417,26 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     except Exception:
         logger.warning("构建 container prompt block 失败", exc_info=True)
         container_block = "<container/>"
-    if container_block:
-        user_prompt = _append_text_block(user_prompt, container_block)
-    return user_prompt
+    return UserPromptSections(
+        memory=build_memory_block(dynamic_blocks["memory"]),
+        skills=_build_active_skill_prompt_block(),
+        world=world,
+        container=container_block,
+    )
+
+
+def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | list":
+    """Compatibility renderer for the complete trailing user message."""
+    sections = build_main_user_prompt_sections(
+        session,
+        consume_unread=consume_unread,
+    )
+    return merge_prompt_contents(
+        (
+            sections.memory,
+            sections.skills,
+            sections.world,
+            sections.container,
+            sections.output_schema,
+        )
+    )

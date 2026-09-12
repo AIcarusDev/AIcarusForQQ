@@ -22,11 +22,16 @@ from platforms.focus import FocusRef, focus_from_session_key, session_key_for_fo
 
 from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
 from .prompt.prompt import (
-    EXPLICIT_COGNITION_PROMPT_PARTS,
-    NATIVE_REASONING_PROMPT_PARTS,
-    SYSTEM_PROMPT,
     get_formatted_time_for_llm,
 )
+from .prompt.sections import (
+    GUARDIAN_SYSTEM_NOTICE,
+    INSTRUCTION_SYSTEM_NOTICE,
+    PromptPrelude,
+    build_guardian_card_block,
+    build_instruction_block,
+)
+from .prompt.system.prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger("AICQ.llm.session")
 
@@ -378,7 +383,7 @@ class ConversationSession:
     async def prepare_memory_recall(self, *, evaluate_activation: bool = False) -> RecallActivationDecision | None:
         """执行事件召回，结果存入 self.recalled_events。
 
-        在调用 LLM 之前调用，确保 build_system_prompt()（同步）能直接读取已计算好的召回结果。
+        在调用 LLM 之前调用，确保尾部 memory 来源能直接读取已计算好的召回结果。
         """
         import app_state
 
@@ -492,14 +497,15 @@ class ConversationSession:
 
         return self.last_memory_activation_decision
 
-    def build_system_prompt(
+    def build_prompt_prelude(
         self,
         activated_names: list[str] | None = None,
         latent_names: list[str] | None = None,
         *,
         native_reasoning_as_cognition: bool = False,
-    ) -> str:
-        """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
+    ) -> PromptPrelude:
+        """Build system and its conditional front-context blocks from one snapshot."""
+        del activated_names, latent_names, native_reasoning_as_cognition
         try:
             agent_prompt_docs = load_agent_prompt_docs(
                 {"prompt_files": dict(self._prompt_files)}
@@ -515,22 +521,38 @@ class ConversationSession:
         else:
             self._agent_prompt_docs = dict(agent_prompt_docs)
 
-        prompt_parts = (
-            NATIVE_REASONING_PROMPT_PARTS
-            if native_reasoning_as_cognition
-            else EXPLICIT_COGNITION_PROMPT_PARTS
+        instruction_block = build_instruction_block(
+            agent_prompt_docs.get("instruction", "")
         )
-        return SYSTEM_PROMPT.format(
+        guardian_block = build_guardian_card_block(self._guardian_info)
+        system_prompt = SYSTEM_PROMPT.format(
             persona=self._persona,
             self_name=self._self_name,
-            platform=self.get_platform_name(),
             model_name=self._model_name,
-            qq_name=self._qq_name,
-            qq_id=self._qq_id,
-            guardian_info=self._guardian_info if self._guardian_info is not None else "null",
-            **prompt_parts,
-            **agent_prompt_docs,
+            instruction_notice=(
+                INSTRUCTION_SYSTEM_NOTICE if instruction_block else ""
+            ),
+            guardian_notice=(GUARDIAN_SYSTEM_NOTICE if guardian_block else ""),
         )
+        return PromptPrelude(
+            system_prompt=system_prompt,
+            instruction=instruction_block,
+            guardian_card=guardian_block,
+        )
+
+    def build_system_prompt(
+        self,
+        activated_names: list[str] | None = None,
+        latent_names: list[str] | None = None,
+        *,
+        native_reasoning_as_cognition: bool = False,
+    ) -> str:
+        """Compatibility accessor for consumers that only need the system text."""
+        return self.build_prompt_prelude(
+            activated_names=activated_names,
+            latent_names=latent_names,
+            native_reasoning_as_cognition=native_reasoning_as_cognition,
+        ).system_prompt
 
     def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
         """构建每轮随上下文变化的 user prompt 块内容。"""
