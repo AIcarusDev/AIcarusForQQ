@@ -188,6 +188,12 @@ self_name: "AIcarus"
 # --- 监护人介绍（可选，null 表示尚未填写）---
 guardian: null
 
+# --- 主模型输出要求 ---
+output_requirements:
+  # auto / zh-CN / zh-TW / en / ja / ko / es / fr / de
+  # 普通模式约束 cognition；原生思维链模式约束内部思考的默认语言。
+  cognition_language: auto
+
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:
   persona: "config/persona.md"

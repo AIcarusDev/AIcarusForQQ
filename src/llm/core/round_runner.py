@@ -21,6 +21,7 @@ from llm.discarded_response_log import (
 from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
 from llm.prompt.composer import MessageSection, PromptComposer, UserMessageSection
 from llm.prompt.sections import PromptPrelude, UserPromptSections
+from llm.prompt.output_requirements import build_output_requirements_prompt, normalize_output_requirements_config
 
 from .duplicate_response_guard import (
     build_duplicate_model_response_error,
@@ -176,6 +177,7 @@ class LLMRoundRunner:
     """Application-level LLM runner: prompts, AIC Action, flow, and usage."""
 
     def __init__(self, cfg: dict):
+        self._output_requirements_cfg = normalize_output_requirements_config(cfg.get("output_requirements"))
         self.transport = OpenAICompatClient(cfg)
         self.provider = self.transport.provider
         self.model = self.transport.model
@@ -302,7 +304,16 @@ class LLMRoundRunner:
         prefill_cfg = duplicate_guard_cfg.get("prefill_guidance") or {}
 
         if prompt_sections is None:
-            prompt_sections = UserPromptSections(world=user_content)
+            output_cfg = normalize_output_requirements_config(
+                getattr(self, "_output_requirements_cfg", None)
+            )
+            prompt_sections = UserPromptSections(
+                world=user_content,
+                output_requirements=build_output_requirements_prompt(
+                    native_reasoning_as_cognition=native_reasoning_as_cognition,
+                    cognition_language=output_cfg["cognition_language"],
+                ),
+            )
         if not self._vision_enabled:
             prompt_sections = replace(
                 prompt_sections,

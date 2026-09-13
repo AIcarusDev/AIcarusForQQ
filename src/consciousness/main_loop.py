@@ -428,7 +428,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         if stale_checker():
             return maintenance_service.mark_result_aborted_by_reset(RoundResult(), round_epoch)
         while True:
-            prompt_sections = build_main_user_prompt_sections(session)
+            generation = dict(app_state.GEN)
+            prompt_sections = build_main_user_prompt_sections(session, generation=generation)
             chat_log = prompt_sections.world
             decision_guard_snapshot = build_qq_guard_snapshot(session)
 
@@ -444,7 +445,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.adapter.call_one_round,
                 system_prompt_builder,
                 chat_log,
-                app_state.GEN,
+                generation,
                 tool_collection,
                 app_state.consciousness_flow,
                 usage_feature=usage_feature,
@@ -589,7 +590,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 retry_count=1,
                 **agent_context,
             )
-            prompt_sections = build_main_user_prompt_sections(session)
+            generation = dict(app_state.GEN)
+            prompt_sections = build_main_user_prompt_sections(session, generation=generation)
             chat_log = prompt_sections.world
             decision_guard_snapshot = build_qq_guard_snapshot(session)
 
@@ -604,7 +606,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.adapter.call_one_round,
                 system_prompt_builder,
                 chat_log,
-                app_state.GEN,
+                generation,
                 tool_collection,
                 app_state.consciousness_flow,
                 usage_feature="main_round_retry_no_tool",

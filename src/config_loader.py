@@ -22,6 +22,7 @@ from llm.core.profiles import (
     normalize_profile_config_inplace,
 )
 from llm.compression.config import normalize_generation_config
+from llm.prompt.output_requirements import normalize_output_requirements_config
 from platforms.qq.adapter.config import normalize_qq_platform_config
 from workspace.config import normalize_workspace_config_inplace
 
@@ -282,6 +283,7 @@ def load_config(
 
     normalize_profile_config_inplace(config)
     config["generation"] = normalize_generation_config(config.get("generation"))
+    config["output_requirements"] = normalize_output_requirements_config(config.get("output_requirements"))
     normalize_qq_platform_config(config, remove_legacy=True)
     normalize_workspace_config_inplace(config, project_root=_BASE_DIR)
 

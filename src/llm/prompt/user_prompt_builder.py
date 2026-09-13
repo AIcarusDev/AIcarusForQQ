@@ -34,6 +34,7 @@ from ..compression.config import (
     normalize_world_multimodal_image_limit,
 )
 from .composer import merge_prompt_contents
+from .output_requirements import build_output_requirements_prompt, normalize_output_requirements_config
 from .sections import UserPromptSections, build_memory_block
 
 logger = logging.getLogger("AICQ.llm.prompt.user_prompt_builder")
@@ -440,8 +441,17 @@ def build_main_user_prompt_sections(
     session,
     *,
     consume_unread: bool = True,
+    generation: dict | None = None,
 ) -> UserPromptSections:
     """Build each trailing user source exactly once for one request attempt."""
+    import app_state
+
+    config = getattr(app_state, "config", {}) or {}
+    gen = normalize_generation_config(
+        generation if generation is not None
+        else getattr(app_state, "GEN", None) or config.get("generation")
+    )
+    output_cfg = normalize_output_requirements_config(config.get("output_requirements"))
     now = datetime.now(session._timezone)
     current_time = _format_world_time(now)
     memory_body = _memory.build_memory_xml(
@@ -467,6 +477,10 @@ def build_main_user_prompt_sections(
         skills=_build_active_skill_prompt_block(),
         world=world,
         container=container_block,
+        output_requirements=build_output_requirements_prompt(
+            native_reasoning_as_cognition=gen["native_reasoning_as_cognition"],
+            cognition_language=output_cfg["cognition_language"],
+        ),
     )
 
 

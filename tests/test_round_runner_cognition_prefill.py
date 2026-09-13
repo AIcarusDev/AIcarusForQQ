@@ -246,6 +246,13 @@ def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkey
 
     prompt_route = {}
 
+    def build_output_requirements(**kwargs):
+        prompt_route["output_requirements"] = kwargs
+        return "fixture-output-requirements"
+
+    runner._output_requirements_cfg = {"cognition_language": "en"}
+    monkeypatch.setattr("llm.core.round_runner.build_output_requirements_prompt", build_output_requirements)
+
     def build_system_prompt(
         activated_names=None,
         latent_names=None,
@@ -267,10 +274,16 @@ def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkey
         _ToolCollection(),
         flow,
         agent_run_id="r-native",
+        assistant_prefill="<cognition>unused prefill",
     )
 
     assert normalized_generation["enable_thinking"] is True
     assert prompt_route["native_reasoning_as_cognition"] is True
+    assert prompt_route["output_requirements"] == {
+        "native_reasoning_as_cognition": True,
+        "cognition_language": "en",
+    }
+    assert request_messages[-1]["role"] == "user"
     previous_assistant = next(
         message
         for message in request_messages
