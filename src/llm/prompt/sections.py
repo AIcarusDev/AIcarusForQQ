@@ -3,21 +3,10 @@
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .composer import PromptContent
-
-OUTPUT_SCHEMA_XML = """<output_schema>
-<cognition>
-   ...对当前情况的认知，流畅的自然语言，避免结构化...
-</cognition>
-<motive>
-   ...简短的动机...
-</motive>
-<action>
-   ...一个或多个 `<tool_call>` ，`<tool_call>` 内为严格的 json 格式...
-</action>
-</output_schema>"""
+from .output_requirements import build_output_requirements_prompt
 
 MEMORY_DESCRIPTION = (
     "These memories were recalled from the current world. They may be inaccurate "
@@ -70,4 +59,4 @@ class UserPromptSections:
     skills: PromptContent = ""
     world: PromptContent = ""
     container: PromptContent = "<container/>"
-    output_schema: PromptContent = OUTPUT_SCHEMA_XML
+    output_requirements: str = field(default_factory=build_output_requirements_prompt)

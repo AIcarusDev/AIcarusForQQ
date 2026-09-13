@@ -387,7 +387,7 @@ class LLMRoundRunner:
             prompt_sections.skills,
             prompt_sections.world,
             prompt_sections.container,
-            prompt_sections.output_schema,
+            prompt_sections.output_requirements,
         ))
         composer = PromptComposer().add_section(
             MessageSection("system", full_system, omit_if_empty=False)

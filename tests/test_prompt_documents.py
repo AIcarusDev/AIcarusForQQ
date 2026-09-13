@@ -146,8 +146,6 @@ def test_system_prompt_ignores_native_reasoning_when_temporarily_disabled(
     native_prompt = conversation.build_system_prompt(native_reasoning_as_cognition=True)
 
     assert default_prompt == native_prompt
-    assert "`<output_schema>`" in default_prompt
-    assert "\n<output_schema>\n" not in default_prompt
 
 
 def test_guardian_card_and_notice_are_gated_and_escaped(

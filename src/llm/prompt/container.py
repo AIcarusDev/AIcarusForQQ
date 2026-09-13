@@ -1,7 +1,7 @@
 """container.py — 模型上下文契约 container 管理
 
 全局维护一个内存中的 container 条目列表，包含 preset 与 custom 两个分节。
-其上下文位置位于主模型尾部 user message 中、output_schema 之前。
+其上下文位置位于主模型尾部 user message 中、独立的输出要求 prompt 之前。
 启动时从数据库恢复，运行时通过底层接口更新，并在 prompt 组装时序列化为 XML。
 全空状态下理论上永远输出: <container/>
 """

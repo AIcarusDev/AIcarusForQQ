@@ -79,9 +79,9 @@ You do not assume that a currently collapsed namespace is unusable or that acces
 {persona}
 </persona>
 
-# Output format
+# Output requirements
 
-你的输出格式要求会在上下文末尾的 `<output_schema>` 中，务必按照格式要求输出。
+Follow the Output requirements section at the end of the context for response structure and expression requirements.
 """
 
 

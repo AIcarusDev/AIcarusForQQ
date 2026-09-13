@@ -6,14 +6,9 @@ from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
 
 import database
-from llm.prompt import container, goals
-from llm.prompt.user_prompt_builder import (
-    build_main_user_prompt,
-    build_main_user_prompt_sections,
-)
+from llm.prompt import container, goals, output_requirements
+from llm.prompt.user_prompt_builder import build_main_user_prompt
 from llm.session import create_session
-from platforms import PlatformRegistry
-from platforms.qq import QQRuntime
 
 
 @pytest.fixture(autouse=True)
@@ -65,9 +60,6 @@ def test_goal_provider_reaches_main_prompt_with_escaped_content(monkeypatch, mul
     prompt = sections.world
     if multimodal:
         assert image_part in prompt
-        text = "".join(part["text"] for part in prompt if part["type"] == "text")
-    else:
-        text = prompt
     root = ET.fromstring(sections.container)
     block = root.find("preset/goal")
     assert block is not None
@@ -179,22 +171,27 @@ def test_container_database_persistence(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_output_schema_follows_container_at_the_end_of_user_prompt():
-    import app_state
+@pytest.mark.parametrize("multimodal", [False, True])
+def test_output_requirements_reach_trailing_prompt_composition(monkeypatch, multimodal):
+    import llm.prompt.user_prompt_builder as builder
 
-    previous = getattr(app_state, "platform_registry", None)
-    app_state.platform_registry = PlatformRegistry()
-    app_state.platform_registry.register(QQRuntime({}))
-    try:
-        session = create_session("group_123456")
-        prompt = build_main_user_prompt(session)
+    requirements = "fixture output requirements <raw> & text"
+    monkeypatch.setattr(output_requirements, "OUTPUT_REQUIREMENTS_PROMPT", requirements)
+    world = "<world><platform/></world>"
+    image = {"type": "image_url", "image_url": {"url": "fixture"}}
+    content = [{"type": "text", "text": world}, image] if multimodal else world
+    monkeypatch.setattr(builder, "_build_world_prompt", lambda *args, **kwargs: content)
+    composed = []
 
-        if isinstance(prompt, str):
-            assert prompt.strip().endswith("</output_schema>")
-            assert "</world>\n<container/>\n<output_schema>" in prompt
-        elif isinstance(prompt, list):
-            last_text = prompt[-1]["text"]
-            assert last_text.strip().endswith("</output_schema>")
-            assert "<container/>\n<output_schema>" in last_text
-    finally:
-        app_state.platform_registry = previous
+    def compose(contents):
+        composed.append(tuple(contents))
+        return "rendered-prompt"
+
+    monkeypatch.setattr(builder, "merge_prompt_contents", compose)
+
+    prompt = build_main_user_prompt(create_session("group_123456"))
+
+    assert prompt == "rendered-prompt"
+    assert len(composed) == 1
+    assert composed[0][-3:] == (content, "<container/>", requirements)
+    assert composed[0].count(requirements) == 1

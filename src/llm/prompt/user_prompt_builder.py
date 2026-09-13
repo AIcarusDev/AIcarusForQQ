@@ -5,7 +5,7 @@
 - <skills> 块（仅在 active namespace 绑定主 skill 时出现）
 - <world> 顶层包裹
 - <container> 块
-- <output_schema> 块
+- 独立的输出要求 prompt
 - <current_time> 块
 - <attention_events> 块
 - <unread_info> 块
@@ -482,6 +482,6 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
             sections.skills,
             sections.world,
             sections.container,
-            sections.output_schema,
+            sections.output_requirements,
         )
     )

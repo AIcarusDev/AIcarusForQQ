@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.round_runner import LLMRoundRunner
-from llm.prompt.composer import merge_prompt_contents
+from llm.prompt.composer import UserMessageSection, merge_prompt_contents
 from llm.prompt.sections import PromptPrelude, UserPromptSections
 
 
@@ -41,6 +41,14 @@ def test_merge_prompt_contents_preserves_multimodal_source_order():
 
 
 def test_round_runner_composes_real_message_roles_and_source_order(monkeypatch):
+    composed_sources = []
+
+    def user_section(contents):
+        sources = tuple(contents)
+        composed_sources.append(sources)
+        return UserMessageSection(sources)
+
+    monkeypatch.setattr("llm.core.round_runner.UserMessageSection", user_section)
     flow = ConsciousnessFlow()
     flow.append_round(
         [ToolCall(name="runtime_manage", args={"action": "wait"}, call_id="old")],
@@ -85,6 +93,7 @@ def test_round_runner_composes_real_message_roles_and_source_order(monkeypatch):
 
     monkeypatch.setattr(runner, "_create_chat_completion", fake_completion)
     image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
+    requirements = "fixture output requirements <raw> & text"
     sections = UserPromptSections(
         memory="<memory><des>memory</des></memory>",
         skills="<skills><des>skills</des></skills>",
@@ -94,6 +103,7 @@ def test_round_runner_composes_real_message_roles_and_source_order(monkeypatch):
             {"type": "text", "text": "</world>"},
         ],
         container="<container/>",
+        output_requirements=requirements,
     )
     prelude = PromptPrelude(
         system_prompt="system",
@@ -130,11 +140,16 @@ def test_round_runner_composes_real_message_roles_and_source_order(monkeypatch):
     assert image in tail
     tail_text = "".join(part.get("text", "") for part in tail if part.get("type") == "text")
     assert tail_text.index("<memory>") < tail_text.index("<skills>") < tail_text.index("<world>")
-    assert tail_text.index("</world>") < tail_text.index("<container/>") < tail_text.index("<output_schema>")
-    assert tail_text.rstrip().endswith("</output_schema>")
+    assert tail_text.index("</world>") < tail_text.index("<container/>")
+    assert composed_sources[-1] == (
+        sections.memory,
+        sections.skills,
+        sections.world,
+        sections.container,
+        requirements,
+    )
     assert captured[-1] == {"role": "assistant", "content": "<cognition>"}
     assert "<instruction>" in runner._last_main_stable_prompt_prefix
     assert "<summary>" not in runner._last_main_stable_prompt_prefix
     assert "<world>" in result.world_xml
     assert "<memory>" not in result.world_xml
-    assert "<output_schema>" not in result.world_xml
