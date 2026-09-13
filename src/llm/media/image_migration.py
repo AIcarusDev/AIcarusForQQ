@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -15,10 +16,19 @@ def _hash(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _hash_file(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+    with temporary.open('w', encoding='utf-8') as stream:
+        json.dump(value, stream, ensure_ascii=False, indent=2)
     for attempt in range(20):
         try:
             temporary.replace(path)
@@ -29,10 +39,44 @@ def _json(path, value):
             time.sleep(.05)
 
 
+@contextmanager
 def _open(path):
     db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
     db.row_factory = sqlite3.Row
-    return db
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _image_entries(payload):
+    """Retain the JSON key/index so inline originals can be read again on demand."""
+    if isinstance(payload, dict):
+        for key, info in payload.items():
+            if isinstance(info, dict):
+                yield key, key, info
+    elif isinstance(payload, list):
+        for index, info in enumerate(payload):
+            if isinstance(info, dict):
+                yield index, info.get('image_ref') or info.get('ref'), info
+
+
+def _candidate_bytes(item, source_db):
+    if item['path']:
+        return Path(item['path']).read_bytes()
+    if 'chat_source' not in item:
+        # Resume manifests saved by the original importer.
+        return base64.b64decode(item['base64'])
+    locator = item['chat_source']
+    row = source_db.execute('SELECT images FROM chat_messages WHERE id=?',
+                            (locator['row_id'],)).fetchone()
+    if row is None:
+        raise ValueError('Source changed since scan: chat message missing')
+    try:
+        info = json.loads(row['images'])[locator['key']]
+        return base64.b64decode(info['base64'], validate=True)
+    except (ValueError, TypeError, KeyError, IndexError) as exc:
+        raise ValueError('Source changed since scan: inline image missing or invalid') from exc
 
 
 def scan(root: Path):
@@ -41,10 +85,12 @@ def scan(root: Path):
     from .media_storage import _SAFE_REF_PATTERN
     root = root.resolve()
     candidates, unavailable, files, bindings, browser = [], [], {}, {}, []
-    def add(ref, *, raw=None, path=None, source='chat', priority=1, created=0, metadata=None):
+    def add(ref, *, raw=None, path=None, source='chat', priority=1, created=0, metadata=None, chat_source=None):
         location = str(path) if path else None
         try:
             if path:
+                if path.stat().st_size > 20 * 1024 * 1024:
+                    raise ValueError('image_too_large')
                 raw = path.read_bytes()
             if raw is None:
                 raise ValueError('no_original')
@@ -52,10 +98,13 @@ def scan(root: Path):
             digest = _hash(raw)
             if path:
                 files[str(path.resolve())] = {'sha256': digest, 'size': len(raw)}
-            candidates.append({'ref': ref, 'sha256': digest, 'path': location,
-                'base64': base64.b64encode(raw).decode('ascii') if not path else None,
+            candidates.append({'ref': ref, 'sha256': digest, 'size': len(raw), 'path': location,
+                'chat_source': chat_source,
                 'mime': info.mime_type, 'source': source, 'priority': priority,
-                'created': str(created or ''), 'metadata': metadata or {}})
+                'created': str(created or ''), 'metadata': {
+                    key: metadata[key] for key in ('description', 'examinations', 'phash')
+                    if metadata and key in metadata
+                }})
         except (OSError, ValueError) as exc:
             status = next((key for key in ('expired', 'failed') if (metadata or {}).get(key)), 'unavailable')
             unavailable.append({'ref': ref, 'path': location, 'reason': str(exc), 'status': status})
@@ -64,23 +113,21 @@ def scan(root: Path):
     with _open(db_path) as db:
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if 'chat_messages' in tables:
-            for row in db.execute("SELECT images,created_at FROM chat_messages WHERE images IS NOT NULL"):
+            for row in db.execute("SELECT id,images,created_at FROM chat_messages WHERE images IS NOT NULL"):
                 try:
                     payload = json.loads(row['images'])
                 except (ValueError, TypeError):
                     continue
-                items = payload.items() if isinstance(payload, dict) else [(p.get('image_ref') or p.get('ref'), p) for p in payload if isinstance(p, dict)] if isinstance(payload, list) else []
-                for ref, info in items:
-                    if not isinstance(info, dict):
-                        continue
+                for key, ref, info in _image_entries(payload):
                     path = Path(info['file_path']) if info.get('file_path') else None
                     if path and not path.is_absolute():
                         path = root / path
                     try:
-                        raw = base64.b64decode(info['base64'], validate=True) if info.get('base64') else None
+                        raw = base64.b64decode(info['base64'], validate=True) if not path and info.get('base64') else None
                     except ValueError:
                         raw = None
-                    add(ref, raw=raw, path=path, created=row['created_at'], metadata=info)
+                    add(ref, raw=raw, path=path, created=row['created_at'], metadata=info,
+                        chat_source={'row_id': row['id'], 'key': key} if not path else None)
         for table in ('media_registry', 'media_images'):
             if table in tables:
                 for row in db.execute(f'SELECT * FROM {table}'):
@@ -140,7 +187,7 @@ def scan(root: Path):
     for ref, values in bindings.items():
         by_ref[ref].update(values)
     conflicts = {r: sorted(v) for r, v in by_ref.items() if len(v)>1}
-    return {'version': 1, 'source_root': str(root), 'candidates': candidates,
+    return {'version': 2, 'source_root': str(root), 'candidates': candidates,
         'files': files, 'unavailable': unavailable, 'conflicts': conflicts,
         'bindings': {r: sorted(v) for r,v in bindings.items()}, 'collection': collection,
         'browser': browser, 'phase': 'scanned'}
@@ -169,7 +216,7 @@ def backup(root, output):
     for relative in ('data/media', 'data/stickers', 'cache/browser_image', 'cache/image'):
         if (root / relative).exists():
             shutil.copytree(root / relative, target / relative, dirs_exist_ok=True)
-    hashes = {str(p.relative_to(target)): _hash(p.read_bytes()) for p in target.rglob('*') if p.is_file()}
+    hashes = {str(p.relative_to(target)): _hash_file(p) for p in target.rglob('*') if p.is_file()}
     _json(target / 'complete.json', hashes)
 
 
@@ -184,7 +231,7 @@ def configure(root):
 
 
 def apply(manifest, target, output):
-    from .image_store import register_image, connection, _bind
+    from .image_store import connection, _bind
     configure(target)
     if manifest['conflicts']:
         raise ValueError('Conflicting historical ref bindings; migration and cleanup refused')
@@ -193,42 +240,10 @@ def apply(manifest, target, output):
     if target != source and not (target / 'data/AICQ.db').exists():
         (target / 'data').mkdir(parents=True, exist_ok=True)
         shutil.copy2(output / 'backup/data/AICQ.db', target / 'data/AICQ.db')
-    groups = defaultdict(list)
-    for item in manifest['candidates']:
-        groups[item['sha256']].append(item)
-    mapping = manifest.setdefault('mapping', {})
-    content_mapping = manifest.setdefault('content_mapping', {})
-    for group_index, (digest, items) in enumerate(sorted(groups.items())):
-        items.sort(key=lambda i: (i['priority'], i['created'], i['ref'] or '~'))
-        chosen = items[0]
-        raw = Path(chosen['path']).read_bytes() if chosen['path'] else base64.b64decode(chosen['base64'])
-        if _hash(raw) != digest:
-            raise ValueError('Source changed since scan')
-        record = register_image(raw, chosen['source'], chosen['ref'])
-        canonical = record['image_ref']
-        content_mapping[digest] = canonical
-        with connection(write=True) as db:
-            for item in items:
-                if item['ref']:
-                    _bind(db, item['ref'], digest, canonical)
-                    mapping[item['ref']] = canonical
-            descriptions = [i['metadata'].get('description') for i in items if i['metadata'].get('description') and not i['metadata'].get('phash')]
-            examinations = []
-            for item in items:
-                if item['metadata'].get('phash'):
-                    continue
-                for examination in item['metadata'].get('examinations', []):
-                    if examination not in examinations:
-                        examinations.append(examination)
-            old = db.execute('SELECT description,examinations FROM media_images WHERE image_ref=?', (canonical,)).fetchone()
-            for examination in json.loads(old['examinations']):
-                if examination not in examinations:
-                    examinations.append(examination)
-            db.execute('UPDATE media_images SET description=?,examinations=? WHERE image_ref=?',
-                (old['description'] or next(iter(descriptions), None), json.dumps(examinations, ensure_ascii=False), canonical))
-        manifest['phase'] = 'registering'
-        if group_index % 100 == 0:
-            _json(output / 'manifest.json', manifest)
+    with _open(source / 'data/AICQ.db') as source_db:
+        _register_candidates(manifest, output, source_db)
+    mapping = manifest['mapping']
+    content_mapping = manifest['content_mapping']
     with connection(write=True) as db:
         for ref, digests in manifest['bindings'].items():
             digest = next(iter(digests), None)
@@ -271,17 +286,72 @@ def apply(manifest, target, output):
     _json(output / 'manifest.json', manifest)
 
 
+def _register_candidates(manifest, output, source_db):
+    from .image_store import register_image, connection, _bind
+
+    groups = defaultdict(list)
+    for item in manifest['candidates']:
+        groups[item['sha256']].append(item)
+    mapping = manifest.setdefault('mapping', {})
+    content_mapping = manifest.setdefault('content_mapping', {})
+    for group_index, (digest, items) in enumerate(sorted(groups.items())):
+        items.sort(key=lambda i: (i['priority'], i['created'], i['ref'] or '~'))
+        chosen = items[0]
+        raw = _candidate_bytes(chosen, source_db)
+        if _hash(raw) != digest:
+            raise ValueError('Source changed since scan')
+        record = register_image(raw, chosen['source'], chosen['ref'])
+        canonical = record['image_ref']
+        content_mapping[digest] = canonical
+        with connection(write=True) as db:
+            for item in items:
+                if item['ref']:
+                    _bind(db, item['ref'], digest, canonical)
+                    mapping[item['ref']] = canonical
+            descriptions = [i['metadata'].get('description') for i in items if i['metadata'].get('description') and not i['metadata'].get('phash')]
+            examinations = []
+            for item in items:
+                if item['metadata'].get('phash'):
+                    continue
+                for examination in item['metadata'].get('examinations', []):
+                    if examination not in examinations:
+                        examinations.append(examination)
+            old = db.execute('SELECT description,examinations FROM media_images WHERE image_ref=?', (canonical,)).fetchone()
+            for examination in json.loads(old['examinations']):
+                if examination not in examinations:
+                    examinations.append(examination)
+            db.execute('UPDATE media_images SET description=?,examinations=? WHERE image_ref=?',
+                (old['description'] or next(iter(descriptions), None), json.dumps(examinations, ensure_ascii=False), canonical))
+        manifest['phase'] = 'registering'
+        if group_index % 100 == 0:
+            _json(output / 'manifest.json', manifest)
+
+
+def _registered_hash_matches(ref, digest):
+    from .image_store import lookup_image
+    from .media_storage import _inside_media_root
+
+    record = lookup_image(ref)
+    if not record or record.get('unavailable_status') or record['sha256'] != digest:
+        return False
+    path = Path(record['locator'])
+    if not _inside_media_root(path):
+        return False
+    try:
+        return _hash_file(path) == digest
+    except OSError:
+        return False
+
+
 def verify(manifest, output):
-    from .image_store import read_image, connection
+    from .image_store import connection
     configure(Path(manifest['target_root']))
     expected = {i['ref']: i['sha256'] for i in manifest['candidates'] if i['ref']}
     for ref, digest in expected.items():
-        record = read_image(ref)
-        if not record or record.get('unavailable_status') or _hash(record['data']) != digest:
+        if not _registered_hash_matches(ref, digest):
             raise ValueError(f'Old ref failed verification: {ref}')
     for digest, ref in manifest.get('content_mapping', {}).items():
-        record = read_image(ref)
-        if not record or record.get('unavailable_status') or _hash(record['data']) != digest:
+        if not _registered_hash_matches(ref, digest):
             raise ValueError(f'Canonical content failed verification: {ref}')
     manifest['verified_refs'] = len(expected)
     with connection(write=True) as db:
@@ -290,9 +360,58 @@ def verify(manifest, output):
     _json(output / 'manifest.json', manifest)
 
 
+def _compact_chat_messages(root, mapping):
+    """Commit one message at a time, bounding both memory and the rollback journal."""
+    from .image_store import connection
+
+    last_id = None
+    while True:
+        # Keyset pagination releases the read lock before opening a write transaction.
+        query = 'SELECT id,images,content_segments FROM chat_messages'
+        params = ()
+        if last_id is not None:
+            query += ' WHERE id>?'
+            params = (last_id,)
+        with _open(root / 'data/AICQ.db') as db:
+            row = db.execute(query + ' ORDER BY id LIMIT 1', params).fetchone()
+        if row is None:
+            return
+        last_id = row['id']
+        try:
+            images = json.loads(row['images'] or '{}')
+            segments = json.loads(row['content_segments'] or '[]')
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(images, (dict, list)) or not isinstance(segments, list):
+            continue
+        items = images.items() if isinstance(images, dict) else (
+            (ref, info) for _, ref, info in _image_entries(images)
+        )
+        new = {}
+        for ref, info in items:
+            canonical = mapping.get(ref) if isinstance(info, dict) else None
+            new[canonical or ref] = (
+                {'image_ref': canonical, 'label': info.get('label', '图片')}
+                if canonical and isinstance(info, dict) else info
+            )
+        updated_segments = []
+        for segment in segments:
+            if isinstance(segment, dict):
+                ref = segment.get('image_ref') or segment.get('ref')
+                if ref in mapping:
+                    segment = {**segment, 'image_ref': mapping[ref]}
+                    segment.pop('ref', None)
+            updated_segments.append(segment)
+        if new == images and updated_segments == segments:
+            continue
+        with connection(write=True) as db:
+            db.execute('UPDATE chat_messages SET images=?,content_segments=? WHERE id=?',
+                (json.dumps(new, ensure_ascii=False), json.dumps(updated_segments, ensure_ascii=False), last_id))
+
+
 def cleanup(manifest, output):
     """Remove only manifest-listed duplicates after revalidating originals and backup."""
-    from .image_store import connection, read_image
+    from .image_store import connection
     if manifest['phase'] not in ('verified', 'cleaned'):
         raise ValueError('Verification is required before cleanup')
     verify(manifest, output)
@@ -302,33 +421,11 @@ def cleanup(manifest, output):
         return
     backup_root = output / 'backup'
     backup_hashes = json.loads((backup_root / 'complete.json').read_text(encoding='utf-8'))
+    database_backup = Path('data/AICQ.db')
+    if _hash_file(backup_root / database_backup) != backup_hashes.get(str(database_backup)):
+        raise ValueError('Database backup verification failed')
+    _compact_chat_messages(target, manifest['mapping'])
     with connection(write=True) as db:
-        rows = db.execute('SELECT id,images,content_segments FROM chat_messages').fetchall()
-        for row in rows:
-            try:
-                images, segments = json.loads(row['images'] or '{}'), json.loads(row['content_segments'] or '[]')
-            except ValueError:
-                continue
-            items = images.items() if isinstance(images, dict) else [(i.get('image_ref') or i.get('ref'),i) for i in images if isinstance(i,dict)] if isinstance(images,list) else []
-            new = {}
-            for ref, info in items:
-                if not isinstance(info, dict):
-                    new[ref] = info
-                    continue
-                canonical = manifest['mapping'].get(ref)
-                if canonical:
-                    new[canonical] = {'image_ref': canonical, 'label': info.get('label', '图片')}
-                else:
-                    new[ref] = info
-            for segment in segments:
-                if not isinstance(segment, dict):
-                    continue
-                ref = segment.get('image_ref') or segment.get('ref')
-                if ref in manifest['mapping']:
-                    segment['image_ref'] = manifest['mapping'][ref]
-                    segment.pop('ref', None)
-            db.execute('UPDATE chat_messages SET images=?,content_segments=? WHERE id=?',
-                (json.dumps(new, ensure_ascii=False), json.dumps(segments, ensure_ascii=False), row['id']))
         formal = {Path(row[0]).resolve() for row in db.execute('SELECT locator FROM media_images')}
         old_registry = db.execute("SELECT type FROM sqlite_master WHERE name='media_registry'").fetchone()
         if old_registry and old_registry[0] == 'table':
@@ -346,14 +443,13 @@ def cleanup(manifest, output):
             continue  # User workspace/export copies never belong to cache cleanup.
         relative = str(path.relative_to(source))
         backup_path = backup_root / relative
-        if backup_hashes.get(relative) != info['sha256'] or _hash(backup_path.read_bytes()) != info['sha256']:
+        if backup_hashes.get(relative) != info['sha256'] or _hash_file(backup_path) != info['sha256']:
             raise ValueError('Backup verification failed')
-        if _hash(path.read_bytes()) != info['sha256']:
+        if _hash_file(path) != info['sha256']:
             raise ValueError('Source changed before cleanup')
         with connection() as db:
             row = db.execute('SELECT image_ref FROM media_images WHERE sha256=?', (info['sha256'],)).fetchone()
-        record = read_image(row[0]) if row else None
-        if not record or record.get('unavailable_status'):
+        if not row or not _registered_hash_matches(row[0], info['sha256']):
             raise ValueError('Canonical original unavailable during cleanup')
         path.unlink()
         count += 1

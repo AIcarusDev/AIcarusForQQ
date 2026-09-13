@@ -69,6 +69,11 @@ copy the source database and stores into an isolated root, remap historical abso
 locators into that root, then run all four phases with `--root <isolated-root>`.
 
 The migration keeps `manifest.json` and `backup/complete.json`, including hashes.
+New manifests retain database row/key locators for inline originals instead of
+embedding Base64 image data. Scanning holds one chat payload at a time; apply reads
+the selected original again and rejects changed bytes. Backup and verification hash
+files in chunks, including large databases, without filling the runtime image cache.
+Manifests from the previous importer with embedded Base64 remain resumable.
 It preserves collection primary refs first, otherwise the earliest usable ref.
 Aliases are flattened. Invalid/missing originals stay unavailable; conflicts stop
 migration rather than selecting one image. Only exact, attributable legacy image
@@ -76,7 +81,11 @@ metadata is imported; pHash-associated descriptions remain in the backup.
 
 Cleanup verifies all old refs and backed-up bytes again. It rewrites historical
 inline payloads to links and removes only listed duplicate files under managed
-image directories. It never deletes workspace/export files. Completed groups and
+image directories. Chat rewrites verify the database backup first and commit one
+message at a time, bounding memory and rollback-journal size and allowing retries
+after partial completion. Cleanup does not run SQLite VACUUM or delete the backup;
+database pages freed by rewriting payloads are reusable but do not necessarily
+shrink the database file. It never deletes workspace/export files. Completed groups and
 aliases can be replayed safely after interruption. Retain the backup separately
 until the migration is accepted.
 

@@ -12,7 +12,7 @@ aiosqlite
 httpx
 jsonschema
 imagehash
-Pillow
+Pillow>=11.3
 pypdf
 python-docx
 openpyxl
