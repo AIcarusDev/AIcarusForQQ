@@ -22,6 +22,7 @@ from llm.core.profiles import (
     normalize_profile_config_inplace,
 )
 from llm.compression.config import normalize_generation_config
+from llm.prompt.output_requirements import normalize_output_requirements_config
 from platforms.qq.adapter.config import normalize_qq_platform_config
 from workspace.config import normalize_workspace_config_inplace
 
@@ -38,9 +39,7 @@ _CONFIG_WRITE_LOCK = threading.RLock()
 _PROMPT_DOC_LOCK = threading.RLock()
 
 AGENT_PROMPT_KEYS = (
-    "drive",
-    "cognition_content",
-    "cognition_prompt",
+    "instruction",
 )
 
 
@@ -54,28 +53,10 @@ _PROMPT_DOC_SPECS: dict[str, tuple[str, str | None, str | None]] = {
         "你是一个乐于助人的 AI 助手。",
         None,
     ),
-    "drive": (
-        os.path.join("config", "drive", "drive.md"),
+    "instruction": (
+        os.path.join("config", "instruction.md"),
+        "",
         None,
-        os.path.join("config", "drive", "drive.md.template"),
-    ),
-    "cognition_content": (
-        os.path.join("config", "cognition_content", "cognition_content.md"),
-        None,
-        os.path.join(
-            "config",
-            "cognition_content",
-            "cognition_content.md.template",
-        ),
-    ),
-    "cognition_prompt": (
-        os.path.join("config", "cognition_prompt", "cognition_prompt.md"),
-        None,
-        os.path.join(
-            "config",
-            "cognition_prompt",
-            "cognition_prompt.md.template",
-        ),
     ),
 }
 
@@ -217,7 +198,7 @@ def load_prompt_docs(
 
 
 def load_agent_prompt_docs(config: dict) -> dict[str, str]:
-    """Read the three file-backed Agent prompt fragments as one snapshot."""
+    """Read the file-backed Agent prompt fields as one snapshot."""
     with _PROMPT_DOC_LOCK:
         return {key: load_prompt_document(config, key) for key in AGENT_PROMPT_KEYS}
 
@@ -302,6 +283,7 @@ def load_config(
 
     normalize_profile_config_inplace(config)
     config["generation"] = normalize_generation_config(config.get("generation"))
+    config["output_requirements"] = normalize_output_requirements_config(config.get("output_requirements"))
     normalize_qq_platform_config(config, remove_legacy=True)
     normalize_workspace_config_inplace(config, project_root=_BASE_DIR)
 

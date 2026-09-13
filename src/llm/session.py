@@ -7,11 +7,9 @@ ConversationSession: 每个平台会话独立的上下文状态。
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import memory as _memory
 from config_loader import AGENT_PROMPT_KEYS, PromptDocumentError, load_agent_prompt_docs
 from memory.recall.activation import (
     RecallActivationDecision,
@@ -21,12 +19,12 @@ from memory.recall.activation import (
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import (
-    EXPLICIT_COGNITION_PROMPT_PARTS,
-    NATIVE_REASONING_PROMPT_PARTS,
-    SYSTEM_PROMPT,
-    get_formatted_time_for_llm,
+from .prompt.sections import (
+    PromptPrelude,
+    build_guardian_card_block,
+    build_instruction_block,
 )
+from .prompt.system import render_system_prompt
 
 logger = logging.getLogger("AICQ.llm.session")
 
@@ -378,7 +376,7 @@ class ConversationSession:
     async def prepare_memory_recall(self, *, evaluate_activation: bool = False) -> RecallActivationDecision | None:
         """执行事件召回，结果存入 self.recalled_events。
 
-        在调用 LLM 之前调用，确保 build_system_prompt()（同步）能直接读取已计算好的召回结果。
+        在调用 LLM 之前调用，确保尾部 memory 来源能直接读取已计算好的召回结果。
         """
         import app_state
 
@@ -492,14 +490,15 @@ class ConversationSession:
 
         return self.last_memory_activation_decision
 
-    def build_system_prompt(
+    def build_prompt_prelude(
         self,
         activated_names: list[str] | None = None,
         latent_names: list[str] | None = None,
         *,
         native_reasoning_as_cognition: bool = False,
-    ) -> str:
-        """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
+    ) -> PromptPrelude:
+        """Build system and its conditional front-context blocks from one snapshot."""
+        del activated_names, latent_names, native_reasoning_as_cognition
         try:
             agent_prompt_docs = load_agent_prompt_docs(
                 {"prompt_files": dict(self._prompt_files)}
@@ -515,37 +514,36 @@ class ConversationSession:
         else:
             self._agent_prompt_docs = dict(agent_prompt_docs)
 
-        prompt_parts = (
-            NATIVE_REASONING_PROMPT_PARTS
-            if native_reasoning_as_cognition
-            else EXPLICIT_COGNITION_PROMPT_PARTS
+        instruction_block = build_instruction_block(
+            agent_prompt_docs.get("instruction", "")
         )
-        return SYSTEM_PROMPT.format(
+        guardian_block = build_guardian_card_block(self._guardian_info)
+        system_prompt = render_system_prompt(
             persona=self._persona,
             self_name=self._self_name,
-            platform=self.get_platform_name(),
             model_name=self._model_name,
-            qq_name=self._qq_name,
-            qq_id=self._qq_id,
-            guardian_info=self._guardian_info if self._guardian_info is not None else "null",
-            **prompt_parts,
-            **agent_prompt_docs,
+            include_instruction_notice=bool(instruction_block),
+            include_guardian_notice=bool(guardian_block),
+        )
+        return PromptPrelude(
+            system_prompt=system_prompt,
+            instruction=instruction_block,
+            guardian_card=guardian_block,
         )
 
-    def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
-        """构建每轮随上下文变化的 user prompt 块内容。"""
-        if now is None:
-            now = datetime.now(self._timezone)
-        return {
-            "current_time": get_formatted_time_for_llm(now),
-            "memory": _memory.build_memory_xml(
-                now,
-                recalled_events=self.recalled_events or None,
-                sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
-                nickname_map=self._nick_cache or None,
-            ),
-        }
-
+    def build_system_prompt(
+        self,
+        activated_names: list[str] | None = None,
+        latent_names: list[str] | None = None,
+        *,
+        native_reasoning_as_cognition: bool = False,
+    ) -> str:
+        """Compatibility accessor for consumers that only need the system text."""
+        return self.build_prompt_prelude(
+            activated_names=activated_names,
+            latent_names=latent_names,
+            native_reasoning_as_cognition=native_reasoning_as_cognition,
+        ).system_prompt
 
 # ── 全局默认参数（由 app.py 启动时设置） ─────────────────
 

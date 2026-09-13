@@ -1318,12 +1318,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>原生 reasoning 接管 cognition</strong>
-                <span>将 API 返回的 reasoning_content 作为 cognition 保存和消费，并以 thinking 历史回灌主模型。</span>
+                <span>开启后自动启用思维链，以内部思考作为认知；正文只输出动机和行动。</span>
               </div>
               <label class="toggle"
                 ><input type="checkbox" id="native_reasoning_as_cognition" /><span
                   class="slider"
                 ></span></label>
+            </div>
+            <div class="field">
+              <label for="cognition_language">默认认知语言</label>
+              <select id="cognition_language">
+                {% for code, labels in cognition_languages.items() %}
+                <option value="{{ code }}">{{ labels[0] }}</option>
+                {% endfor %}
+              </select>
+              <span class="hint">用于认知或内部思考。自动表示不指定语言；对外消息按交流需要选择语言。</span>
             </div>
             <details class="advanced-sampling">
               <summary>高级采样参数</summary>
@@ -2347,53 +2356,23 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>Agent Prompt</h2>
-            <p>分别配置行为驱动性、认知内容提示，以及认知写法与其它注意事项提示；保存后从下一次 Agent 轮次开始生效。</p>
+            <p>配置全局自定义指令；保存后从下一次 Agent 轮次开始生效。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="group">
             <div class="group-title">
-              <h3>Drive</h3>
-              <span class="subtle">行为驱动性：提示 Agent 的行为方向与驱动力。</span>
+              <h3>自定义指令</h3>
+              <span class="subtle">优先于其它模型可见上下文；允许留空。</span>
             </div>
-            <pre id="agent-prompt-drive-preview" class="persona-preview"></pre>
+            <pre id="agent-prompt-instruction-preview" class="persona-preview"></pre>
             <textarea
-              id="agent-prompt-drive"
-              class="persona-edit-area"
-              style="min-height: 180px"
-              rows="10"
-              maxlength="200000"
-              placeholder="允许留空；保存后下一轮生效。"
-            ></textarea>
-          </div>
-          <div class="group">
-            <div class="group-title">
-              <h3>Cognition Content</h3>
-              <span class="subtle">认知内容提示：提示认知中需要包含和关注的内容。</span>
-            </div>
-            <pre id="agent-prompt-cognition-content-preview" class="persona-preview"></pre>
-            <textarea
-              id="agent-prompt-cognition-content"
+              id="agent-prompt-instruction"
               class="persona-edit-area"
               style="min-height: 220px"
               rows="12"
               maxlength="200000"
-              placeholder="认知可以覆盖的内容范围。"
-            ></textarea>
-          </div>
-          <div class="group">
-            <div class="group-title">
-              <h3>Cognition Prompt</h3>
-              <span class="subtle">认知写法与其它注意事项提示：提示认知如何书写，以及其它约束和注意事项。</span>
-            </div>
-            <pre id="agent-prompt-cognition-prompt-preview" class="persona-preview"></pre>
-            <textarea
-              id="agent-prompt-cognition-prompt"
-              class="persona-edit-area"
-              style="min-height: 300px"
-              rows="18"
-              maxlength="200000"
-              placeholder="认知过程的约束与注意事项。"
+              placeholder="输入需要 Agent 在所有会话中遵循的自定义指令。"
             ></textarea>
           </div>
           <div class="settings-actions" style="justify-content: flex-start">
@@ -3915,17 +3894,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
   function agentPromptValues() {
     return {
-      drive: preserveAgentPromptLineEndings(
-        "drive",
-        rawValue("agent-prompt-drive"),
-      ),
-      cognition_content: preserveAgentPromptLineEndings(
-        "cognition_content",
-        rawValue("agent-prompt-cognition-content"),
-      ),
-      cognition_prompt: preserveAgentPromptLineEndings(
-        "cognition_prompt",
-        rawValue("agent-prompt-cognition-prompt"),
+      instruction: preserveAgentPromptLineEndings(
+        "instruction",
+        rawValue("agent-prompt-instruction"),
       ),
     };
   }
@@ -3933,7 +3904,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function agentPromptHasUnsavedChanges() {
     if (!state.agentPromptEditing || !state.agentPromptSnapshot) return false;
     const current = agentPromptValues();
-    return ["drive", "cognition_content", "cognition_prompt"].some(
+    return ["instruction"].some(
       (key) =>
         normalizeAgentPromptLineEndings(current[key]) !==
         normalizeAgentPromptLineEndings(state.agentPromptSnapshot.values[key]),
@@ -3949,14 +3920,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
     const dirty = agentPromptHasUnsavedChanges();
     const fields = [
-      ["agent-prompt-drive", "agent-prompt-drive-preview"],
       [
-        "agent-prompt-cognition-content",
-        "agent-prompt-cognition-content-preview",
-      ],
-      [
-        "agent-prompt-cognition-prompt",
-        "agent-prompt-cognition-prompt-preview",
+        "agent-prompt-instruction",
+        "agent-prompt-instruction-preview",
       ],
     ];
     fields.forEach(([fieldId, previewId]) => {
@@ -3994,35 +3960,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     state.agentPromptSnapshot = snapshot;
     state.agentPromptConflict = null;
     state.agentPromptEditing = false;
-    setValue("agent-prompt-drive", snapshot.values.drive);
     setValue(
-      "agent-prompt-cognition-content",
-      snapshot.values.cognition_content,
+      "agent-prompt-instruction",
+      snapshot.values.instruction,
     );
-    setValue(
-      "agent-prompt-cognition-prompt",
-      snapshot.values.cognition_prompt,
-    );
-    $("agent-prompt-drive-preview").textContent =
-      snapshot.values.drive || "（空）";
-    $("agent-prompt-cognition-content-preview").textContent =
-      snapshot.values.cognition_content || "（空）";
-    $("agent-prompt-cognition-prompt-preview").textContent =
-      snapshot.values.cognition_prompt || "（空）";
+    $("agent-prompt-instruction-preview").textContent =
+      snapshot.values.instruction || "（空）";
     updateAgentPromptSaveButton();
   }
 
   function openAgentPromptEdit() {
     if (state.agentPromptSaving || !state.agentPromptSnapshot) return;
     state.agentPromptEditing = true;
-    setValue("agent-prompt-drive", state.agentPromptSnapshot.values.drive);
     setValue(
-      "agent-prompt-cognition-content",
-      state.agentPromptSnapshot.values.cognition_content,
-    );
-    setValue(
-      "agent-prompt-cognition-prompt",
-      state.agentPromptSnapshot.values.cognition_prompt,
+      "agent-prompt-instruction",
+      state.agentPromptSnapshot.values.instruction,
     );
     updateAgentPromptSaveButton();
   }
@@ -4112,14 +4064,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       if (agentPromptSnapshot) {
         hydrateAgentPromptSnapshot(agentPromptSnapshot);
       } else if (agentPromptDraft) {
-        setValue("agent-prompt-drive", agentPromptDraft.drive);
         setValue(
-          "agent-prompt-cognition-content",
-          agentPromptDraft.cognition_content,
-        );
-        setValue(
-          "agent-prompt-cognition-prompt",
-          agentPromptDraft.cognition_prompt,
+          "agent-prompt-instruction",
+          agentPromptDraft.instruction,
         );
         updateAgentPromptSaveButton();
       }
@@ -4220,6 +4167,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "native_reasoning_as_cognition",
       gen.native_reasoning_as_cognition === true,
     );
+    syncCognitionThinkingMode();
+    setValue("cognition_language", data.output_requirements?.cognition_language || "auto");
     hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
     setValue("self_name", data.self_name || "");
@@ -4808,13 +4757,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             max_retries: intValue("cognition_prefill_guidance_max_retries", 2),
           },
         },
-        enable_thinking: checked("enable_thinking"),
+        enable_thinking: checked("native_reasoning_as_cognition") || checked("enable_thinking"),
         native_reasoning_as_cognition: checked(
           "native_reasoning_as_cognition",
         ),
       },
 
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
+      output_requirements: { cognition_language: value("cognition_language") || "auto" },
       self_name: value("self_name"),
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
@@ -5584,7 +5534,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       el.className = "toast";
     }, 5000);
   }
+  function syncCognitionThinkingMode() {
+    const thinking = $("enable_thinking");
+    const native = checked("native_reasoning_as_cognition");
+    if (native) thinking.checked = true;
+    thinking.disabled = native;
+  }
+
   function initEvents() {
+    $("native_reasoning_as_cognition").addEventListener("change", syncCognitionThinkingMode);
     initSections();
     initModelPickers();
     bindRange("temperature", "temperatureVal");
@@ -5598,9 +5556,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     $("qq_adapter_port")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("guardian_info")?.addEventListener("input", updateGuardianSaveButton);
     [
-      "agent-prompt-drive",
-      "agent-prompt-cognition-content",
-      "agent-prompt-cognition-prompt",
+      "agent-prompt-instruction",
     ].forEach((id) =>
       $(id)?.addEventListener("input", updateAgentPromptSaveButton),
     );
@@ -5628,4 +5584,3 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   loadSettings();
 </script>
 {% endblock %}
-

@@ -188,12 +188,16 @@ self_name: "AIcarus"
 # --- 监护人介绍（可选，null 表示尚未填写）---
 guardian: null
 
+# --- 主模型输出要求 ---
+output_requirements:
+  # auto / zh-CN / zh-TW / en / ja / ko / es / fr / de
+  # 普通模式约束 cognition；原生思维链模式约束内部思考的默认语言。
+  cognition_language: auto
+
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:
   persona: "config/persona.md"
-  drive: "config/drive/drive.md"
-  cognition_content: "config/cognition_content/cognition_content.md"
-  cognition_prompt: "config/cognition_prompt/cognition_prompt.md"
+  instruction: "config/instruction.md"
 
 # --- 模拟打字速度 ---
 # 打字速度倍率，值越大打字越快，延迟越短，封顶时间也同步缩放
@@ -339,4 +343,3 @@ vision_bridge:
   cache_eviction:
     max_age_days: 30         # 超过此天数的缓存图片将被删除，0 = 不按时间清理
     max_size_mb: 500         # 缓存目录总大小上限(MB)，超出则淘汰最旧的条目，0 = 不限大小
-

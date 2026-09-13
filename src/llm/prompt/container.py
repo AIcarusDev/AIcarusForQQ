@@ -1,7 +1,7 @@
 """container.py — 模型上下文契约 container 管理
 
 全局维护一个内存中的 container 条目列表，包含 preset 与 custom 两个分节。
-其上下文位置位于主模型 user prompt 的最末尾。
+其上下文位置位于主模型尾部 user message 中、独立的输出要求 prompt 之前。
 启动时从数据库恢复，运行时通过底层接口更新，并在 prompt 组装时序列化为 XML。
 全空状态下理论上永远输出: <container/>
 """
@@ -126,7 +126,10 @@ def build_container_xml(
     if not preset_items and not custom_items and not any(blocks.values()):
         return "<container/>"
 
-    lines = ["<container>"]
+    lines = [
+        "<container>",
+        "  <des>This section stores context supplied by runtime features and tools.</des>",
+    ]
     lines.extend(_render_section("preset", preset_items, blocks["preset"]))
     lines.extend(_render_section("custom", custom_items, blocks["custom"]))
     lines.append("</container>")

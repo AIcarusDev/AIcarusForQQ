@@ -61,6 +61,7 @@ from llm.core.provider import (
     build_compression_adapter_cfg,
 )
 from llm.compression.config import normalize_generation_config
+from llm.prompt.output_requirements import COGNITION_LANGUAGES, normalize_output_requirements_config
 from llm.core.duplicate_response_guard import normalize_duplicate_model_response_guard_config
 from llm.core.profiles import (
     get_configured_api_key_names,
@@ -133,7 +134,7 @@ def _agent_prompt_snapshot(config: dict) -> dict:
     values = load_agent_prompt_docs(config)
     return {
         "domain": "agent-prompt",
-        "schema_version": "agent-prompt-v1",
+        "schema_version": "agent-prompt-v2",
         "revision": _agent_prompt_revision(values),
         "values": values,
         "secrets": {},
@@ -426,7 +427,7 @@ async def _reload_qq_platform_client(
 
 @settings_bp.route("/settings")
 async def settings_page():
-    return await render_template("settings.html")
+    return await render_template("settings.html", cognition_languages=COGNITION_LANGUAGES)
 
 
 @settings_bp.route("/settings/agent-prompt", methods=["GET"])
@@ -542,6 +543,7 @@ async def settings_get():
                 gen_cfg.get("duplicate_model_response_guard")
             ),
         },
+        "output_requirements": normalize_output_requirements_config(cfg.get("output_requirements")),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "self_name": cfg.get("self_name", ""),
         "guardian": normalize_guardian_info(cfg.get("guardian")),
@@ -618,6 +620,14 @@ async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
     data = await request.get_json() or {}
 
+    if "output_requirements" in data:
+        try:
+            output_cfg = normalize_output_requirements_config(data["output_requirements"], strict=True)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+    else:
+        output_cfg = normalize_output_requirements_config(app_state.config.get("output_requirements"))
+
     # ── 写 API Key 和代理（线程池，避免阻塞事件循环）──────
     api_keys_data = dict(data.get("api_keys") or {})
     service_env_data = dict(data.get("service_env") or {})
@@ -640,6 +650,7 @@ async def settings_save():
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
+    new_cfg["output_requirements"] = output_cfg
     new_cfg.pop("profiles", None)
     new_cfg.pop("openai_profiles", None)
 
@@ -739,7 +750,6 @@ async def settings_save():
                     new_platforms[platform_key] = deepcopy(platform_cfg)
         new_cfg["platforms"] = new_platforms
     if "tools" in data and isinstance(data["tools"], dict):
-        tools_data = data["tools"]
         current_tools = new_cfg.get("tools", {})
         new_tools = dict(current_tools) if isinstance(current_tools, dict) else {}
         # tools.send_message.message_shape 已废弃，保持 tools 配置平滑兼容
@@ -1194,6 +1204,7 @@ async def settings_save():
         self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_info=new_cfg.get("guardian"),
+        prompt_files=new_cfg.get("prompt_files", {}) or {},
     )
 
     try:
@@ -1589,5 +1600,3 @@ async def stickers_reconcile():
     from llm.media.sticker_collection import reconcile_stickers
     stats = await asyncio.to_thread(reconcile_stickers)
     return jsonify({"success": True, "stats": stats})
-
-

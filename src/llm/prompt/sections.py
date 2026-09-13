@@ -1,0 +1,62 @@
+"""Source-owned model-facing blocks used by the main prompt composer."""
+
+from __future__ import annotations
+
+import html
+from dataclasses import dataclass, field
+
+from .composer import PromptContent
+from .output_requirements import build_output_requirements_prompt
+
+MEMORY_DESCRIPTION = (
+    "These memories were recalled from the current world. They may be inaccurate "
+    "or irrelevant, so treat them as fallible context rather than facts."
+)
+
+
+def _escaped_free_text_block(tag: str, text: str, *, description: str = "") -> str:
+    raw = str(text or "")
+    if not raw.strip():
+        return ""
+    lines = [f"<{tag}>"]
+    if description:
+        lines.append(f"<des>{html.escape(description, quote=False)}</des>")
+    lines.append(html.escape(raw, quote=False))
+    lines.append(f"</{tag}>")
+    return "\n".join(lines)
+
+
+def build_instruction_block(text: str) -> str:
+    return _escaped_free_text_block(
+        "instruction",
+        text,
+        description="User-defined instructions for this deployment.",
+    )
+
+
+def build_guardian_card_block(text: str | None) -> str:
+    return _escaped_free_text_block("guardian_card", str(text or ""))
+
+
+def build_memory_block(body: str) -> str:
+    lines = ["<memory>", f"<des>{MEMORY_DESCRIPTION}</des>"]
+    if body:
+        lines.append(body)
+    lines.append("</memory>")
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class PromptPrelude:
+    system_prompt: str
+    instruction: str = ""
+    guardian_card: str = ""
+
+
+@dataclass(frozen=True)
+class UserPromptSections:
+    memory: PromptContent = ""
+    skills: PromptContent = ""
+    world: PromptContent = ""
+    container: PromptContent = "<container/>"
+    output_requirements: str = field(default_factory=build_output_requirements_prompt)
