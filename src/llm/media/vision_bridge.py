@@ -28,6 +28,7 @@ from .image_store import append_examination, update_description, read_image, des
 from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider, resolve_model_thinking_control
 from llm.core.transport import (
+    ProviderRequestIdentity,
     add_extra_generation_kwargs,
     create_streamed_chat_completion,
     normalize_generation_for_provider,
@@ -81,6 +82,7 @@ class VisionBridge:
         self._base_url: str = ""
         self._api_key_env: str = ""
         self._thinking_control: str = "enable_thinking"
+        self._request_identity = ProviderRequestIdentity()
         if self._enabled:
             provider_cfg: dict[str, Any] = dict(full_cfg)
             provider_cfg["provider"] = self._provider
@@ -91,6 +93,7 @@ class VisionBridge:
                 resolved,
                 self._model,
             )
+            self._request_identity = ProviderRequestIdentity.from_provider(resolved)
         self._describe_prompt: str = bridge_cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
         self._sim_threshold: int = _coerce_int(bridge_cfg.get("similarity_threshold"), 10)
         self._generation: dict = {
@@ -125,6 +128,8 @@ class VisionBridge:
             kwargs: dict = {"api_key": api_key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+            if default_headers := self._request_identity.headers_for():
+                kwargs["default_headers"] = default_headers
             
             # 代理配置：直接从环境变量读取（OPENAI_PROXY）
             if proxy_url := os.environ.get("OPENAI_PROXY", "").strip() or None:
@@ -192,7 +197,10 @@ class VisionBridge:
                 self._client,
                 provider=self._provider or "vision_bridge",
                 all_messages=messages,
-                create_kwargs=request_kwargs,
+                create_kwargs=self._request_identity.apply(
+                    request_kwargs,
+                    session_scope="vision-bridge",
+                ),
             )
         except Exception:
             record_llm_usage(

@@ -230,6 +230,7 @@ class LLMRoundRunner:
         on_text_delta=None,
         on_reasoning_delta=None,
         on_chunk=None,
+        session_scope: str = "",
     ) -> Any:
         return self._get_transport().create_chat_completion(
             all_messages=all_messages,
@@ -237,6 +238,7 @@ class LLMRoundRunner:
             on_text_delta=on_text_delta,
             on_reasoning_delta=on_reasoning_delta,
             on_chunk=on_chunk,
+            session_scope=session_scope,
         )
 
     def call_one_round(
@@ -446,6 +448,11 @@ class LLMRoundRunner:
                     _observe_text_delta
                     if stream_projector is not None or cognition_repeat_guard is not None
                     else None
+                ),
+                "session_scope": str(
+                    (agent_context or {}).get("session_key")
+                    or (prompt_snapshot_context or {}).get("focus")
+                    or "main-round"
                 ),
             }
             if native_reasoning_as_cognition and stream_projector is not None:
@@ -891,6 +898,7 @@ class LLMRoundRunner:
             response = self._create_chat_completion(
                 all_messages=messages,
                 create_kwargs=create_kwargs,
+                session_scope=f"simple-text:{log_tag}",
             )
         except Exception as exc:
             _record_usage_event(

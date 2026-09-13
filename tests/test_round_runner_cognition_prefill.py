@@ -50,7 +50,15 @@ def test_round_runner_discards_repeated_cognition_before_action(monkeypatch):
         discard_log_call["kwargs"] = kwargs
         return "discard-log-1"
 
-    def fake_create_chat_completion(*, all_messages, create_kwargs, on_text_delta=None, on_chunk=None):
+    def fake_create_chat_completion(
+        *,
+        all_messages,
+        create_kwargs,
+        on_text_delta=None,
+        on_chunk=None,
+        session_scope="",
+    ):
+        assert session_scope == "qq:group:123"
         assert on_text_delta is not None
         on_text_delta(f"<cognition>{repeated}</cognition>")
         raise AssertionError("stream should abort before action text is generated")
@@ -67,6 +75,7 @@ def test_round_runner_discards_repeated_cognition_before_action(monkeypatch):
         {"duplicate_model_response_guard": {"prefill_guidance": {"enabled": True, "min_chars": 20}}},
         _ToolCollection(),
         flow,
+        agent_context={"session_key": "qq:group:123"},
     )
 
     assert result.cognition_prefill_retry is True

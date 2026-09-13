@@ -13,6 +13,7 @@ import re
 import time
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID, uuid4, uuid5
 
 import httpx
 from openai import OpenAI
@@ -40,6 +41,55 @@ _EXPLICIT_STREAM_TOKEN = re.compile(
     r"(?<![a-z0-9_])stream(?:ing)?(?![a-z0-9_])",
     re.IGNORECASE,
 )
+
+
+class ProviderRequestIdentity:
+    """Build endpoint-specific client identity and stable conversation headers."""
+
+    def __init__(
+        self,
+        *,
+        session_header: str = "",
+        user_agent: str = "",
+        namespace: UUID | None = None,
+    ) -> None:
+        self._session_header = str(session_header or "").strip()
+        self._user_agent = str(user_agent or "").strip()
+        self._namespace = namespace or uuid4()
+
+    @classmethod
+    def from_provider(
+        cls,
+        provider: dict,
+        *,
+        namespace: UUID | None = None,
+    ) -> "ProviderRequestIdentity":
+        return cls(
+            session_header=provider.get("session_header", ""),
+            user_agent=provider.get("client_user_agent", ""),
+            namespace=namespace,
+        )
+
+    def headers_for(self, session_scope: str = "") -> dict[str, str]:
+        if not self._session_header:
+            return {}
+        scope = str(session_scope or "").strip() or "client-default"
+        headers = {
+            self._session_header: uuid5(self._namespace, scope).hex,
+        }
+        if self._user_agent:
+            headers["User-Agent"] = self._user_agent
+        return headers
+
+    def apply(self, create_kwargs: dict, *, session_scope: str = "") -> dict:
+        request_kwargs = dict(create_kwargs)
+        identity_headers = self.headers_for(session_scope)
+        if not identity_headers:
+            return request_kwargs
+        headers = dict(request_kwargs.get("extra_headers") or {})
+        headers.update(identity_headers)
+        request_kwargs["extra_headers"] = headers
+        return request_kwargs
 
 
 def _gemini_reasoning_none_supported(model: str) -> bool:
@@ -513,6 +563,9 @@ class OpenAICompatClient:
 
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
         client_kwargs: dict = {"api_key": api_key, "base_url": base_url}
+        self._request_identity = ProviderRequestIdentity.from_provider(provider_cfg)
+        if default_headers := self._request_identity.headers_for():
+            client_kwargs["default_headers"] = default_headers
         if proxy_url:
             client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
 
@@ -562,13 +615,20 @@ class OpenAICompatClient:
         on_text_delta=None,
         on_reasoning_delta=None,
         on_chunk=None,
+        session_scope: str = "",
     ):
         """发起 streaming chat completion and return an aggregated response."""
+        identity = getattr(self, "_request_identity", None)
+        request_kwargs = (
+            identity.apply(create_kwargs, session_scope=session_scope)
+            if identity is not None
+            else dict(create_kwargs)
+        )
         return create_streamed_chat_completion(
             self.client,
             provider=self.provider,
             all_messages=all_messages,
-            create_kwargs=create_kwargs,
+            create_kwargs=request_kwargs,
             on_text_delta=on_text_delta,
             on_reasoning_delta=on_reasoning_delta,
             on_chunk=on_chunk,
@@ -579,13 +639,20 @@ class OpenAICompatClient:
         *,
         all_messages: list,
         create_kwargs: dict,
+        session_scope: str = "",
     ):
         """发起原始 streaming chat completion，供未来按 chunk 处理的调用点使用。"""
+        identity = getattr(self, "_request_identity", None)
+        request_kwargs = (
+            identity.apply(create_kwargs, session_scope=session_scope)
+            if identity is not None
+            else dict(create_kwargs)
+        )
         return _create_chat_completion_with_transient_retry(
             self.client,
             provider=self.provider,
             all_messages=all_messages,
-            request_kwargs=prepare_streaming_create_kwargs(create_kwargs),
+            request_kwargs=prepare_streaming_create_kwargs(request_kwargs),
         )
 
     @staticmethod

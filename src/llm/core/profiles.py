@@ -176,6 +176,13 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
             )
     merged["thinking_control"] = thinking_control
     merged["supports_enable_thinking"] = thinking_control == "enable_thinking"
+    if looks_like_opencode_console_go:
+        merged["session_header"] = "x-opencode-session"
+        merged["client_user_agent"] = "AIcarusForQQ/1.0"
+    else:
+        # Request identity is an endpoint contract, not a model-name heuristic.
+        merged.pop("session_header", None)
+        merged.pop("client_user_agent", None)
     model_thinking_controls = (
         dict(_OPENCODE_GO_MODEL_THINKING_CONTROLS)
         if looks_like_opencode_console_go

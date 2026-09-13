@@ -18,9 +18,11 @@ import argparse
 import json
 import os
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -53,6 +55,15 @@ def _load_target() -> tuple[str, str, str]:
     if not api_key:
         raise ValueError(f"API key environment variable is empty: {key_env}")
     return base_url, model, api_key
+
+
+def _is_opencode_go_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    path = (parsed.path or "").rstrip("/")
+    return (
+        (parsed.hostname or "").lower() == "opencode.ai"
+        and (path == "/zen/go" or path.startswith("/zen/go/"))
+    )
 
 
 def _chat_cases(model: str) -> list[ProbeCase]:
@@ -437,7 +448,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"api={args.api}")
     print(f"model={model}")
     print(f"stages={','.join(case.name for case in cases)}")
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if _is_opencode_go_url(base_url):
+        headers.update({
+            "User-Agent": "AIcarusForQQ-probe/1.0",
+            "x-opencode-session": uuid.uuid4().hex,
+        })
     failures = 0
     with httpx.Client(headers=headers, timeout=args.timeout) as client:
         if not args.skip_model_check:

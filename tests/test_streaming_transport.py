@@ -1,12 +1,15 @@
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
 from llm.core.transport import (
+    ProviderRequestIdentity,
     aggregate_chat_completion_stream,
     aggregate_chat_completion_stream_with_callbacks,
     create_streamed_chat_completion,
 )
+from llm.core.profiles import sanitize_model_providers
 
 
 class FakeApiError(Exception):
@@ -25,6 +28,53 @@ CONSOLE_GO_UPSTREAM_ERROR = (
     "(Console Go): Upstream request failed', 'type': "
     "'invalid_request_error', 'code': 'invalid_request_error'}}"
 )
+
+
+def test_opencode_go_request_identity_is_endpoint_scoped_and_session_stable():
+    providers = sanitize_model_providers(
+        {
+            "go": {"base_url": "https://opencode.ai/zen/go/v1"},
+            "other": {"base_url": "https://example.com/v1"},
+        }
+    )
+    namespace = UUID("00000000-0000-0000-0000-000000000001")
+
+    identity = ProviderRequestIdentity.from_provider(
+        providers["go"], namespace=namespace
+    )
+    first = identity.headers_for("qq:group:123")
+    repeated = identity.headers_for("qq:group:123")
+    other_session = identity.headers_for("qq:private:123")
+
+    assert first["User-Agent"] == "AIcarusForQQ/1.0"
+    assert first["x-opencode-session"] == repeated["x-opencode-session"]
+    assert first["x-opencode-session"] != other_session["x-opencode-session"]
+    assert "qq:group:123" not in first["x-opencode-session"]
+    assert ProviderRequestIdentity.from_provider(providers["other"]).headers_for(
+        "qq:group:123"
+    ) == {}
+
+
+def test_provider_request_identity_merges_existing_headers_without_mutating_input():
+    provider = sanitize_model_providers(
+        {"go": {"base_url": "https://opencode.ai/zen/go/v1"}}
+    )["go"]
+    identity = ProviderRequestIdentity.from_provider(
+        provider,
+        namespace=UUID("00000000-0000-0000-0000-000000000001"),
+    )
+    original = {"model": "kimi-k2.7-code", "extra_headers": {"X-Test": "yes"}}
+
+    prepared = identity.apply(original, session_scope="qq:group:123")
+
+    assert prepared is not original
+    assert prepared["extra_headers"]["X-Test"] == "yes"
+    assert prepared["extra_headers"]["x-opencode-session"]
+    assert prepared["extra_headers"]["User-Agent"] == "AIcarusForQQ/1.0"
+    assert original == {
+        "model": "kimi-k2.7-code",
+        "extra_headers": {"X-Test": "yes"},
+    }
 
 
 def _chunk(
