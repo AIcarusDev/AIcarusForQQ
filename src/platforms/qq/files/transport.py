@@ -20,8 +20,11 @@ _HTTP_DOWNLOADS = asyncio.Semaphore(4)
 _MAX_REDIRECTS = 5
 _REFRESHABLE_STATUSES = {403, 404}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
-# Mihomo/Clash fake-IP DNS uses the RFC 2544 benchmarking block.
-_IPV4_BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+# Mihomo/Clash default fake-IP DNS ranges, including dual-stack answers.
+_FAKE_IP_NETWORKS = (
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("fdfe:dcba:9876::/64"),
+)
 _QQ_FTN_HOST_SUFFIX = ".ftn.qq.com"
 _QQ_FTN_DOWNLOAD_PATH_PREFIX = "/ftn_handler/"
 
@@ -122,12 +125,12 @@ def _is_public_address(value: str) -> bool:
         return False
 
 
-def _is_ipv4_benchmark_address(value: str) -> bool:
+def _is_proxy_fake_address(value: str) -> bool:
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
         return False
-    return isinstance(address, ipaddress.IPv4Address) and address in _IPV4_BENCHMARK_NETWORK
+    return any(address in network for network in _FAKE_IP_NETWORKS)
 
 
 def _is_trusted_qq_ftn_download(parsed: SplitResult, hostname: str, port: int | None) -> bool:
@@ -159,7 +162,7 @@ async def _validate_public_http_url(url: str) -> None:
     if hostname == "localhost" or hostname.endswith(".localhost"):
         raise QQFileStreamError(
             "source_unavailable",
-            "QQ 文件下载地址不安全",
+            "本地安全校验拒绝 QQ 文件下载地址：目标为本机地址",
             retryable=False,
         )
     try:
@@ -186,12 +189,18 @@ async def _validate_public_http_url(url: str) -> None:
     allow_proxy_fake_ip = _is_trusted_qq_ftn_download(parsed, hostname, port)
     if not addresses or any(
         not _is_public_address(address)
-        and not (allow_proxy_fake_ip and _is_ipv4_benchmark_address(address))
+        and not (allow_proxy_fake_ip and _is_proxy_fake_address(address))
         for address in addresses
     ):
+        logger.warning(
+            "QQ file URL rejected by local address validation: host=%s addresses=%s trusted_ftn=%s",
+            hostname,
+            sorted(addresses),
+            allow_proxy_fake_ip,
+        )
         raise QQFileStreamError(
             "source_unavailable",
-            "QQ 文件下载地址不安全",
+            "本地安全校验拒绝 QQ 文件下载地址：DNS 或 IP 地址不符合公网访问规则",
             retryable=False,
         )
 
