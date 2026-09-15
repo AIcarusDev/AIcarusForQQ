@@ -165,6 +165,16 @@ async def init_db() -> None:
             PRAGMA journal_mode=WAL;
             PRAGMA foreign_keys=ON;
 
+            CREATE TABLE IF NOT EXISTS qq_friend_requests (
+                account_id TEXT NOT NULL,
+                flag TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                comment TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending',
+                PRIMARY KEY (account_id, flag)
+            );
+
             -- 会话注册表：记住历史会话的 key → meta，重启后可按 key 恢复
             CREATE TABLE IF NOT EXISTS chat_sessions (
                 session_key   TEXT    PRIMARY KEY,

@@ -91,6 +91,7 @@ class QQAdapterClient:
         self._on_recall: Callable[[dict], Coroutine] | None = None
         self._on_poke: Callable[[dict], Coroutine] | None = None
         self._on_group_notice: Callable[[dict], Coroutine] | None = None
+        self._on_request: Callable[[dict], Coroutine] | None = None
         self._on_status_change: Callable[[], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
@@ -212,6 +213,9 @@ class QQAdapterClient:
     ) -> None:
         """注册群系统通知回调: async def handler(event: dict)"""
         self._on_group_notice = handler
+
+    def set_request_handler(self, handler: Callable[[dict], Coroutine]) -> None:
+        self._on_request = handler
 
     def set_connect_handler(
         self,
@@ -794,6 +798,8 @@ class QQAdapterClient:
                                 self._supervisor.request_restart(reason)
                             except Exception:
                                 logger.exception("supervisor.request_restart 调用异常")
+                elif post_type == "request" and self._on_request:
+                    asyncio.create_task(self._on_request(data))
                 elif post_type == "message_sent":
                     # QQ adapter 在消息真正投递到 QQ 后推送此事件
                     self._dispatch_sent_event_waiters(data)
@@ -802,7 +808,6 @@ class QQAdapterClient:
                         fut = self._pending_sent.pop(sent_msg_id, None)
                         if fut and not fut.done():
                             fut.set_result(True)
-                # request 等直接忽略
 
         except websockets.ConnectionClosed:
             logger.info("QQ adapter 连接已断开")

@@ -346,6 +346,11 @@ async def startup() -> None:
         async def _handle_qq_adapter_connect() -> None:
             global _qq_metadata_refresh_task
             try:
+                if qq_runtime.friends:
+                    try:
+                        await qq_runtime.friends.list_requests()
+                    except Exception:
+                        logger.warning("[qq] 恢复好友申请失败", exc_info=True)
                 try:
                     await client.detect_adapter()
                 except Exception:
