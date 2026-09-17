@@ -16,8 +16,9 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from tools.contract import ToolArgsModel, tool
+from tools.contract import tool
 from .client import VideoModelClient, VideoProcessingError
+from .common import VideoBaseArgs, resolve_video_path
 
 logger = logging.getLogger("AICQ.video")
 
@@ -34,15 +35,7 @@ DEFAULT_AGENTIC_PROMPT = """你是一个专业的智能代理视觉分析器，�
 4. 行动参考线索：提炼出对后续任务规划有直接参考价值的关键事实。"""
 
 
-class AnalyzeVideoArgs(ToolArgsModel):
-    video_ref: str | None = Field(
-        default=None,
-        description="目标视频的 video_ref（例如来自消息上下文中的视频引用凭据）。与 path 必填其一。",
-    )
-    path: str | None = Field(
-        default=None,
-        description="目标视频在本地系统的绝对文件路径。与 video_ref 必填其一。",
-    )
+class AnalyzeVideoArgs(VideoBaseArgs):
     prompt: str | None = Field(
         default=None,
         description="针对视频的定向查询问题或特定关注重点。不传时将使用默认的全视频深入分析 Prompt。",
@@ -52,34 +45,9 @@ class AnalyzeVideoArgs(ToolArgsModel):
         description="分析模式：'static' 模式输出全局连贯的内容总结；'agentic' 模式输出带精准时间戳、关键动作/事件线索与置信度的结构化分析，便于后续行动决策。默认为 'static'。",
     )
 
-    @model_validator(mode="after")
-    def validate_credential(self) -> "AnalyzeVideoArgs":
-        ref = (self.video_ref or "").strip()
-        fpath = (self.path or "").strip()
-        if not ref and not fpath:
-            raise ValueError("必须提供 video_ref 或 path 两者之一作为视频定位凭据")
-        return self
 
-
-def _resolve_video_path(args: AnalyzeVideoArgs) -> Path:
-    """根据传入凭据定位本地视频文件。"""
-    if args.path and args.path.strip():
-        resolved_path = Path(args.path.strip()).expanduser().resolve()
-        if not resolved_path.is_file():
-            raise VideoProcessingError(f"指定的视频文件路径不存在: {args.path}")
-        return resolved_path
-
-    ref = (args.video_ref or "").strip()
-    try:
-        from llm.media.video_store import locate_video
-
-        located = locate_video(ref)
-        if located is not None and located.is_file():
-            return located.resolve()
-    except Exception as exc:
-        logger.warning("[video] 尝试通过 locate_video 定位 ref=%s 异常: %s", ref, exc)
-
-    raise VideoProcessingError(f"未能根据 video_ref '{ref}' 定位到已下载的本地视频文件")
+# 保持向后兼容别名
+_resolve_video_path = resolve_video_path
 
 
 def _build_final_prompt(prompt: str | None, mode: str) -> str:

@@ -86,4 +86,6 @@ namespaces:
     path: video
     tools:
       - analyze_video
+      - get_video_info
+      - capture_video_frame
 
