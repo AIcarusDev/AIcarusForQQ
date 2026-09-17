@@ -49,12 +49,7 @@ class CaptureVideoFrameArgs(VideoBaseArgs):
 
 @tool(
     name="capture_video_frame",
-    description=(
-        "精准截取视频的某单帧画面，并直接将该帧图片呈现给多模态大模型观察。"
-        "支持通过 video_ref 或 本地绝对 path 定位视频；"
-        "支持传入 timestamp（秒数或时分秒格式）或 frame_index（帧序号）定位画面；"
-        "截帧成功后会自动在系统媒体库中注册生成 image_ref。"
-    ),
+    description="精准截取视频的某一帧画面并直接呈现给多模态大模型观察。",
     args_model=CaptureVideoFrameArgs,
 )
 def execute(args: CaptureVideoFrameArgs) -> dict[str, Any]:

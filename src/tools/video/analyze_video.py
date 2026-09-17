@@ -75,12 +75,7 @@ def _build_final_prompt(prompt: str | None, mode: str) -> str:
 
 @tool(
     name="analyze_video",
-    description=(
-        "围绕多模态模型对单段视频进行内容识别与深度分析。"
-        "支持通过 video_ref 或 本地文件 path 指定视频；"
-        "支持 static（全局总结）与 agentic（时序线索与决策线索）两种模式；"
-        "可注入自定义 prompt 进行定向查询，默认执行全视频详尽分析。"
-    ),
+    description="围绕多模态模型对视频进行内容识别与深度分析。",
     args_model=AnalyzeVideoArgs,
 )
 def execute(args: AnalyzeVideoArgs) -> dict[str, Any]:

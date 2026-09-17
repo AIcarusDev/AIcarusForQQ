@@ -84,6 +84,7 @@ namespaces:
     closeable: true
     ttl_rounds: null
     path: video
+    skill: video
     tools:
       - analyze_video
       - get_video_info

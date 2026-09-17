@@ -29,11 +29,7 @@ class GetVideoInfoArgs(VideoBaseArgs):
 
 @tool(
     name="get_video_info",
-    description=(
-        "快速提取视频的结构化元数据信息。"
-        "支持通过 video_ref 或 本地绝对 path 定位视频；"
-        "返回视频时长、分辨率、FPS、总帧数、编码格式、音频流状态及文件大小等基础参数，"
-    ),
+    description="快速提取视频的结构化元数据信息。",
     args_model=GetVideoInfoArgs,
 )
 def execute(args: GetVideoInfoArgs) -> dict[str, Any]:
