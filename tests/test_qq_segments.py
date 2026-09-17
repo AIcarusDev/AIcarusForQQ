@@ -177,3 +177,45 @@ def test_send_adapter_accepts_validated_immutable_artifact(tmp_path, monkeypatch
     encoded = result[0]["data"]["file"].removeprefix("base64://")
     assert base64.b64decode(encoded) == original
 
+
+def test_video_segment_keeps_metadata_and_video_ref():
+    from platforms.chat.xml_builder import _render_content_chunks, _render_content_xml
+
+    message = [
+        {
+            "type": "video",
+            "data": {
+                "url": "https://example.com/demo.mp4",
+                "file_size": 1048576,
+                "file_id": "vid-12345",
+                "file_name": "demo.mp4",
+                "duration": "15.0",
+            },
+        },
+    ]
+
+    parts = build_content_segments(message)
+    assert len(parts) == 1
+    seg = parts[0]
+    assert seg["type"] == "video"
+    assert "video_ref" in seg
+    assert seg["video_ref"].count("_") == 1
+    assert seg["url"] == "https://example.com/demo.mp4"
+    assert seg["file_size"] == 1048576
+    assert seg["file_id"] == "vid-12345"
+    assert seg["file_name"] == "demo.mp4"
+    assert seg["duration"] == 15.0
+
+    chunks = _render_content_chunks(parts)
+    assert len(chunks) == 1
+    ct, text_repr, attrs = chunks[0]
+    assert ct == "video"
+    assert f'video_ref="{seg["video_ref"]}"' in text_repr
+    assert "15" in text_repr
+    assert 'size="1MB"' in attrs
+
+    xml = _render_content_xml({"content_segments": parts})
+    assert '<content type="video"' in xml
+    assert f'video_ref="{seg["video_ref"]}"' in xml
+
+

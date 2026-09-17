@@ -75,3 +75,15 @@ namespaces:
       - find_files
       - search
 
+  video:
+    description: "视频理解与分析工具集。"
+    visible: true
+    discoverable: true
+    openable: true
+    permanent: false
+    closeable: true
+    ttl_rounds: null
+    path: video
+    tools:
+      - analyze_video
+

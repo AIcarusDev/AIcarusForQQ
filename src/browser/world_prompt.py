@@ -507,6 +507,30 @@ def _browser_image_xml_open_line(image: dict) -> str:
     return "    <image " + " ".join(attrs) + ">"
 
 
+def _browser_video_xml_attrs(video: dict) -> list[str]:
+    attrs = [
+        f'video_ref="{_xml_attr(video.get("video_ref"))}"',
+        f'rect="{_rect_attr(video)}"',
+    ]
+    if _has_attr_value(video.get("src")):
+        attrs.append(f'src="{_xml_attr(video.get("src"))}"')
+    if _has_attr_value(video.get("poster")):
+        attrs.append(f'poster="{_xml_attr(video.get("poster"))}"')
+    attrs.append(f'paused="{str(bool(video.get("paused", True))).lower()}"')
+    attrs.append(f'current_time="{_xml_attr(video.get("current_time", 0))}"')
+    attrs.append(f'duration="{_xml_attr(video.get("duration", 0))}"')
+    if video.get("muted"):
+        attrs.append('muted="true"')
+    if _has_attr_value(video.get("frame")):
+        attrs.append(f'frame="{_xml_attr(video.get("frame"))}"')
+    return attrs
+
+
+def _browser_video_xml_line(video: dict) -> str:
+    attrs = _browser_video_xml_attrs(video)
+    return "    <video " + " ".join(attrs) + "/>"
+
+
 def _browser_viewport_image_xml_attrs(viewport: dict, viewport_part: dict | None) -> list[str]:
     return [
         f'viewport_ref="{_xml_attr(_legacy_aware_image_ref(viewport))}"',
@@ -1069,6 +1093,13 @@ def render_browser_world_content(
         embedded_image_count=image_parts_count,
         omitted_image_count=omitted_images,
     )
+    videos = [v for v in (snapshot.get("videos") or []) if isinstance(v, dict)]
+    if videos:
+        lines.append(f'  <videos items="{len(videos)}" scope="viewport" space="viewport_css_px">')
+        for video in videos:
+            lines.append(_browser_video_xml_line(video))
+        lines.append("  </videos>")
+
     images_open_line = "  <images " + " ".join(image_attrs) + ">"
     if image_parts_count <= 0:
         lines.append(images_open_line)

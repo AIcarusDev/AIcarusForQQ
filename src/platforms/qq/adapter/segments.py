@@ -498,12 +498,32 @@ def build_message_content(
             parts.append(voice_seg)
         elif seg_type in _CARD_SEG_TYPES:
             parts.append(_build_card_segment(seg_type, data if isinstance(data, dict) else {}))
-        elif seg_type in ("video", "poke"):
-            label_map = {
-                "video": "视频",
-                "poke": "戳一戳",
+        elif seg_type == "video":
+            data = data if isinstance(data, dict) else {}
+            from llm.media.media_storage import generate_time_ref
+            video_ref = generate_time_ref()
+            url = str(data.get("url") or data.get("file") or "").strip()
+            file_size = data.get("file_size")
+            file_id = str(data.get("file_id") or "")
+            file_name = str(data.get("file_name") or data.get("name") or "")
+            duration = _coerce_duration_seconds(data)
+            video_seg: dict[str, Any] = {
+                "type": "video",
+                "video_ref": video_ref,
             }
-            parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
+            if url:
+                video_seg["url"] = url
+            if file_size is not None:
+                video_seg["file_size"] = file_size
+            if file_id:
+                video_seg["file_id"] = file_id
+            if file_name:
+                video_seg["file_name"] = file_name
+            if duration is not None:
+                video_seg["duration"] = duration
+            parts.append(video_seg)
+        elif seg_type == "poke":
+            parts.append({"type": "poke", "label": "戳一戳"})
         else:
             parts.append({"type": seg_type, "label": seg_type})
     content: dict = {"content_segments": parts}

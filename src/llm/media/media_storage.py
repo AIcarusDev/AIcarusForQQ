@@ -29,10 +29,14 @@ _MIME_TO_EXT = {
     "image/bmp": ".bmp",
     "image/avif": ".avif",
     "image/x-icon": ".ico",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "video/quicktime": ".mov",
 }
 
 _EXT_TO_MIME = {ext: mime for mime, ext in _MIME_TO_EXT.items()}
 _EXT_TO_MIME[".jpeg"] = "image/jpeg"
+
 
 
 def generate_time_ref(dt: datetime | None = None) -> str:

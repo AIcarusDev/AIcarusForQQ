@@ -1,4 +1,4 @@
-﻿"""xml_builder.py — 聊天记录 → XML 转化
+"""xml_builder.py — 聊天记录 → XML 转化
 
 将内部上下文消息列表转为结构化 XML，供 LLM 上下文使用。
 
@@ -404,6 +404,22 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
                 )
             sub.append(f'</preview><footer total="{total}"/>')
             chunks.append(("forward", "".join(sub), ""))
+        elif seg_type == "video":
+            _flush_text()
+            video_ref = str(seg.get("video_ref") or "").strip()
+            duration_label = _voice_label(seg).replace("[语音", "").replace("]", "").strip() if seg.get("duration") else ""
+            label_parts = ["视频"]
+            if duration_label:
+                label_parts.append(duration_label)
+            label = " ".join(label_parts)
+            if video_ref:
+                text_repr = f'[{html.escape(label)} video_ref="{html.escape(video_ref)}"]'
+            else:
+                text_repr = f'[{html.escape(label)}]'
+            attrs = []
+            if seg.get("file_size"):
+                attrs.append(f'size="{html.escape(_format_file_size(seg.get("file_size")))}"')
+            chunks.append(("video", text_repr, " ".join(attrs)))
         elif seg_type == "card":
             _flush_text()
             kind = html.escape(str(seg.get("kind", "unknown") or "unknown"))

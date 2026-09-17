@@ -1554,6 +1554,7 @@ class BrowserSession:
         state = self.viewport_state()
         image_rows = self.viewport_visuals()
         images: list[dict[str, Any]] = []
+        videos: list[dict[str, Any]] = []
         source_url_mode = _browser_image_source_url_mode()
         for row_index, row in enumerate(image_rows):
             if not isinstance(row, dict):
@@ -1569,6 +1570,26 @@ class BrowserSession:
             if "loaded" in row:
                 image_item["loaded"] = bool(row.get("loaded"))
             source_url = str(row.get("src") or "").strip()
+            if row.get("kind") == "video":
+                from llm.media.media_storage import generate_time_ref
+                video_ref = generate_time_ref()
+                video_item = {
+                    "video_ref": video_ref,
+                    "src": source_url,
+                    "poster": str(row.get("poster") or ""),
+                    "width": image_item["width"],
+                    "height": image_item["height"],
+                    "x": image_item["x"],
+                    "y": image_item["y"],
+                    "paused": bool(row.get("paused", True)),
+                    "current_time": float(row.get("current_time") or 0.0),
+                    "duration": float(row.get("duration") or 0.0),
+                    "muted": bool(row.get("muted", False)),
+                }
+                if row.get("frame") is not None:
+                    video_item["frame"] = int(row["frame"])
+                videos.append(video_item)
+                image_item["video_ref"] = video_ref
             if source_url and image_item.get("loaded") is not False:
                 resource = self.image_resources.register(
                     source_url=source_url,
@@ -1613,6 +1634,7 @@ class BrowserSession:
             "text_blocks": state.get("text_blocks") or [],
             "scroll_regions": state.get("scroll_regions") or [],
             "frames": state.get("frames") or [],
+            "videos": videos,
             "tables": state.get("tables") or [],
             "indicators": state.get("indicators") or [],
             "images": images,
@@ -2430,10 +2452,15 @@ _VIEWPORT_VISUALS_JS = """() => {
         const rect = rectOf(video);
         if (!largeEnough(rect, 96, 54, 5184)) continue;
         addVisual(video, 'video', rect, {
-            src: video.currentSrc || video.src || video.getAttribute('poster') || '',
+            src: video.currentSrc || video.src || '',
+            poster: video.getAttribute('poster') || '',
             loaded: !!(video.readyState > 0 || video.getAttribute('poster')),
             natural_width: Number(video.videoWidth || 0),
-            natural_height: Number(video.videoHeight || 0)
+            natural_height: Number(video.videoHeight || 0),
+            paused: !!video.paused,
+            current_time: Math.round(Number(video.currentTime || 0) * 10) / 10,
+            duration: Math.round(Number(video.duration || 0) * 10) / 10,
+            muted: !!video.muted
         });
     }
 
