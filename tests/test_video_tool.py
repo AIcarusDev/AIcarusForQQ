@@ -48,18 +48,14 @@ def test_detect_video_mime():
 
 
 def test_prompt_builder():
-    # 默认 static 与 agentic
-    assert _build_final_prompt(None, "static") == DEFAULT_STATIC_PROMPT
-    assert _build_final_prompt(None, "agentic") == DEFAULT_AGENTIC_PROMPT
+    # 默认无提问时返回 None，交由底层 System Instruction 处理
+    assert _build_final_prompt(None, "static") is None
+    assert _build_final_prompt("", "agentic") is None
 
-    # 自定义 prompt
-    static_custom = _build_final_prompt("视频里有几个人？", "static")
-    assert "视频里有几个人？" in static_custom
-    assert "请仔细观察这段视频" in static_custom
-
-    agentic_custom = _build_final_prompt("视频里有几个人？", "agentic")
-    assert "视频里有几个人？" in agentic_custom
-    assert "智能代理视觉分析器" in agentic_custom
+    # 用户/Agent 传入自定义 prompt 时保持原样定向注入
+    query = "视频里有几个人？"
+    assert _build_final_prompt(query, "static") == query
+    assert _build_final_prompt(query, "agentic") == query
 
 
 def test_validate_args_credential_required():
@@ -141,7 +137,7 @@ def test_google_native_media_processing_payload():
         return DummyResp()
 
     with patch("httpx.Client.post", side_effect=mock_post):
-        # 1. agentic 模式
+        # 1. agentic 模式 + 定向提问
         client._call_google_native(
             base_url="https://generativelanguage.googleapis.com/v1beta",
             api_key="AIzaFakeKey",
@@ -157,6 +153,7 @@ def test_google_native_media_processing_payload():
         assert parts1[0]["mediaProcessing"] == "AGENTIC"
         assert parts1[0]["inlineData"]["mimeType"] == "video/mp4"
         assert parts1[1]["text"] == "测试问题"
+        assert "You are a multimodal video analysis assistant" in payload1["system_instruction"]["parts"][0]["text"]
 
         # 2. static 模式且无 prompt
         client._call_google_native(
@@ -165,7 +162,7 @@ def test_google_native_media_processing_payload():
             model="gemini-3.8-flash",
             b64_data="dummy_b64",
             mime_type="video/mp4",
-            prompt="",
+            prompt=None,
             timeout=30.0,
             mode="static",
         )
@@ -173,6 +170,61 @@ def test_google_native_media_processing_payload():
         parts2 = payload2["contents"][0]["parts"]
         assert parts2[0]["mediaProcessing"] == "STATIC"
         assert len(parts2) == 1
+        assert "You are a multimodal video analysis assistant" in payload2["system_instruction"]["parts"][0]["text"]
+
+
+def test_openai_compatible_system_instruction_payload():
+    client = VideoModelClient({
+        "base_url": "https://api.openai-proxy.com/v1",
+        "model": "gemini-3.8-flash",
+        "api_key": "sk-fake",
+    })
+
+    captured_payloads = []
+
+    def mock_post(url, headers=None, json=None):
+        captured_payloads.append(json)
+        class DummyResp:
+            status_code = 200
+            def json(self):
+                return {"choices": [{"message": {"content": "分析结果"}}]}
+        return DummyResp()
+
+    with patch("httpx.Client.post", side_effect=mock_post):
+        # 1. 传定向提问
+        client._call_openai_compatible(
+            base_url="https://api.openai-proxy.com/v1",
+            api_key="sk-fake",
+            model="gemini-3.8-flash",
+            b64_data="dummy_b64",
+            mime_type="video/mp4",
+            prompt="某人在哪？",
+            timeout=30.0,
+        )
+        payload1 = captured_payloads[-1]
+        messages1 = payload1["messages"]
+        assert messages1[0]["role"] == "system"
+        assert "You are a multimodal video analysis assistant" in messages1[0]["content"]
+        assert messages1[1]["role"] == "user"
+        assert messages1[1]["content"][0]["type"] == "video_url"
+        assert messages1[1]["content"][1]["type"] == "text"
+        assert messages1[1]["content"][1]["text"] == "某人在哪？"
+
+        # 2. 无提问
+        client._call_openai_compatible(
+            base_url="https://api.openai-proxy.com/v1",
+            api_key="sk-fake",
+            model="gemini-3.8-flash",
+            b64_data="dummy_b64",
+            mime_type="video/mp4",
+            prompt=None,
+            timeout=30.0,
+        )
+        payload2 = captured_payloads[-1]
+        messages2 = payload2["messages"]
+        assert messages2[0]["role"] == "system"
+        assert len(messages2[1]["content"]) == 1
+        assert messages2[1]["content"][0]["type"] == "video_url"
 
 
 # --- 扩展工具与 common 功能测试 ---

@@ -23,6 +23,15 @@ logger = logging.getLogger("AICQ.video")
 DEFAULT_MAX_SIZE_MB = 128
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
+DEFAULT_VIDEO_SYSTEM_INSTRUCTION = """You are a multimodal video analysis assistant. Please analyze the video content objectively, comprehensively, and accurately.
+
+1. Your default behavior is to provide a **comprehensive and coherent summary of the core content** of the entire video. However, if the user provides specific questions, instructions, or points of focus alongside the video, **prioritize the user's instructions**.
+   - If the user asks specific questions or requests targeted observations, prioritize providing a precise analysis and answer addressing those points; if key events or moments are involved, please specify the exact timestamps (e.g., [00:01 - 00:05]) whenever possible.
+
+2. Do not attempt to continue the conversation with the user in the final output (e.g., "If you'd like, I can..." or "Would you like me to...") or provide extraneous explanations. This is a one-time task; the user cannot interact with you further.
+3. Maintain objectivity in your analysis; do not include personal opinions or moral judgments in the final output.
+4. The output language should match the user's input query; if the user does not provide a text query, output in English."""
+
 
 class VideoProcessingError(RuntimeError):
     """视频处理与识别过程中抛出的业务异常。"""
@@ -138,7 +147,13 @@ class VideoModelClient:
             return f"{clean}/antigravity/v1beta"
         return None
 
-    def analyze(self, file_path: Path, prompt: str = "", mode: str = "static") -> str:
+    def analyze(
+        self,
+        file_path: Path,
+        prompt: str | None = None,
+        mode: str = "static",
+        system_instruction: str = DEFAULT_VIDEO_SYSTEM_INSTRUCTION,
+    ) -> str:
         """读取视频文件内联发送到多模态模型，获取视频识别分析结果。"""
         if not self.config.get("is_configured"):
             raise VideoProcessingError(
@@ -170,11 +185,21 @@ class VideoModelClient:
                     prompt,
                     timeout,
                     mode=mode,
+                    system_instruction=system_instruction,
                 )
             except Exception as exc:
                 logger.warning("[video] 尝试 Google 原生端点失败，尝试备用兼容端点: %s", exc)
 
-        return self._call_openai_compatible(base_url, api_key, model, b64_data, mime_type, prompt, timeout)
+        return self._call_openai_compatible(
+            base_url,
+            api_key,
+            model,
+            b64_data,
+            mime_type,
+            prompt,
+            timeout,
+            system_instruction=system_instruction,
+        )
 
     def _call_openai_compatible(
         self,
@@ -183,8 +208,9 @@ class VideoModelClient:
         model: str,
         b64_data: str,
         mime_type: str,
-        prompt: str,
+        prompt: str | None,
         timeout: float,
+        system_instruction: str = DEFAULT_VIDEO_SYSTEM_INSTRUCTION,
     ) -> str:
         """调用兼容 OpenAI 的端点（通过 video_url 传输 Base64 内联视频）。"""
         url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
@@ -194,6 +220,15 @@ class VideoModelClient:
         }
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+
+        messages: list[dict[str, Any]] = []
+        if system_instruction and system_instruction.strip():
+            messages.append(
+                {
+                    "role": "system",
+                    "content": system_instruction.strip(),
+                }
+            )
 
         content_parts: list[dict[str, Any]] = [
             {
@@ -211,14 +246,16 @@ class VideoModelClient:
                 }
             )
 
+        messages.append(
+            {
+                "role": "user",
+                "content": content_parts,
+            }
+        )
+
         payload: dict[str, Any] = {
             "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": content_parts,
-                }
-            ],
+            "messages": messages,
         }
 
         try:
@@ -251,9 +288,10 @@ class VideoModelClient:
         model: str,
         b64_data: str,
         mime_type: str,
-        prompt: str,
+        prompt: str | None,
         timeout: float,
         mode: str = "static",
+        system_instruction: str = DEFAULT_VIDEO_SYSTEM_INSTRUCTION,
     ) -> str:
         """调用 Google Gemini 原生 generateContent 端点。"""
         url = f"{base_url}/models/{model}:generateContent"
@@ -288,6 +326,14 @@ class VideoModelClient:
                 }
             ]
         }
+        if system_instruction and system_instruction.strip():
+            payload["system_instruction"] = {
+                "parts": [
+                    {
+                        "text": system_instruction.strip(),
+                    }
+                ]
+            }
 
         try:
             with httpx.Client(timeout=timeout) as client:
