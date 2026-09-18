@@ -88,6 +88,7 @@ def get_video_config() -> dict[str, Any]:
     timeout = float(video_cfg.get("timeout") or DEFAULT_TIMEOUT_SECONDS)
 
     return {
+        "protocol": str(video_cfg.get("protocol") or "auto").strip().lower(),
         "base_url": base_url,
         "api_key": api_key,
         "model": model,
@@ -132,19 +133,35 @@ class VideoModelClient:
 
     def _resolve_native_base_url(self, base_url: str) -> str | None:
         """根据配置的 base_url 推导 Gemini 原生端点根路径。"""
-        low = base_url.lower()
+        low = base_url.lower().rstrip("/")
         if "generativelanguage.googleapis.com" in low:
-            return base_url.rstrip("/")
+            clean = base_url.rstrip("/")
+            if clean.endswith("/openai"):
+                clean = clean[:-7]
+            elif clean.endswith("/openai/v1"):
+                clean = clean[:-10]
+            if not clean.endswith("/v1beta"):
+                clean = f"{clean}/v1beta"
+            return clean
+
         if "/antigravity/v1beta" in low:
             return base_url.rstrip("/")
+
         if "/v1beta" in low and not low.endswith("/v1"):
-            return base_url.rstrip("/")
+            clean = base_url.rstrip("/")
+            if clean.endswith("/openai"):
+                clean = clean[:-7]
+            return clean
+
         if "8081" in low or "sub2api" in low:
             # sub2api 反代原生 Gemini 端点前缀
             clean = base_url.rstrip("/")
             if clean.endswith("/v1"):
                 clean = clean[:-3]
+            elif clean.endswith("/v1/chat/completions"):
+                clean = clean[:-20]
             return f"{clean}/antigravity/v1beta"
+
         return None
 
     def analyze(
@@ -172,8 +189,14 @@ class VideoModelClient:
         api_key = self.config["api_key"]
         model = self.config["model"]
         timeout = self.config["timeout"]
+        protocol = str(self.config.get("protocol") or "auto").strip().lower()
 
-        native_base = self._resolve_native_base_url(base_url)
+        native_base = None
+        if protocol in ("auto", "gemini_native"):
+            native_base = self._resolve_native_base_url(base_url)
+            if not native_base and protocol == "gemini_native":
+                native_base = base_url.rstrip("/")
+
         if native_base:
             try:
                 return self._call_google_native(
@@ -188,7 +211,12 @@ class VideoModelClient:
                     system_instruction=system_instruction,
                 )
             except Exception as exc:
+                if protocol == "gemini_native":
+                    raise
                 logger.warning("[video] 尝试 Google 原生端点失败，尝试备用兼容端点: %s", exc)
+
+        if protocol == "gemini_native":
+            raise VideoProcessingError(f"无法为 base_url={base_url} 解析 Gemini 原生端点")
 
         return self._call_openai_compatible(
             base_url,
@@ -327,7 +355,7 @@ class VideoModelClient:
             ]
         }
         if system_instruction and system_instruction.strip():
-            payload["system_instruction"] = {
+            payload["systemInstruction"] = {
                 "parts": [
                     {
                         "text": system_instruction.strip(),

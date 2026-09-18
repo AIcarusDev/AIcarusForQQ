@@ -343,3 +343,19 @@ vision_bridge:
   cache_eviction:
     max_age_days: 30         # 超过此天数的缓存图片将被删除，0 = 不按时间清理
     max_size_mb: 500         # 缓存目录总大小上限(MB)，超出则淘汰最旧的条目，0 = 不限大小
+
+# ══════════════════════════════════════════
+#  Video Understanding（视频理解）
+#  用于 analyze_video 工具函数的专用多模态视频理解配置。
+#  支持 Google Gemini 原生端点、Sub2API 反重力中转或 OpenAI 兼容多模态端点。
+# ══════════════════════════════════════════
+video_understanding:
+  protocol: "auto"             # 协议类型: auto (自动探测推导) | gemini_native (Google 原生 generateContent) | openai_compatible (OpenAI 兼容)
+  provider: ""                 # 关联的 model_providers 键名（如 custom_xxx，留空则使用下方显式配置）
+  base_url: ""                 # 显式端点根路径（留空则继承 provider 的 base_url）
+  api_key_env: ""              # 环境变量名称（留空则继承 provider 的 api_key_env）
+  api_key: ""                  # 显式 API Key（留空则优先使用 api_key_env 或 provider 的 Key）
+  model: "gemini-3.8-flash"    # 视频理解专用多模态模型名称（如 gemini-3.8-flash, gemini-2.5-flash 等）
+  max_size_mb: 20              # 允许分析的单视频最大体积 (MB)，默认 20MB，硬上限 128MB
+  timeout: 120.0               # 请求超时时间（秒）
+

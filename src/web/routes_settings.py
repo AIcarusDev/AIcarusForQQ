@@ -536,6 +536,7 @@ async def settings_get():
         "model_name": cfg.get("model_name", ""),
         "vision": cfg.get("vision", True),
         "vision_bridge": cfg.get("vision_bridge", {}),
+        "video_understanding": cfg.get("video_understanding", {}),
         "generation": {
             **gen_cfg,
             "enable_thinking": gen_cfg.get("enable_thinking", True),
@@ -1010,6 +1011,31 @@ async def settings_save():
         new_vb.pop("base_url", None)
         new_vb.pop("api_key_env", None)
         new_cfg["vision_bridge"] = new_vb
+
+    if "video_understanding" in data and isinstance(data["video_understanding"], dict):
+        vu_data = data["video_understanding"]
+        new_vu = dict(new_cfg.get("video_understanding", {}))
+        if "protocol" in vu_data:
+            new_vu["protocol"] = str(vu_data["protocol"]).strip()
+        if "provider" in vu_data:
+            provider = str(vu_data.get("provider") or "").strip()
+            if provider:
+                new_vu["provider"] = provider
+            else:
+                new_vu.pop("provider", None)
+        if "model" in vu_data:
+            new_vu["model"] = str(vu_data.get("model") or "").strip()
+        if "max_size_mb" in vu_data and vu_data["max_size_mb"] is not None:
+            try:
+                new_vu["max_size_mb"] = float(vu_data["max_size_mb"])
+            except (ValueError, TypeError):
+                pass
+        if "timeout" in vu_data and vu_data["timeout"] is not None:
+            try:
+                new_vu["timeout"] = float(vu_data["timeout"])
+            except (ValueError, TypeError):
+                pass
+        new_cfg["video_understanding"] = new_vu
 
     def _payload_binding_error(label: str, payload_part: dict, required: bool = True) -> str | None:
         provider = (payload_part.get("provider") or "").strip()

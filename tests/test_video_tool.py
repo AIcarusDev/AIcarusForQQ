@@ -153,7 +153,7 @@ def test_google_native_media_processing_payload():
         assert parts1[0]["mediaProcessing"] == "AGENTIC"
         assert parts1[0]["inlineData"]["mimeType"] == "video/mp4"
         assert parts1[1]["text"] == "测试问题"
-        assert "You are a multimodal video analysis assistant" in payload1["system_instruction"]["parts"][0]["text"]
+        assert "You are a multimodal video analysis assistant" in payload1["systemInstruction"]["parts"][0]["text"]
 
         # 2. static 模式且无 prompt
         client._call_google_native(
@@ -170,7 +170,7 @@ def test_google_native_media_processing_payload():
         parts2 = payload2["contents"][0]["parts"]
         assert parts2[0]["mediaProcessing"] == "STATIC"
         assert len(parts2) == 1
-        assert "You are a multimodal video analysis assistant" in payload2["system_instruction"]["parts"][0]["text"]
+        assert "You are a multimodal video analysis assistant" in payload2["systemInstruction"]["parts"][0]["text"]
 
 
 def test_openai_compatible_system_instruction_payload():

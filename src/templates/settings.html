@@ -1674,6 +1674,73 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
+          <div class="model-card" id="card-video-understanding">
+            <div
+              class="model-card-head"
+              onclick="toggleCard('card-video-understanding')"
+            >
+              <div class="model-card-title">
+                <h3>视频理解</h3>
+                <span class="card-badge">VIDEO</span>
+                <span class="card-desc">多模态视频识别与分析专用模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-video-understanding-body">
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="video_understanding_provider"></select>
+                </div>
+                <div
+                  class="field model-picker"
+                  data-provider-id="video_understanding_provider"
+                  data-model-id="video_understanding_model"
+                  data-model-label="视频理解"
+                >
+                  <label>模型 ID</label
+                  ><input
+                    id="video_understanding_model"
+                    type="text"
+                    placeholder="gemini-3.8-flash"
+                  />
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>调用协议</label
+                  ><select id="video_understanding_protocol">
+                    <option value="auto">自动探测 (推荐，自动规范化原生端点)</option>
+                    <option value="gemini_native">Google 原生协议 (generateContent)</option>
+                    <option value="openai_compatible">OpenAI 兼容协议 (video_url)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>单视频最大限制 (MB)</label
+                  ><input
+                    id="video_understanding_max_size_mb"
+                    type="number"
+                    min="1"
+                    max="128"
+                    step="1"
+                    placeholder="20"
+                  />
+                </div>
+                <div class="field">
+                  <label>超时时间 (秒)</label
+                  ><input
+                    id="video_understanding_timeout"
+                    type="number"
+                    min="10"
+                    max="600"
+                    step="1"
+                    placeholder="120"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="model-card" id="card-tool-guard">
             <div
               class="model-card-head"
@@ -3499,6 +3566,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const selected = {
     provider: value("provider"),
     vision_bridge_provider: value("vision_bridge_provider"),
+    video_understanding_provider: value("video_understanding_provider"),
     guard_provider: value("guard_provider"),
     compression_provider: value("compression_provider"),
     event_extraction_provider: value("event_extraction_provider"),
@@ -4097,6 +4165,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       getProviderName(data.vision_bridge || {}),
     );
     populateProviderSelect(
+      "video_understanding_provider",
+      getProviderName(data.video_understanding || {}),
+    );
+    populateProviderSelect(
       "guard_provider",
       getProviderName(data.tool_execution_guard || {}),
     );
@@ -4148,6 +4220,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       vb.cache_eviction?.max_size_mb ?? 500,
     );
       onVisionModeChange();
+    const vu = data.video_understanding || {};
+    setValue("video_understanding_provider", getProviderName(vu));
+    setValue("video_understanding_model", vu.model || "");
+    setValue("video_understanding_protocol", vu.protocol || "auto");
+    setValue("video_understanding_max_size_mb", vu.max_size_mb ?? 20);
+    setValue("video_understanding_timeout", vu.timeout ?? 120);
     const gen = data.generation || {};
     setValue("temperature", gen.temperature ?? 1.0);
     setValue("max_output_tokens", gen.max_output_tokens ?? 10000);
@@ -4723,6 +4801,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           max_age_days: intValue("vision_bridge_cache_max_age_days", 30),
           max_size_mb: intValue("vision_bridge_cache_max_size_mb", 500),
         },
+      },
+      video_understanding: {
+        provider: value("video_understanding_provider"),
+        model: value("video_understanding_model"),
+        protocol: value("video_understanding_protocol"),
+        max_size_mb: floatValue("video_understanding_max_size_mb", 20.0),
+        timeout: floatValue("video_understanding_timeout", 120.0),
       },
       generation: {
         temperature: floatValue("temperature", 1.0),
