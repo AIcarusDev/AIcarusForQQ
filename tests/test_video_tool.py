@@ -111,13 +111,68 @@ def test_execute_mocked_success():
         f_path = Path(f.name)
 
     try:
-        with patch.object(VideoModelClient, "analyze", return_value="模拟视频分析结果"):
+        with patch.object(VideoModelClient, "analyze", return_value="模拟视频分析结果") as mock_analyze:
             res = execute_analyze(path=str(f_path), mode="agentic")
             assert res["status"] == "success"
             assert res["mode"] == "agentic"
             assert res["analysis"] == "模拟视频分析结果"
+            mock_analyze.assert_called_once()
+            _, kwargs = mock_analyze.call_args
+            assert kwargs.get("mode") == "agentic"
     finally:
         f_path.unlink(missing_ok=True)
+
+
+def test_google_native_media_processing_payload():
+    client = VideoModelClient({
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "model": "gemini-3.8-flash",
+        "api_key": "AIzaFakeKey",
+    })
+
+    captured_payloads = []
+
+    def mock_post(url, headers=None, params=None, json=None):
+        captured_payloads.append(json)
+        class DummyResp:
+            status_code = 200
+            def json(self):
+                return {"candidates": [{"content": {"parts": [{"text": "分析结果"}]}}]}
+        return DummyResp()
+
+    with patch("httpx.Client.post", side_effect=mock_post):
+        # 1. agentic 模式
+        client._call_google_native(
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key="AIzaFakeKey",
+            model="gemini-3.8-flash",
+            b64_data="dummy_b64",
+            mime_type="video/mp4",
+            prompt="测试问题",
+            timeout=30.0,
+            mode="agentic",
+        )
+        payload1 = captured_payloads[-1]
+        parts1 = payload1["contents"][0]["parts"]
+        assert parts1[0]["mediaProcessing"] == "AGENTIC"
+        assert parts1[0]["inlineData"]["mimeType"] == "video/mp4"
+        assert parts1[1]["text"] == "测试问题"
+
+        # 2. static 模式且无 prompt
+        client._call_google_native(
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            api_key="AIzaFakeKey",
+            model="gemini-3.8-flash",
+            b64_data="dummy_b64",
+            mime_type="video/mp4",
+            prompt="",
+            timeout=30.0,
+            mode="static",
+        )
+        payload2 = captured_payloads[-1]
+        parts2 = payload2["contents"][0]["parts"]
+        assert parts2[0]["mediaProcessing"] == "STATIC"
+        assert len(parts2) == 1
 
 
 # --- 扩展工具与 common 功能测试 ---

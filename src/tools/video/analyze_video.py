@@ -91,7 +91,7 @@ def execute(args: AnalyzeVideoArgs) -> dict[str, Any]:
         )
 
         client = VideoModelClient()
-        analysis_result = client.analyze(video_path, final_prompt)
+        analysis_result = client.analyze(video_path, final_prompt, mode=args.mode)
 
         return {
             "status": "success",

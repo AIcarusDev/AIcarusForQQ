@@ -138,7 +138,7 @@ class VideoModelClient:
             return f"{clean}/antigravity/v1beta"
         return None
 
-    def analyze(self, file_path: Path, prompt: str) -> str:
+    def analyze(self, file_path: Path, prompt: str = "", mode: str = "static") -> str:
         """读取视频文件内联发送到多模态模型，获取视频识别分析结果。"""
         if not self.config.get("is_configured"):
             raise VideoProcessingError(
@@ -161,7 +161,16 @@ class VideoModelClient:
         native_base = self._resolve_native_base_url(base_url)
         if native_base:
             try:
-                return self._call_google_native(native_base, api_key, model, b64_data, mime_type, prompt, timeout)
+                return self._call_google_native(
+                    native_base,
+                    api_key,
+                    model,
+                    b64_data,
+                    mime_type,
+                    prompt,
+                    timeout,
+                    mode=mode,
+                )
             except Exception as exc:
                 logger.warning("[video] 尝试 Google 原生端点失败，尝试备用兼容端点: %s", exc)
 
@@ -186,23 +195,28 @@ class VideoModelClient:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        content_parts: list[dict[str, Any]] = [
+            {
+                "type": "video_url",
+                "video_url": {
+                    "url": f"data:{mime_type};base64,{b64_data}",
+                },
+            }
+        ]
+        if prompt and str(prompt).strip():
+            content_parts.append(
+                {
+                    "type": "text",
+                    "text": str(prompt).strip(),
+                }
+            )
+
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "video_url",
-                            "video_url": {
-                                "url": f"data:{mime_type};base64,{b64_data}",
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
-                    ],
+                    "content": content_parts,
                 }
             ],
         }
@@ -239,6 +253,7 @@ class VideoModelClient:
         mime_type: str,
         prompt: str,
         timeout: float,
+        mode: str = "static",
     ) -> str:
         """调用 Google Gemini 原生 generateContent 端点。"""
         url = f"{base_url}/models/{model}:generateContent"
@@ -252,21 +267,24 @@ class VideoModelClient:
             else:
                 headers["Authorization"] = f"Bearer {api_key}"
 
+        media_processing = "AGENTIC" if str(mode).lower() == "agentic" else "STATIC"
+        video_part: dict[str, Any] = {
+            "inlineData": {
+                "mimeType": mime_type,
+                "data": b64_data,
+            },
+            "mediaProcessing": media_processing,
+        }
+
+        parts: list[dict[str, Any]] = [video_part]
+        if prompt and str(prompt).strip():
+            parts.append({"text": str(prompt).strip()})
+
         payload: dict[str, Any] = {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [
-                        {
-                            "inlineData": {
-                                "mimeType": mime_type,
-                                "data": b64_data,
-                            }
-                        },
-                        {
-                            "text": prompt,
-                        },
-                    ],
+                    "parts": parts,
                 }
             ]
         }
