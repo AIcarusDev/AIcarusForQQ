@@ -20,6 +20,11 @@ def test_namespace_registry_records_bound_skill():
     assert registry.get("core_chat").skill == "core-chat"
     assert registry.get("computer").skill == "computer"
     assert registry.get("core").skill == ""
+    bound_skills = {spec.skill for spec in registry.namespaces.values() if spec.skill}
+    assert bound_skills <= skill_registry.SKILL_KINDS.keys()
+    assert {name for name, kind in skill_registry.SKILL_KINDS.items() if kind == "user"} == {
+        "qq-social-style"
+    }
 
 
 def test_skill_body_strips_file_metadata(monkeypatch, tmp_path):
@@ -45,8 +50,10 @@ def test_skill_body_strips_file_metadata(monkeypatch, tmp_path):
     assert "name: qq-social-style" not in body
 
 
-def test_core_chat_skill_loads_user_editable_body_without_metadata(monkeypatch, tmp_path):
-    skill_file = tmp_path / "SKILL.md"
+def test_core_chat_skill_loads_project_file_without_metadata(monkeypatch, tmp_path):
+    skill_dir = tmp_path / "core-chat"
+    skill_dir.mkdir()
+    skill_file = skill_dir / "SKILL.md"
     skill_file.write_text(
         "---\n"
         "name: core-chat\n"
@@ -54,16 +61,88 @@ def test_core_chat_skill_loads_user_editable_body_without_metadata(monkeypatch, 
         "Core chat test body.\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        skill_registry,
-        "ensure_skill_user_file",
-        lambda skill_id: skill_file if skill_id == "core-chat" else None,
-    )
+    (skill_dir / "SKILL.md.template").write_text("Stale template.\n", encoding="utf-8")
+    monkeypatch.setattr(skill_registry, "_SKILLS_DIR", tmp_path)
 
     body = skill_registry.load_skill_body.__wrapped__("core-chat")
 
     assert body == "Core chat test body."
     assert "name: core-chat" not in body
+
+
+def test_user_skill_keeps_existing_copy_and_save_refreshes_cache(monkeypatch, tmp_path):
+    skill_dir = tmp_path / "qq-social-style"
+    skill_dir.mkdir()
+    template = skill_dir / "SKILL.md.template"
+    user_file = skill_dir / "SKILL.md"
+    template.write_text(
+        "---\nname: qq-social-style\n---\nDefault body.\n", encoding="utf-8"
+    )
+    user_file.write_text(
+        "---\nname: qq-social-style\n---\nPersonal body.\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(skill_registry, "_SKILLS_DIR", tmp_path)
+    skill_registry.load_skill_body.cache_clear()
+    try:
+        assert skill_registry.load_skill_body("qq-social-style") == "Personal body."
+        assert skill_registry.ensure_skill_user_file("qq-social-style") == user_file
+        assert user_file.read_text(encoding="utf-8").endswith("Personal body.\n")
+
+        assert skill_registry.save_skill_user_body("qq-social-style", "Updated body.")
+        assert skill_registry.load_skill_body("qq-social-style") == "Updated body."
+        assert user_file.read_text(encoding="utf-8").startswith(
+            "---\nname: qq-social-style\n---\n"
+        )
+        assert template.read_text(encoding="utf-8").endswith("Default body.\n")
+    finally:
+        skill_registry.load_skill_body.cache_clear()
+
+
+def test_user_skill_creates_copy_only_when_missing(monkeypatch, tmp_path):
+    skill_dir = tmp_path / "qq-social-style"
+    skill_dir.mkdir()
+    template = skill_dir / "SKILL.md.template"
+    template.write_text("---\nname: qq-social-style\n---\nDefault.\n", encoding="utf-8")
+    monkeypatch.setattr(skill_registry, "_SKILLS_DIR", tmp_path)
+
+    user_file = skill_registry.ensure_skill_user_file("qq-social-style")
+
+    assert user_file == skill_dir / "SKILL.md"
+    assert user_file.read_bytes() == template.read_bytes()
+
+
+def test_project_skill_never_uses_template_or_user_save(monkeypatch, tmp_path):
+    skill_dir = tmp_path / "core-chat"
+    skill_dir.mkdir()
+    template = skill_dir / "SKILL.md.template"
+    template.write_text("Template body.\n", encoding="utf-8")
+    monkeypatch.setattr(skill_registry, "_SKILLS_DIR", tmp_path)
+
+    assert skill_registry.load_skill_body.__wrapped__("core-chat") == ""
+    assert not (skill_dir / "SKILL.md").exists()
+    assert skill_registry.ensure_skill_user_file("core-chat") is None
+    assert skill_registry.load_skill_user_body("core-chat") == ""
+    assert skill_registry.save_skill_user_body("core-chat", "Changed") is False
+    assert not (skill_dir / "SKILL.md").exists()
+
+    project_file = skill_dir / "SKILL.md"
+    project_file.write_text("Project body.\n", encoding="utf-8")
+    assert skill_registry.load_skill_body.__wrapped__("core-chat") == "Project body."
+    assert skill_registry.save_skill_user_body("core-chat", "Changed") is False
+    assert project_file.read_text(encoding="utf-8") == "Project body.\n"
+
+
+def test_undeclared_skill_falls_back_to_project(monkeypatch, tmp_path, caplog):
+    skill_dir = tmp_path / "future-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md.template").write_text("Template.\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text("Project body.\n", encoding="utf-8")
+    monkeypatch.setattr(skill_registry, "_SKILLS_DIR", tmp_path)
+
+    assert skill_registry.load_skill_body.__wrapped__("future-skill") == "Project body."
+    assert skill_registry.save_skill_user_body("future-skill", "Changed") is False
+    assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == "Project body.\n"
+    assert "skill kind not declared" in caplog.text
 
 
 def test_skill_resource_loader_reads_reference_file(monkeypatch, tmp_path):

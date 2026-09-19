@@ -5,20 +5,21 @@ description: "computer 命名空间的私有 Linux 电脑操作方法。"
 
 ## 设备与权限
 
-这是你自己的私有、持久的 Linux 电脑，不是第三方机器或只读沙箱，你是这台 Linux 的所有者。在硬件和系统实际能力允许的前提下，像使用自己的电脑一样做任何想要/需要做的事；无需为当前任务所需的电脑内部操作另行征询许可。
+这是你自己的私有、持久 Linux 电脑，不是第三方机器或只读沙箱。在硬件和系统实际能力允许的前提下，像使用自己的电脑一样直接安装依赖、构建和运行程序、管理文件、启动本地服务或调整系统配置；无需为当前任务所需的电脑内部操作另行征询许可。
 
 默认用户是 `agent`，主目录是 `/home/agent`。普通权限不足，或需要安装系统包、写入系统目录、管理服务及修改系统配置时，在相应命令前使用 `sudo` 获得 root 权限。不要在适合使用 `sudo` 的权限错误处停下。
 
 ## 与平台的关系
 
-QQ、Core 等“平台”是你与用户交流并承载会话的入口，它们决定当前会话以及可用的平台专属工具。`computer` 是独立于这些平台的通用 Linux 设备， 平台本身并不运行在这台 Linux 电脑中。
-`qq_file` 可以把 QQ 文件保存到这台 Linux 电脑的 `/home/agent/qq/...` 路径，随后可由 `computer` 处理；这只是文件在两者之间落地共享，不会改变平台与电脑的边界。
+QQ、Core 等“平台”是你与用户交流并承载会话的入口，它们决定当前会话以及可用的平台专属工具。`computer` 是独立于这些平台的通用 Linux 设备，不是 QQ 等平台内部的软件；不要据此推断 QQ 客户端、QQ 会话或 QQ 平台本身运行在这台 Linux 电脑中。QQ 消息、联系人、会话切换和发送动作仍使用相应的 QQ 命名空间，计算、编译、通用文件处理和本地服务运行才使用 `computer`。
+
+`qq_file` 可以把 QQ 文件保存到这台 Linux 电脑的 `/home/agent/qq/...` 路径，随后可由 `computer` 处理；这只是文件在两者之间落地共享，不会改变平台与电脑的边界。若 `qq_file` 明确返回的是宿主机后备文件，则该文件不在 Linux 电脑中，不能交给 `computer`。
 
 ## 与浏览器的连通性
 
-浏览器插件（`browser_use` 命名空间中的 `browser_control` 和 `browser_locator`）与 `computer` 是两套独立工具，浏览器进程也不运行在 Linux 电脑中。二者通过项目的 localhost 网关连通：浏览器打开 `localhost`、`127.0.0.1`、`::1` 或 `*.localhost` 的 HTTP/HTTPS 地址时，目标是这台 Linux 电脑的 loopback。
+浏览器插件（`browser_use` 命名空间中的 `browser_control` 和 `browser_locator`）与 `computer` 是两套独立工具，浏览器进程也不运行在 Linux 电脑中。二者通过项目的 localhost 网关连通：浏览器打开 `localhost`、`127.0.0.1`、`::1` 或 `*.localhost` 的 HTTP/HTTPS 地址时，目标是这台 Linux 电脑的 loopback，而不是 Windows 宿主机的 loopback。
 
-因此，在 `computer` 中启动 Web 服务后，直接让 `browser_control` 打开 `http://localhost:<端口>`；服务即使监听 `0.0.0.0`，浏览器地址仍写 `localhost`。不需要手动映射端口，也不要改用 Windows、WSL 或容器私网 IP。普通公网 URL 仍是浏览器自身的外部网络访问，不表示网页运行在 `computer` 中。
+因此，在 `computer` 中启动 Web 服务后，直接让 `browser_control` 打开 `http://localhost:<端口>`；服务即使监听 `0.0.0.0`，浏览器地址仍写 `localhost`。不需要手动映射端口，也不要改用 Windows、WSL 或容器私网 IP。电脑被禁用或不可用时，这条 localhost 通道也不可用。普通公网 URL 仍是浏览器自身的外部网络访问，不表示网页运行在 `computer` 中。
 
 ## 文件操作
 

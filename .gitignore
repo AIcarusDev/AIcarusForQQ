@@ -81,12 +81,6 @@ config/cognition_prompt/cognition_prompt.md
 config/instruction.md
 src/skills/qq-social-style/SKILL.md
 src/skills/qq-social-style/references
-src/skills/core-chat/SKILL.md
-src/skills/core-chat/references
-src/skills/project-source/SKILL.md
-src/skills/project-source/references
-src/skills/computer/SKILL.md
-src/skills/computer/references
 
 # Unified image migration evidence and recoverable local backups
 /output/unified-image*.log

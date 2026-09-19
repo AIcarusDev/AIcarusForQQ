@@ -15,7 +15,7 @@ import re
 from functools import lru_cache
 from html import escape
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 logger = logging.getLogger("AICQ.skills")
 
@@ -24,6 +24,27 @@ _SKILL_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SKILL_FILENAME = "SKILL.md"
 _SKILL_TEMPLATE_FILENAME = "SKILL.md.template"
+SkillKind = Literal["user", "project"]
+
+# Declare the ownership of every namespace-bound skill here. An undeclared
+# skill fails closed to project ownership: it cannot get a user copy or be
+# changed through the user-skill save API.
+SKILL_KINDS: dict[str, SkillKind] = {
+    "qq-social-style": "user",
+    "core-chat": "project",
+    "project-source": "project",
+    "computer": "project",
+    "video": "project",
+    "qq-file": "project",
+}
+
+
+def skill_kind(skill_id: str) -> SkillKind:
+    kind = SKILL_KINDS.get(skill_id)
+    if kind is None:
+        logger.warning("[skills] skill kind not declared; using project: %s", skill_id)
+        return "project"
+    return kind
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -74,6 +95,8 @@ def _skill_template_path(skill_id: str) -> Path | None:
 
 def ensure_skill_user_file(skill_id: str) -> Path | None:
     """Create ignored user skill file from tracked template when missing."""
+    if skill_kind(skill_id) != "user":
+        return None
     path = _skill_file_path(skill_id)
     template_path = _skill_template_path(skill_id)
     if path is None or template_path is None:
@@ -99,6 +122,8 @@ def ensure_skill_user_file(skill_id: str) -> Path | None:
 
 
 def load_skill_user_body(skill_id: str) -> str:
+    if skill_kind(skill_id) != "user":
+        return ""
     path = ensure_skill_user_file(skill_id)
     if path is None:
         return ""
@@ -110,6 +135,8 @@ def load_skill_user_body(skill_id: str) -> str:
 
 
 def save_skill_user_body(skill_id: str, body: str) -> bool:
+    if skill_kind(skill_id) != "user":
+        return False
     path = ensure_skill_user_file(skill_id)
     template_path = _skill_template_path(skill_id)
     if path is None:
@@ -140,7 +167,11 @@ def save_skill_user_body(skill_id: str, body: str) -> bool:
 
 @lru_cache(maxsize=64)
 def load_skill_body(skill_id: str) -> str:
-    path = ensure_skill_user_file(skill_id)
+    path = (
+        ensure_skill_user_file(skill_id)
+        if skill_kind(skill_id) == "user"
+        else _skill_file_path(skill_id)
+    )
     if path is None:
         return ""
     try:
