@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import pytest
-from pathlib import Path
 
-from llm.media.video_store import locate_video, download_video_for_ref
+from llm.media.video_store import locate_video
 from browser.world_prompt import render_browser_world_content
 
 
 def test_locate_video_nonexistent(tmp_path, monkeypatch):
-    import llm.media.video_store as vs
+    from llm.media import media_storage as vs
     monkeypatch.setattr(vs, "MEDIA_ROOT", tmp_path)
     assert locate_video("260917_notfound") is None
 
 
 def test_locate_video_existing(tmp_path, monkeypatch):
-    import llm.media.video_store as vs
+    from llm.media import media_storage as vs
     monkeypatch.setattr(vs, "MEDIA_ROOT", tmp_path)
     test_file = tmp_path / "260917_abcde.mp4"
     test_file.write_bytes(b"fake-mp4-data")

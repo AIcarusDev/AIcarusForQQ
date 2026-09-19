@@ -2,7 +2,7 @@
 
 负责：
 1. 解析 video_understanding 配置（支持空配置检查与 provider 继承）
-2. 校验视频文件大小硬限制（默认 128MB）
+2. 文件默认 20 MiB、硬上限 128 MiB，另校验编码后请求体
 3. 将视频转为 Base64 并构建内联多模态载荷（不走 File API，不覆盖默认温度与 resolution）
 4. 适配 OpenAI-compatible（含 sub2api video_url）与 Gemini 原生协议
 """
@@ -10,18 +10,19 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import yaml
 
-logger = logging.getLogger("AICQ.video")
+from .config import DEFAULT_MAX_SIZE_MB, HARD_MAX_SIZE_MB, DEFAULT_TIMEOUT_SECONDS, validate_video_settings
 
-DEFAULT_MAX_SIZE_MB = 128
-DEFAULT_TIMEOUT_SECONDS = 120.0
+logger = logging.getLogger("AICQ.video")
 
 DEFAULT_VIDEO_SYSTEM_INSTRUCTION = """You are a multimodal video analysis assistant. Please analyze the video content objectively, comprehensively, and accurately.
 
@@ -47,7 +48,7 @@ def _load_raw_config() -> dict[str, Any]:
     except Exception:
         pass
 
-    config_path = Path(__file__).resolve().parents[3] / "config" / "config_user.yaml"
+    config_path = Path(__file__).resolve().parents[3] / "config_user.yaml"
     if config_path.is_file():
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -69,7 +70,10 @@ def get_video_config() -> dict[str, Any]:
         pass
 
     cfg = _load_raw_config()
-    video_cfg = cfg.get("video_understanding") or {}
+    try:
+        video_cfg = validate_video_settings(cfg.get("video_understanding") or {})
+    except ValueError as exc:
+        raise VideoProcessingError(str(exc)) from exc
 
     provider_name = video_cfg.get("provider")
     providers = cfg.get("model_providers") or {}
@@ -99,8 +103,13 @@ def get_video_config() -> dict[str, Any]:
 
 
 def detect_video_mime(file_path: Path) -> str:
-    """根据文件后缀识别主流视频 MIME 类型。"""
-    ext = file_path.suffix.lower()
+    """Use container bytes, including staged files with a generic suffix."""
+    from llm.media.video_store import _container_extension, VideoStoreError
+    try:
+        with file_path.open("rb") as stream:
+            ext = _container_extension(stream.read(4096))
+    except (OSError, VideoStoreError) as exc:
+        raise VideoProcessingError("文件不是支持的视频容器") from exc
     mapping = {
         ".mp4": "video/mp4",
         ".webm": "video/webm",
@@ -109,7 +118,7 @@ def detect_video_mime(file_path: Path) -> str:
         ".avi": "video/x-msvideo",
         ".flv": "video/x-flv",
     }
-    return mapping.get(ext, "video/mp4")
+    return mapping[ext]
 
 
 class VideoModelClient:
@@ -124,7 +133,11 @@ class VideoModelClient:
             raise VideoProcessingError(f"目标视频文件不存在: {file_path}")
 
         file_size = file_path.stat().st_size
-        max_bytes = int(self.config["max_size_mb"] * 1024 * 1024)
+        try:
+            limit = validate_video_settings(self.config)["max_size_mb"]
+        except ValueError as exc:
+            raise VideoProcessingError(str(exc)) from exc
+        max_bytes = int(min(limit, HARD_MAX_SIZE_MB) * 1024 * 1024)
         if file_size > max_bytes:
             actual_mb = file_size / (1024 * 1024)
             raise VideoProcessingError(
@@ -133,36 +146,27 @@ class VideoModelClient:
 
     def _resolve_native_base_url(self, base_url: str) -> str | None:
         """根据配置的 base_url 推导 Gemini 原生端点根路径。"""
-        low = base_url.lower().rstrip("/")
-        if "generativelanguage.googleapis.com" in low:
-            clean = base_url.rstrip("/")
-            if clean.endswith("/openai"):
-                clean = clean[:-7]
-            elif clean.endswith("/openai/v1"):
-                clean = clean[:-10]
-            if not clean.endswith("/v1beta"):
-                clean = f"{clean}/v1beta"
-            return clean
-
-        if "/antigravity/v1beta" in low:
-            return base_url.rstrip("/")
-
-        if "/v1beta" in low and not low.endswith("/v1"):
-            clean = base_url.rstrip("/")
-            if clean.endswith("/openai"):
-                clean = clean[:-7]
-            return clean
-
-        if "8081" in low or "sub2api" in low:
-            # sub2api 反代原生 Gemini 端点前缀
-            clean = base_url.rstrip("/")
-            if clean.endswith("/v1"):
-                clean = clean[:-3]
-            elif clean.endswith("/v1/chat/completions"):
-                clean = clean[:-20]
-            return f"{clean}/antigravity/v1beta"
-
-        return None
+        parsed = urlsplit(base_url)
+        path = parsed.path.rstrip("/")
+        for suffix in ("/openai/v1/chat/completions", "/openai/chat/completions", "/openai/v1", "/openai"):
+            if path.endswith(suffix):
+                path = path[:-len(suffix)]
+                break
+        if parsed.hostname == "generativelanguage.googleapis.com":
+            path = "/v1beta"  # mediaProcessing is a v1beta feature.
+        elif path.endswith(("/v1beta", "/v1")) and "/antigravity/" in path:
+            pass
+        elif path.endswith("/v1beta"):
+            pass
+        elif parsed.port == 8081 or "sub2api" in (parsed.hostname or "").lower():
+            for suffix in ("/v1/chat/completions", "/v1"):
+                if path.endswith(suffix):
+                    path = path[:-len(suffix)]
+                    break
+            path += "/antigravity/v1beta"
+        else:
+            return None
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
     def analyze(
         self,
@@ -178,12 +182,16 @@ class VideoModelClient:
             )
 
         self.validate_file_size(file_path)
+        if mode not in {"static", "agentic"}:
+            raise VideoProcessingError("不支持的视频分析模式")
+        from .common import run_ffprobe, extract_metadata
+        extract_metadata(run_ffprobe(file_path), file_path)
+        mime_type = detect_video_mime(file_path)
 
         with open(file_path, "rb") as f:
             raw_bytes = f.read()
 
         b64_data = base64.b64encode(raw_bytes).decode("ascii")
-        mime_type = detect_video_mime(file_path)
 
         base_url = self.config["base_url"].rstrip("/")
         api_key = self.config["api_key"]
@@ -211,12 +219,15 @@ class VideoModelClient:
                     system_instruction=system_instruction,
                 )
             except Exception as exc:
-                if protocol == "gemini_native":
+                if protocol == "gemini_native" or mode == "agentic":
                     raise
                 logger.warning("[video] 尝试 Google 原生端点失败，尝试备用兼容端点: %s", exc)
 
         if protocol == "gemini_native":
             raise VideoProcessingError(f"无法为 base_url={base_url} 解析 Gemini 原生端点")
+
+        if mode == "agentic":
+            raise VideoProcessingError("agentic 需要支持该模式的 Gemini 原生端点和模型；兼容协议不支持，请选择原生协议或显式改用 static")
 
         return self._call_openai_compatible(
             base_url,
@@ -285,6 +296,7 @@ class VideoModelClient:
             "model": model,
             "messages": messages,
         }
+        self._validate_payload_size(base_url, payload)
 
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -362,6 +374,7 @@ class VideoModelClient:
                     }
                 ]
             }
+        self._validate_payload_size(base_url, payload)
 
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -381,9 +394,16 @@ class VideoModelClient:
             raise VideoProcessingError("Google 原生端点响应中未包含有效 candidates 内容")
 
         parts = candidates[0].get("content", {}).get("parts") or []
-        texts = [p.get("text", "") for p in parts if isinstance(p, dict) and "text" in p]
+        texts = [p.get("text", "") for p in parts if isinstance(p, dict) and "text" in p and not p.get("thought")]
         result_text = "".join(texts).strip()
         if not result_text:
             raise VideoProcessingError("Google 原生端点返回文本为空")
 
         return result_text
+
+    def _validate_payload_size(self, base_url: str, payload: dict) -> None:
+        # httpx uses compact UTF-8 JSON. Include all text and Base64 expansion.
+        size = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+        limit = 20_000_000 if urlsplit(base_url).hostname == "generativelanguage.googleapis.com" else int(HARD_MAX_SIZE_MB * 1024 * 1024)
+        if size > limit:
+            raise VideoProcessingError(f"内联视频请求体 {size} 字节超过服务限制 {limit} 字节，请缩小视频或缩短提问后重试")

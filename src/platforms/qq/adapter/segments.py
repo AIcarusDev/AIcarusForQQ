@@ -10,6 +10,7 @@ import base64
 import json
 import logging
 import re
+from typing import Any
 
 _seg_logger = logging.getLogger("AICQ.qq_adapter.segments")
 
@@ -500,9 +501,9 @@ def build_message_content(
             parts.append(_build_card_segment(seg_type, data if isinstance(data, dict) else {}))
         elif seg_type == "video":
             data = data if isinstance(data, dict) else {}
-            from llm.media.media_storage import generate_time_ref
-            video_ref = generate_time_ref()
             url = str(data.get("url") or data.get("file") or "").strip()
+            from llm.media.video_store import register_video_source
+            video_ref = register_video_source(url, source="qq")
             file_size = data.get("file_size")
             file_id = str(data.get("file_id") or "")
             file_name = str(data.get("file_name") or data.get("name") or "")

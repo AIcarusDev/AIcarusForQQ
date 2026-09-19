@@ -1015,9 +1015,20 @@ async def settings_save():
     if "video_understanding" in data and isinstance(data["video_understanding"], dict):
         vu_data = data["video_understanding"]
         new_vu = dict(new_cfg.get("video_understanding", {}))
+        connection_mode = vu_data.get("connection_mode")
+        if connection_mode not in (None, "provider", "explicit"):
+            return jsonify({"success": False, "error": "视频连接方式无效"}), 400
+        if connection_mode == "provider" or (connection_mode is None and vu_data.get("provider")):
+            for key in ("base_url", "api_key", "api_key_env"):
+                new_vu.pop(key, None)
+        elif connection_mode == "explicit":
+            new_vu.pop("provider", None)
+            for key in ("base_url", "api_key_env", "api_key"):
+                if key in vu_data:
+                    new_vu[key] = str(vu_data.get(key) or "").strip()
         if "protocol" in vu_data:
             new_vu["protocol"] = str(vu_data["protocol"]).strip()
-        if "provider" in vu_data:
+        if "provider" in vu_data and connection_mode != "explicit":
             provider = str(vu_data.get("provider") or "").strip()
             if provider:
                 new_vu["provider"] = provider
@@ -1026,15 +1037,21 @@ async def settings_save():
         if "model" in vu_data:
             new_vu["model"] = str(vu_data.get("model") or "").strip()
         if "max_size_mb" in vu_data and vu_data["max_size_mb"] is not None:
-            try:
-                new_vu["max_size_mb"] = float(vu_data["max_size_mb"])
-            except (ValueError, TypeError):
-                pass
+            new_vu["max_size_mb"] = vu_data["max_size_mb"]
         if "timeout" in vu_data and vu_data["timeout"] is not None:
-            try:
-                new_vu["timeout"] = float(vu_data["timeout"])
-            except (ValueError, TypeError):
-                pass
+            new_vu["timeout"] = vu_data["timeout"]
+        from tools.video.config import validate_video_settings
+        try:
+            new_vu = validate_video_settings(new_vu)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        video_provider = new_vu.get("provider")
+        if connection_mode == "explicit" and not new_vu.get("base_url"):
+            return jsonify({"success": False, "error": "视频专用连接需要填写端点"}), 400
+        if video_provider and video_provider not in get_model_providers(new_cfg):
+            return jsonify({"success": False, "error": "视频理解选择了未定义的供应商"}), 400
+        if (video_provider or new_vu.get("base_url")) and not new_vu.get("model"):
+            return jsonify({"success": False, "error": "视频理解需要填写模型 ID"}), 400
         new_cfg["video_understanding"] = new_vu
 
     def _payload_binding_error(label: str, payload_part: dict, required: bool = True) -> str | None:

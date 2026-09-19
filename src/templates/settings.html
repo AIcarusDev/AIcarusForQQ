@@ -1688,6 +1688,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="model-card-body" id="card-video-understanding-body">
               <div class="row">
+                <div class="field"><label>连接方式</label>
+                  <select id="video_understanding_connection_mode">
+                    <option value="provider">继承供应商（保存时清除专用端点和密钥覆盖）</option>
+                    <option value="explicit">使用专用端点和密钥</option>
+                  </select>
+                </div>
+                <div class="field"><label>专用端点（仅专用连接生效）</label><input id="video_understanding_base_url" type="text" /></div>
+              </div>
+              <div class="row">
+                <div class="field"><label>专用 Key 环境变量</label><input id="video_understanding_api_key_env" type="text" /></div>
+                <div class="field"><label>专用 API Key（优先于环境变量）</label><input id="video_understanding_api_key" type="password" autocomplete="off" /></div>
+              </div>
+              <div class="row">
                 <div class="field">
                   <label>供应商</label
                   ><select id="video_understanding_provider"></select>
@@ -4221,6 +4234,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
       onVisionModeChange();
     const vu = data.video_understanding || {};
+    setValue("video_understanding_connection_mode", (vu.base_url || vu.api_key || vu.api_key_env) ? "explicit" : "provider");
+    setValue("video_understanding_base_url", vu.base_url || "");
+    setValue("video_understanding_api_key_env", vu.api_key_env || "");
+    setValue("video_understanding_api_key", vu.api_key || "");
     setValue("video_understanding_provider", getProviderName(vu));
     setValue("video_understanding_model", vu.model || "");
     setValue("video_understanding_protocol", vu.protocol || "auto");
@@ -4803,6 +4820,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
       },
       video_understanding: {
+        connection_mode: value("video_understanding_connection_mode"),
+        base_url: value("video_understanding_base_url"),
+        api_key_env: value("video_understanding_api_key_env"),
+        api_key: value("video_understanding_api_key"),
         provider: value("video_understanding_provider"),
         model: value("video_understanding_model"),
         protocol: value("video_understanding_protocol"),

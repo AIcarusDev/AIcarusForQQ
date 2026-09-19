@@ -1571,12 +1571,16 @@ class BrowserSession:
                 image_item["loaded"] = bool(row.get("loaded"))
             source_url = str(row.get("src") or "").strip()
             if row.get("kind") == "video":
-                from llm.media.media_storage import generate_time_ref
-                video_ref = generate_time_ref()
+                from llm.media.video_store import register_video_source
+                from browser.image_resources import project_source_url
+                video_ref = register_video_source(
+                    source_url, source="browser",
+                    source_key=f"browser:{page.url}:{row.get('frame', 'main')}:{source_url}",
+                )
                 video_item = {
                     "video_ref": video_ref,
-                    "src": source_url,
-                    "poster": str(row.get("poster") or ""),
+                    "src": project_source_url(source_url, source_url_mode),
+                    "poster": project_source_url(str(row.get("poster") or ""), source_url_mode),
                     "width": image_item["width"],
                     "height": image_item["height"],
                     "x": image_item["x"],

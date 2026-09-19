@@ -16,11 +16,12 @@ from .client import VideoProcessingError
 from .common import (
     VideoBaseArgs,
     extract_metadata,
-    resolve_video_path,
+    resolved_video_input,
     run_ffprobe,
 )
 
 logger = logging.getLogger("AICQ.video")
+RESULT_CDATA = True
 
 
 class GetVideoInfoArgs(VideoBaseArgs):
@@ -34,17 +35,20 @@ class GetVideoInfoArgs(VideoBaseArgs):
 )
 def execute(args: GetVideoInfoArgs) -> dict[str, Any]:
     try:
-        video_path = resolve_video_path(args)
-        logger.info("[video] 开始获取视频元数据 path=%s", video_path)
+        with resolved_video_input(args) as video_path:
+            logger.info("[video] 开始获取视频元数据 path=%s", video_path)
 
-        probe_data = run_ffprobe(video_path)
-        meta = extract_metadata(probe_data, video_path)
+            probe_data = run_ffprobe(video_path)
+            meta = extract_metadata(probe_data, video_path)
+            if args.path:
+                from pathlib import PurePosixPath
+                meta["file_name"] = PurePosixPath(args.path).name
 
-        return {
-            "status": "success",
-            "target": args.video_ref if args.video_ref else str(video_path),
-            **meta,
-        }
+            return {
+                "status": "success",
+                "target": args.video_ref or args.path,
+                **meta,
+            }
     except VideoProcessingError as exc:
         logger.warning("[video] 获取视频元数据失败: %s", exc)
         return {

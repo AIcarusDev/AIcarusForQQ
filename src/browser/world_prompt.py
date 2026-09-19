@@ -508,14 +508,15 @@ def _browser_image_xml_open_line(image: dict) -> str:
 
 
 def _browser_video_xml_attrs(video: dict) -> list[str]:
+    from browser.image_resources import project_source_url
     attrs = [
         f'video_ref="{_xml_attr(video.get("video_ref"))}"',
         f'rect="{_rect_attr(video)}"',
     ]
     if _has_attr_value(video.get("src")):
-        attrs.append(f'src="{_xml_attr(video.get("src"))}"')
+        attrs.append(f'src="{_xml_attr(project_source_url(str(video.get("src")), "full"))}"')
     if _has_attr_value(video.get("poster")):
-        attrs.append(f'poster="{_xml_attr(video.get("poster"))}"')
+        attrs.append(f'poster="{_xml_attr(project_source_url(str(video.get("poster")), "full"))}"')
     attrs.append(f'paused="{str(bool(video.get("paused", True))).lower()}"')
     attrs.append(f'current_time="{_xml_attr(video.get("current_time", 0))}"')
     attrs.append(f'duration="{_xml_attr(video.get("duration", 0))}"')

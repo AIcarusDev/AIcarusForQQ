@@ -1,93 +1,167 @@
-"""Lightweight video reference storage and on-demand download interface.
-
-Videos share the same ref namespace as images (generated via generate_time_ref).
-Video bytes are not downloaded eagerly and are not stored in SQLite tables;
-they are fetched on-demand to the local filesystem (MEDIA_ROOT) when requested.
-"""
-
+"""Durable video sources and bounded, immutable on-demand originals."""
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import logging
+import asyncio
+import json
+import os
 from pathlib import Path
-from typing import Any
+import tempfile
+from urllib.parse import urljoin
 
+from . import media_storage as storage
+from .image_store import connection, _reserve
 from .media_identity import bind_media_identity
-from .media_storage import (
-    MEDIA_ROOT,
-    get_media_dir,
-    locate_media_file,
-    parse_time_ref_date,
-)
 
-logger = logging.getLogger("AICQ.video_store")
+MAX_VIDEO_BYTES = 128 * 1024 * 1024
+_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv"}
+_SCHEMA = """CREATE TABLE IF NOT EXISTS media_video_sources (
+ video_ref TEXT PRIMARY KEY, source_key TEXT UNIQUE, url TEXT NOT NULL,
+ source TEXT NOT NULL
+)"""
 
 
-def locate_video(video_ref: str) -> Path | None:
-    """Locate an existing local video file for a video_ref, if downloaded."""
-    ref = str(video_ref or "").strip()
-    if not ref:
-        return None
-    path = locate_media_file(ref)
-    if path is not None and path.suffix.lower() in {".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv"}:
-        return path
-    for ext in (".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv"):
-        candidate = MEDIA_ROOT / f"{ref}{ext}"
-        if candidate.is_file():
-            return candidate
+class VideoStoreError(RuntimeError):
+    pass
+
+
+def _valid_ref(value: str) -> str:
+    ref = str(value or "").strip()
+    if not storage._SAFE_REF_PATTERN.fullmatch(ref):
+        raise VideoStoreError("无效的视频引用")
+    return ref
+
+
+def register_video_source(url: str, *, source: str, source_key: str | None = None,
+                          video_ref: str | None = None) -> str:
+    """Keep raw URLs internal. A source key preserves identity across snapshots."""
+    key = hashlib.sha256(source_key.encode()).hexdigest() if source_key else None
+    with connection(write=True) as db:
+        db.execute(_SCHEMA)
+        if key:
+            row = db.execute("SELECT video_ref FROM media_video_sources WHERE source_key=?", (key,)).fetchone()
+            if row:
+                return row[0]
+        ref = _valid_ref(video_ref) if video_ref else _reserve(db)
+        db.execute("INSERT OR IGNORE INTO media_video_sources VALUES (?,?,?,?)",
+                   (ref, key, str(url or "").strip(), source))
+        return ref
+
+
+def get_video_source(video_ref: str) -> dict | None:
+    ref = _valid_ref(video_ref)
+    with connection() as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "media_video_sources" in tables:
+            row = db.execute("SELECT * FROM media_video_sources WHERE video_ref=?", (ref,)).fetchone()
+            if row:
+                return dict(row)
+        # Recover refs issued before the source registry was introduced.
+        if "chat_messages" in tables:
+            for row in db.execute("SELECT content_segments FROM chat_messages WHERE content_segments LIKE ?",
+                                  (f'%"{ref}"%',)):
+                try:
+                    segments = json.loads(row[0] or "[]")
+                except (TypeError, ValueError):
+                    continue
+                for seg in segments if isinstance(segments, list) else []:
+                    if isinstance(seg, dict) and seg.get("type") == "video" and seg.get("video_ref") == ref:
+                        return {"video_ref": ref, "url": seg.get("url", ""), "source": "qq"}
     return None
 
 
-async def download_video_for_ref(
-    video_ref: str,
-    url: str,
-    *,
-    timeout: float = 60.0,
-) -> Path | None:
-    """Download a video on-demand to the local media directory for the given video_ref.
+def locate_video(video_ref: str) -> Path | None:
+    ref = _valid_ref(video_ref)
+    path = storage.locate_media_file(ref)
+    return path if path is not None and path.suffix.lower() in _EXTENSIONS else None
 
-    Uses stream writing to keep memory overhead low and does_not store video blobs in SQLite.
-    """
-    ref = str(video_ref or "").strip()
-    src_url = str(url or "").strip()
-    if not ref or not src_url:
-        return None
 
+def _container_extension(header: bytes) -> str:
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        return ".mov" if header[8:12] == b"qt  " else ".mp4"
+    if header.startswith(b"\x1aE\xdf\xa3"):
+        return ".webm" if b"webm" in header[:4096] else ".mkv"
+    if header.startswith(b"RIFF") and header[8:12] == b"AVI ":
+        return ".avi"
+    if header.startswith(b"FLV"):
+        return ".flv"
+    raise VideoStoreError("下载内容不是支持的视频容器，可能是登录页或已失效的地址")
+
+
+async def download_video_for_ref(video_ref: str, url: str, *, timeout: float = 60.0,
+                                 max_bytes: int = MAX_VIDEO_BYTES) -> Path:
+    """Download through the existing public-network gateway; never overwrite refs."""
+    from .image_importer import _default_http_client, _safe_public_http_url
+
+    ref = _valid_ref(video_ref)
+    limit = min(int(max_bytes), MAX_VIDEO_BYTES)
+    if limit <= 0:
+        raise VideoStoreError("视频大小限制必须为正数")
     existing = locate_video(ref)
     if existing is not None:
+        if existing.stat().st_size > limit:
+            raise VideoStoreError("视频超过大小限制，请先在 Agent 电脑中压缩或截取片段")
         return existing
-
-    import httpx
-
-    date_parts = parse_time_ref_date(ref)
-    target_dir = get_media_dir(date_parts[0], date_parts[1]) if date_parts else MEDIA_ROOT
-    target_path = target_dir / f"{ref}.mp4"
-    temp_path = target_dir / f"{ref}.mp4.tmp"
-    hasher = hashlib.sha256()
-
+    if not str(url).startswith(("http://", "https://")):
+        raise VideoStoreError("视频没有可下载的 HTTP(S) 来源（blob/MSE 不支持）；请用 computer 将视频保存到 /home/agent 后传 path")
+    date = storage.parse_time_ref_date(ref)
+    folder = storage.get_media_dir(date[0], date[1]) if date else storage.MEDIA_ROOT
+    if not storage._inside_media_root(folder):
+        raise VideoStoreError("视频存储路径超出媒体目录")
+    folder.mkdir(parents=True, exist_ok=True)
+    temporary = None
     try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            async with client.stream("GET", src_url) as resp:
-                if resp.status_code != 200:
-                    logger.warning("[video_store] Download failed for ref=%s url=%s status=%s", ref, src_url, resp.status_code)
-                    return None
-                with open(temp_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        hasher.update(chunk)
-
-        temp_path.replace(target_path)
-        digest = hasher.hexdigest()
-        bind_media_identity(ref, digest)
-        logger.info("[video_store] Successfully downloaded video ref=%s size=%d sha256=%s", ref, target_path.stat().st_size, digest)
-        return target_path
+        current = _safe_public_http_url(url)
+        async with asyncio.timeout(timeout), _default_http_client() as http:
+            for redirects in range(6):
+                current = _safe_public_http_url(current)
+                async with http.stream("GET", current, timeout=timeout, headers={
+                    "Accept": "video/*,application/octet-stream;q=0.9,*/*;q=0.1",
+                    "User-Agent": "AIcarusForQQ/video", "Accept-Encoding": "identity",
+                }) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location or redirects == 5:
+                            raise VideoStoreError("视频下载重定向失败")
+                        current = urljoin(current, location)
+                        continue
+                    if response.status_code != 200:
+                        raise VideoStoreError(f"视频下载失败 (HTTP {response.status_code})；来源可能需要登录或已过期，请重新获取视频或传 Agent 电脑 path")
+                    length = response.headers.get("content-length", "")
+                    if response.headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
+                        raise VideoStoreError("视频下载响应使用了不支持的压缩编码")
+                    if length.isdigit() and int(length) > limit:
+                        raise VideoStoreError("视频超过下载大小限制")
+                    total = 0
+                    hasher = hashlib.sha256()
+                    with tempfile.NamedTemporaryFile(dir=folder, prefix=".video-", delete=False) as stream:
+                        temporary = Path(stream.name)
+                        async for chunk in response.aiter_bytes(chunk_size=65536):
+                            total += len(chunk)
+                            if total > limit:
+                                raise VideoStoreError("视频超过下载大小限制")
+                            stream.write(chunk)
+                            hasher.update(chunk)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    with temporary.open("rb") as stream:
+                        extension = _container_extension(stream.read(4096))
+                    target = folder / f"{ref}{extension}"
+                    if not storage._inside_media_root(target):
+                        raise VideoStoreError("视频存储路径超出媒体目录")
+                    bind_media_identity(ref, hasher.hexdigest())
+                    try:
+                        os.link(temporary, target)
+                    except FileExistsError:
+                        with target.open("rb") as stream:
+                            if hashlib.file_digest(stream, "sha256").hexdigest() != hasher.hexdigest():
+                                raise VideoStoreError("视频引用已绑定其他内容")
+                    return target
+        raise VideoStoreError("视频下载重定向失败")
+    except VideoStoreError:
+        raise
     except Exception as exc:
-        logger.warning("[video_store] Error downloading video ref=%s from url=%s: %s", ref, src_url, exc)
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
-        return None
+        raise VideoStoreError("视频下载或持久化失败，请重新获取来源后重试") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

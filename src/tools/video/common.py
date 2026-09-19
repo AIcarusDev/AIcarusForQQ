@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
+import asyncio
+import math
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 from typing import Any
@@ -28,41 +31,65 @@ logger = logging.getLogger("AICQ.video")
 class VideoBaseArgs(ToolArgsModel):
     video_ref: str | None = Field(
         default=None,
-        description="目标视频的 video_ref（例如来自消息上下文中的视频引用凭据）。与 path 必填其一。",
+        description="目标视频的 video_ref，来自消息或浏览器上下文，可按需下载。与 path 必须且只能提供一个。",
     )
     path: str | None = Field(
         default=None,
-        description="目标视频在本地系统的绝对文件路径。与 video_ref 必填其一。",
+        description="Agent 私有 Linux 电脑中 /home/agent 内的视频绝对路径。与 video_ref 必须且只能提供一个。",
     )
 
     @model_validator(mode="after")
     def validate_credential(self) -> "VideoBaseArgs":
         ref = (self.video_ref or "").strip()
         fpath = (self.path or "").strip()
-        if not ref and not fpath:
-            raise ValueError("必须提供 video_ref 或 path 两者之一作为视频定位凭据")
+        if bool(ref) == bool(fpath):
+            raise ValueError("video_ref 与 path 必须且只能提供一个")
         return self
 
 
 def resolve_video_path(args: VideoBaseArgs) -> Path:
     """根据传入凭据定位本地视频文件。"""
-    if args.path and args.path.strip():
-        resolved_path = Path(args.path.strip()).expanduser().resolve()
-        if not resolved_path.is_file():
-            raise VideoProcessingError(f"指定的视频文件路径不存在: {args.path}")
-        return resolved_path
+    if args.path:
+        raise VideoProcessingError("Linux 路径必须通过工作区转运读取")
 
     ref = (args.video_ref or "").strip()
     try:
-        from llm.media.video_store import locate_video
+        from llm.media.video_store import locate_video, get_video_source, download_video_for_ref
 
         located = locate_video(ref)
         if located is not None and located.is_file():
             return located.resolve()
+        source = get_video_source(ref)
+        if source:
+            return asyncio.run(download_video_for_ref(ref, source["url"]))
     except Exception as exc:
-        logger.warning("[video] 尝试通过 locate_video 定位 ref=%s 异常: %s", ref, exc)
+        raise VideoProcessingError(str(exc)) from exc
 
     raise VideoProcessingError(f"未能根据 video_ref '{ref}' 定位到已下载的本地视频文件")
+
+
+@contextmanager
+def resolved_video_input(args: VideoBaseArgs):
+    """Keep a staged Agent-home file alive until synchronous processing finishes."""
+    if not args.path:
+        yield resolve_video_path(args)
+        return
+    path = args.path.strip()
+    parts = PurePosixPath(path).parts
+    if not path.startswith("/home/agent/") or ".." in parts or "\\" in path:
+        raise VideoProcessingError("path 必须是 /home/agent 内的 Linux 视频绝对路径")
+    import app_state
+    from tools._async_bridge import run_coroutine_sync
+    service = getattr(app_state, "workspace_service", None)
+    loop = getattr(app_state, "main_loop", None)
+    if service is None or loop is None or not loop.is_running():
+        raise VideoProcessingError("Agent 电脑服务不可用")
+    manager = service.stage_host_file(path)
+    staged = run_coroutine_sync(manager.__aenter__(), loop)
+    try:
+        yield Path(staged.host_path)
+    finally:
+        run_coroutine_sync(manager.__aexit__(None, None, None), loop)
 
 
 def run_ffprobe(video_path: Path, timeout: float = 30.0) -> dict[str, Any]:
@@ -83,7 +110,7 @@ def run_ffprobe(video_path: Path, timeout: float = 30.0) -> dict[str, Any]:
     ]
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise VideoProcessingError(f"ffprobe 解析视频超时 (>{timeout}s)") from exc
     except Exception as exc:
@@ -134,6 +161,8 @@ def extract_metadata(probe_data: dict[str, Any], file_path: Path) -> dict[str, A
     streams = probe_data.get("streams") or []
 
     video_stream = next((s for s in streams if s.get("codec_type") == "video"), {})
+    if not video_stream:
+        raise VideoProcessingError("文件不包含可解码的视频流")
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), {})
 
     duration_str = fmt.get("duration") or video_stream.get("duration") or "0"
@@ -150,11 +179,10 @@ def extract_metadata(probe_data: dict[str, Any], file_path: Path) -> dict[str, A
     fps = round(fps, 3)
 
     nb_frames_raw = video_stream.get("nb_frames")
-    total_frames = 0
+    total_frames = None
     if nb_frames_raw and str(nb_frames_raw).isdigit():
         total_frames = int(nb_frames_raw)
-    elif duration_sec > 0 and fps > 0:
-        total_frames = int(round(duration_sec * fps))
+    estimated_frames = int(round(duration_sec * fps)) if duration_sec > 0 and fps > 0 else None
 
     bit_rate_raw = fmt.get("bit_rate") or video_stream.get("bit_rate")
     bit_rate_kbps = round(int(bit_rate_raw) / 1000, 1) if bit_rate_raw and str(bit_rate_raw).isdigit() else None
@@ -172,6 +200,7 @@ def extract_metadata(probe_data: dict[str, Any], file_path: Path) -> dict[str, A
         "height": height,
         "fps": fps,
         "total_frames": total_frames,
+        "estimated_total_frames": estimated_frames if total_frames is None else None,
         "video_codec": video_stream.get("codec_name", "unknown"),
         "pix_fmt": video_stream.get("pix_fmt", "unknown"),
         "bit_rate_kbps": bit_rate_kbps,
@@ -185,7 +214,9 @@ def extract_metadata(probe_data: dict[str, Any], file_path: Path) -> dict[str, A
 def parse_timestamp_to_seconds(ts: float | int | str) -> float:
     """将秒数数字或 HH:MM:SS[.xxx] 格式时间字符串转换为浮点秒数。"""
     if isinstance(ts, (int, float)):
-        return max(0.0, float(ts))
+        if not math.isfinite(float(ts)) or float(ts) < 0:
+            raise VideoProcessingError("时间戳必须是有限非负数")
+        return float(ts)
 
     ts_str = str(ts).strip()
     if not ts_str:
@@ -193,7 +224,7 @@ def parse_timestamp_to_seconds(ts: float | int | str) -> float:
 
     if ":" not in ts_str:
         try:
-            return max(0.0, float(ts_str))
+            return parse_timestamp_to_seconds(float(ts_str))
         except ValueError as exc:
             raise VideoProcessingError(f"无效的时间戳数值: {ts}") from exc
 
@@ -203,11 +234,11 @@ def parse_timestamp_to_seconds(ts: float | int | str) -> float:
             h = float(parts[0])
             m = float(parts[1])
             s = float(parts[2])
-            return max(0.0, h * 3600 + m * 60 + s)
+            return parse_timestamp_to_seconds(h * 3600 + m * 60 + s)
         if len(parts) == 2:
             m = float(parts[0])
             s = float(parts[1])
-            return max(0.0, m * 60 + s)
+            return parse_timestamp_to_seconds(m * 60 + s)
     except ValueError as exc:
         raise VideoProcessingError(f"无效的时间格式字符串: {ts}") from exc
 
@@ -217,7 +248,8 @@ def parse_timestamp_to_seconds(ts: float | int | str) -> float:
 def extract_frame_bytes(
     video_path: Path,
     *,
-    timestamp_sec: float,
+    timestamp_sec: float | None = None,
+    frame_index: int | None = None,
     timeout: float = 30.0,
 ) -> bytes:
     """利用 ffmpeg 通过管道直接截取单帧并返回 JPEG 字节流。"""
@@ -225,12 +257,13 @@ def extract_frame_bytes(
     if not ffmpeg_cmd:
         raise VideoProcessingError("宿主环境中未检测到 ffmpeg，无法执行截帧操作")
 
-    cmd = [
-        ffmpeg_cmd,
-        "-ss",
-        f"{timestamp_sec:.3f}",
-        "-i",
-        str(video_path),
+    cmd = [ffmpeg_cmd, "-v", "error"]
+    if frame_index is None:
+        cmd += ["-ss", f"{timestamp_sec or 0:.9f}"]
+    cmd += ["-i", str(video_path)]
+    if frame_index is not None:
+        cmd += ["-vf", f"select=eq(n\\,{frame_index})", "-fps_mode", "vfr"]
+    cmd += [
         "-vframes",
         "1",
         "-f",
@@ -253,7 +286,7 @@ def extract_frame_bytes(
 
     frame_bytes = proc.stdout
     if not frame_bytes:
-        raise VideoProcessingError(f"抽帧未获取到任何图像数据，时间戳 {timestamp_sec:.3f}s 可能已超出视频总时长")
+        raise VideoProcessingError("抽帧未获取到图像，目标时间或帧号可能超出视频范围")
 
     return frame_bytes
 
@@ -264,7 +297,10 @@ def register_frame_as_image(frame_bytes: bytes, source: str = "video_frame") -> 
         from llm.media.image_store import register_image
 
         record = register_image(frame_bytes, source)
-        return str(record.get("image_ref") or "")
+        ref = str(record.get("image_ref") or "")
+        if not ref:
+            raise VideoProcessingError("截帧图片没有持久化引用")
+        return ref
     except Exception as exc:
         logger.warning("[video] 尝试注册截帧图片到 image_store 失败: %s", exc)
-        return ""
+        raise VideoProcessingError("截帧图片持久化失败，无法提供可复用引用") from exc

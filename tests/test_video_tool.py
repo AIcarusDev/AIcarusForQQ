@@ -9,8 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from tools.video.analyze_video import (
-    DEFAULT_AGENTIC_PROMPT,
-    DEFAULT_STATIC_PROMPT,
     AnalyzeVideoArgs,
     _build_final_prompt,
     execute as execute_analyze,
@@ -27,7 +25,6 @@ from tools.video.client import (
     get_video_config,
 )
 from tools.video.common import (
-    VideoBaseArgs,
     extract_metadata,
     format_duration,
     parse_fraction,
@@ -39,12 +36,16 @@ from tools.video.get_video_info import (
 )
 
 
-def test_detect_video_mime():
-    assert detect_video_mime(Path("sample.mp4")) == "video/mp4"
-    assert detect_video_mime(Path("sample.webm")) == "video/webm"
-    assert detect_video_mime(Path("sample.mov")) == "video/quicktime"
-    assert detect_video_mime(Path("sample.mkv")) == "video/x-matroska"
-    assert detect_video_mime(Path("sample.unknown")) == "video/mp4"
+@pytest.mark.parametrize("header,mime", [
+    (b"\x00\x00\x00\x18ftypisom", "video/mp4"),
+    (b"\x1aE\xdf\xa3webm", "video/webm"),
+    (b"\x00\x00\x00\x18ftypqt  ", "video/quicktime"),
+    (b"\x1aE\xdf\xa3matroska", "video/x-matroska"),
+])
+def test_detect_video_mime(tmp_path, header, mime):
+    path = tmp_path / "payload.bin"
+    path.write_bytes(header)
+    assert detect_video_mime(path) == mime
 
 
 def test_prompt_builder():
@@ -68,10 +69,10 @@ def test_validate_args_credential_required():
 
 
 def test_default_max_size_limit():
-    assert DEFAULT_MAX_SIZE_MB == 128
+    assert 0 < DEFAULT_MAX_SIZE_MB <= 128
     with patch("tools.video.client._load_raw_config", return_value={}):
         cfg = get_video_config()
-        assert cfg["max_size_mb"] == 128.0
+        assert cfg["max_size_mb"] == DEFAULT_MAX_SIZE_MB
 
 
 def test_size_limit_interception():
@@ -98,7 +99,7 @@ def test_execute_missing_credentials():
 def test_execute_non_existent_file():
     result = execute_analyze(path="non_existent_video_path_123.mp4")
     assert result["status"] == "error"
-    assert "不存在" in result["error"]
+    assert result["code"] == "video_processing_failed"
 
 
 def test_execute_mocked_success():
@@ -107,8 +108,8 @@ def test_execute_mocked_success():
         f_path = Path(f.name)
 
     try:
-        with patch.object(VideoModelClient, "analyze", return_value="模拟视频分析结果") as mock_analyze:
-            res = execute_analyze(path=str(f_path), mode="agentic")
+        with patch("tools.video.common.resolve_video_path", return_value=f_path), patch.object(VideoModelClient, "analyze", return_value="模拟视频分析结果") as mock_analyze:
+            res = execute_analyze(video_ref="test_ref", mode="agentic")
             assert res["status"] == "success"
             assert res["mode"] == "agentic"
             assert res["analysis"] == "模拟视频分析结果"
@@ -146,6 +147,7 @@ def test_google_native_media_processing_payload():
             mime_type="video/mp4",
             prompt="测试问题",
             timeout=30.0,
+            system_instruction="fixture-controlled-instruction",
             mode="agentic",
         )
         payload1 = captured_payloads[-1]
@@ -153,7 +155,7 @@ def test_google_native_media_processing_payload():
         assert parts1[0]["mediaProcessing"] == "AGENTIC"
         assert parts1[0]["inlineData"]["mimeType"] == "video/mp4"
         assert parts1[1]["text"] == "测试问题"
-        assert "You are a multimodal video analysis assistant" in payload1["systemInstruction"]["parts"][0]["text"]
+        assert "fixture-controlled-instruction" == payload1["systemInstruction"]["parts"][0]["text"]
 
         # 2. static 模式且无 prompt
         client._call_google_native(
@@ -164,13 +166,14 @@ def test_google_native_media_processing_payload():
             mime_type="video/mp4",
             prompt=None,
             timeout=30.0,
+            system_instruction="fixture-controlled-instruction",
             mode="static",
         )
         payload2 = captured_payloads[-1]
         parts2 = payload2["contents"][0]["parts"]
         assert parts2[0]["mediaProcessing"] == "STATIC"
         assert len(parts2) == 1
-        assert "You are a multimodal video analysis assistant" in payload2["systemInstruction"]["parts"][0]["text"]
+        assert "fixture-controlled-instruction" == payload2["systemInstruction"]["parts"][0]["text"]
 
 
 def test_openai_compatible_system_instruction_payload():
@@ -200,11 +203,12 @@ def test_openai_compatible_system_instruction_payload():
             mime_type="video/mp4",
             prompt="某人在哪？",
             timeout=30.0,
+            system_instruction="fixture-controlled-instruction",
         )
         payload1 = captured_payloads[-1]
         messages1 = payload1["messages"]
         assert messages1[0]["role"] == "system"
-        assert "You are a multimodal video analysis assistant" in messages1[0]["content"]
+        assert "fixture-controlled-instruction" == messages1[0]["content"]
         assert messages1[1]["role"] == "user"
         assert messages1[1]["content"][0]["type"] == "video_url"
         assert messages1[1]["content"][1]["type"] == "text"
@@ -219,6 +223,7 @@ def test_openai_compatible_system_instruction_payload():
             mime_type="video/mp4",
             prompt=None,
             timeout=30.0,
+            system_instruction="fixture-controlled-instruction",
         )
         payload2 = captured_payloads[-1]
         messages2 = payload2["messages"]
@@ -273,7 +278,8 @@ def test_extract_metadata_parsing():
     assert meta["duration_seconds"] == 12.345
     assert meta["resolution"] == "1920x1080"
     assert meta["fps"] == 30.0
-    assert meta["total_frames"] == 370
+    assert meta["total_frames"] is None
+    assert meta["estimated_total_frames"] == 370
     assert meta["video_codec"] == "h264"
     assert meta["has_audio"] is True
     assert meta["audio_codec"] == "aac"
@@ -294,8 +300,8 @@ def test_get_video_info_tool():
             "format": {"duration": "10.0", "format_name": "mp4", "size": "2048"},
             "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1280, "height": 720, "avg_frame_rate": "24/1"}],
         }
-        with patch("tools.video.get_video_info.run_ffprobe", return_value=mock_probe):
-            res = execute_get_info(path=str(f_path))
+        with patch("tools.video.common.resolve_video_path", return_value=f_path), patch("tools.video.get_video_info.run_ffprobe", return_value=mock_probe):
+            res = execute_get_info(video_ref="test_ref")
             assert res["status"] == "success"
             assert res["resolution"] == "1280x720"
             assert res["duration_seconds"] == 10.0
@@ -330,15 +336,15 @@ def test_capture_video_frame_execution():
             "streams": [{"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "30/1"}],
         }
 
-        with patch("tools.video.capture_video_frame.run_ffprobe", return_value=mock_probe), \
+        with patch("tools.video.common.resolve_video_path", return_value=f_path), patch("tools.video.capture_video_frame.run_ffprobe", return_value=mock_probe), \
              patch("tools.video.capture_video_frame.extract_frame_bytes", return_value=fake_jpeg), \
              patch("tools.video.capture_video_frame.register_frame_as_image", return_value="img_ref_9999"):
 
-            res = execute_capture_frame(path=str(f_path), timestamp=10.5)
+            res = execute_capture_frame(video_ref="test_ref", timestamp=10.5)
             assert res["status"] == "success"
-            assert res["timestamp_seconds"] == 10.5
+            assert res["requested_timestamp_seconds"] == 10.5
             assert res["image_ref"] == "img_ref_9999"
-            assert res["frame_index"] == 315
+            assert res["frame_index"] is None
             assert "_multimodal_parts" in res
             assert len(res["_multimodal_parts"]) == 1
             assert res["_multimodal_parts"][0]["data"] == fake_jpeg

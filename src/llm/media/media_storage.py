@@ -32,6 +32,9 @@ _MIME_TO_EXT = {
     "video/mp4": ".mp4",
     "video/webm": ".webm",
     "video/quicktime": ".mov",
+    "video/x-matroska": ".mkv",
+    "video/x-msvideo": ".avi",
+    "video/x-flv": ".flv",
 }
 
 _EXT_TO_MIME = {ext: mime for mime, ext in _MIME_TO_EXT.items()}
