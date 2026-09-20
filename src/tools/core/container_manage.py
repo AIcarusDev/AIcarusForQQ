@@ -33,16 +33,30 @@ class ContainerDeleteArgs(ToolArgsModel):
         return value.strip()
 
 
-class ContainerManageArgs(RootModel[Annotated[ContainerAddArgs | ContainerDeleteArgs, Field(discriminator="action")]]):
+class ContainerKeepArgs(ToolArgsModel):
+    action: Literal["keep"]
+    item_id: str = Field(min_length=1, description="要续期的活跃 custom 条目 ID。")
+
+    @field_validator("item_id")
+    @classmethod
+    def nonblank_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("item_id 不能为空白")
+        return value.strip()
+
+
+class ContainerManageArgs(RootModel[Annotated[ContainerAddArgs | ContainerDeleteArgs | ContainerKeepArgs, Field(discriminator="action")]]):
     pass
 
 
 @tool(
     name="container_manage",
     description=(
-        "添加或删除容器 custom 分节中的自定义文本条目（可以作为备忘录，笔记，或任何需要保留的内容）。"
-        "持续出现在上下文中，直到主动删除；请及时删除失效内容。"
-        "添加返回 item_id，删除使用上下文中的条目 ID。内容按文本保存，不解析为容器结构。"
+        "管理容器 custom 分节中的自定义文本条目。可进行添加、删除、keep 动作。最多直接展示 5 条；每条寿命为 8 个轮次，"
+        "每轮结束减少 1，到 0 自动剔除。用 keep 和条目 ID 续期至 8 轮，并提高保留优先级。"
+        "新增第 6 条时，最久未添加或 keep 的条目会被推出。被推出或过期的内容不会再出现在上下文中。"
+        "add 返回 item_id；delete 和 keep 使用活跃条目 ID。内容按文本保存，不解析为容器结构。"
+        "请把它当作一种`工作记忆`来使用。"
     ),
     args_model=ContainerManageArgs,
 )
@@ -58,12 +72,18 @@ def execute(args: ContainerManageArgs) -> dict:
         return {"ok": False, "error": f"修改容器失败: {exc}"}
 
 
-async def _manage(args: ContainerAddArgs | ContainerDeleteArgs) -> dict:
+async def _manage(args: ContainerAddArgs | ContainerDeleteArgs | ContainerKeepArgs) -> dict:
     from llm.prompt import container
 
     if isinstance(args, ContainerAddArgs):
         entry = await container.add_item("custom", args.content, key=args.key)
         return {"ok": True, "action": "add", "item_id": entry["item_id"]}
+    if isinstance(args, ContainerKeepArgs):
+        kept = await container.keep_item(args.item_id)
+        if not kept:
+            return {"ok": False, "error": "未找到指定的活跃 custom 条目", "item_id": args.item_id}
+        return {"ok": True, "action": "keep", "item_id": args.item_id,
+                "remaining_rounds": container.CUSTOM_LIFETIME_ROUNDS}
     removed = await container.remove_item(args.item_id, section="custom")
     if not removed:
         return {"ok": False, "error": "未找到指定的 custom 条目", "item_id": args.item_id}

@@ -19,6 +19,20 @@ from typing import Any, Callable, Iterable
 _items: list[dict] = []
 _update_lock = asyncio.Lock()
 VALID_SECTIONS: tuple[str, ...] = ("preset", "custom")
+CUSTOM_LIMIT = 5
+CUSTOM_LIFETIME_ROUNDS = 8
+CUSTOM_DESCRIPTION = (
+    "Custom items are shown directly for at most 5 entries. Each item has an "
+    "8-completed-main-round lifetime; remaining_rounds shows its current balance. "
+    "Use core.container_manage with action=keep and the item ID to renew it. "
+    "Adding a sixth item evicts the least recently added or kept item. "
+    "Expired and evicted items leave this context."
+)
+
+
+def _remaining_rounds(item: dict) -> int:
+    value = item.get("remaining_rounds")
+    return CUSTOM_LIFETIME_ROUNDS if value is None else int(value)
 
 
 @dataclass(frozen=True)
@@ -84,6 +98,8 @@ def _render_section(tag: str, items: list[dict], blocks: list[str]) -> list[str]
     if not items and not blocks:
         return [f"  <{tag}/>"]
     lines = [f"  <{tag}>"]
+    if tag == "custom":
+        lines.append(f"    <des>{html.escape(CUSTOM_DESCRIPTION)}</des>")
     for block in blocks:
         lines.extend(f"    {line}" for line in block.splitlines())
     for it in items:
@@ -93,6 +109,8 @@ def _render_section(tag: str, items: list[dict], blocks: list[str]) -> list[str]
         attrs = [f'id="{item_id}"']
         if key:
             attrs.append(f'key="{key}"')
+        if tag == "custom":
+            attrs.append(f'remaining_rounds="{_remaining_rounds(it)}"')
         attrs_str = " ".join(attrs)
         lines.append(f"    <item {attrs_str}>{content}</item>")
     lines.append(f"  </{tag}>")
@@ -121,7 +139,15 @@ def build_container_xml(
             blocks[contract.section].append(block)
 
     preset_items = [it for it in _items if it.get("section") == "preset"]
-    custom_items = [it for it in _items if it.get("section") == "custom"]
+    custom_items = [it for it in _items if it.get("section") == "custom"
+                    and _remaining_rounds(it) > 0]
+    if len(custom_items) > CUSTOM_LIMIT:
+        custom_items = sorted(
+            custom_items,
+            key=lambda it: (int(it.get("last_maintained_order") or it.get("created_at") or 0),
+                            int(it.get("created_at") or 0), str(it.get("item_id") or "")),
+            reverse=True,
+        )[:CUSTOM_LIMIT]
 
     if not preset_items and not custom_items and not any(blocks.values()):
         return "<container/>"
@@ -160,21 +186,87 @@ async def add_item(
             "created_at": now,
             "updated_at": now,
             "is_deleted": 0,
+            "remaining_rounds": CUSTOM_LIFETIME_ROUNDS if section == "custom" else None,
+            "last_maintained_order": now if section == "custom" else None,
         }
 
+        evicted_ids: list[str] = []
         if persist:
             from database import write_container_item
 
-            await write_container_item(
+            written = await write_container_item(
                 item_id=item_id,
                 section=section,
                 item_key=key,
                 content=content,
                 metadata=metadata,
             )
+            if written is not None:
+                evicted_ids, order = written
+                entry["last_maintained_order"] = order
+        elif section == "custom":
+            entry["last_maintained_order"] = max(
+                now, max((int(it.get("last_maintained_order") or it.get("created_at") or 0)
+                          for it in _items if it.get("section") == "custom"), default=0) + 1,
+            )
 
         _items.append(entry)
+        if section == "custom":
+            if not persist:
+                active = sorted(
+                    (it for it in _items if it.get("section") == "custom"),
+                    key=lambda it: (int(it.get("last_maintained_order") or 0),
+                                    int(it.get("created_at") or 0), str(it.get("item_id") or "")),
+                    reverse=True,
+                )
+                evicted_ids = [it["item_id"] for it in active[CUSTOM_LIMIT:]]
+            if evicted_ids:
+                evicted = set(evicted_ids)
+                _items[:] = [it for it in _items if it.get("item_id") not in evicted]
         return entry
+
+
+async def keep_item(item_id: str, *, persist: bool = True) -> bool:
+    """Renew an active custom item and refresh its eviction priority."""
+    async with _update_lock:
+        target = next((it for it in _items if it.get("item_id") == item_id
+                       and it.get("section") == "custom"), None)
+        if target is None:
+            return False
+        now = int(time.time() * 1000)
+        if persist:
+            from database import keep_custom_container_item
+
+            order = await keep_custom_container_item(item_id)
+            if order is None:
+                return False
+        else:
+            order = max(now, max((int(it.get("last_maintained_order") or 0)
+                                  for it in _items if it.get("section") == "custom"), default=0) + 1)
+        target["remaining_rounds"] = CUSTOM_LIFETIME_ROUNDS
+        target["last_maintained_order"] = order
+        target["updated_at"] = now
+        return True
+
+
+async def advance_completed_round(*, persist: bool = True) -> None:
+    """Spend one lifetime round after a successful main-model round."""
+    async with _update_lock:
+        if persist:
+            from database import advance_custom_container_round
+
+            remaining = await advance_custom_container_round()
+        else:
+            remaining = {
+                it["item_id"]: _remaining_rounds(it) - 1
+                for it in _items if it.get("section") == "custom"
+                and _remaining_rounds(it) > 1
+            }
+        _items[:] = [it for it in _items if it.get("section") != "custom"
+                     or it.get("item_id") in remaining]
+        for it in _items:
+            if it.get("section") == "custom":
+                it["remaining_rounds"] = remaining[it["item_id"]]
 
 
 async def remove_item(

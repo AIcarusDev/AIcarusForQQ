@@ -36,6 +36,7 @@ from typing import Any
 import aiosqlite
 
 from cognition_sources_schema import COGNITION_SOURCES_SCHEMA_SQL
+from llm.prompt.container import CUSTOM_LIMIT, CUSTOM_LIFETIME_ROUNDS
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 # 数据库路径 (data/AICQ.db)
@@ -385,7 +386,9 @@ async def init_db() -> None:
                 metadata_json TEXT   NOT NULL DEFAULT '{}',
                 created_at   INTEGER NOT NULL DEFAULT 0,
                 updated_at   INTEGER NOT NULL DEFAULT 0,
-                is_deleted   INTEGER NOT NULL DEFAULT 0
+                is_deleted   INTEGER NOT NULL DEFAULT 0,
+                remaining_rounds INTEGER,
+                last_maintained_order INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_bot_container_items_active
                 ON bot_container_items(section, created_at) WHERE is_deleted=0;
@@ -543,6 +546,7 @@ async def init_db() -> None:
 
         await _migrate_memory_schema_to_primary(db)
         await _migrate_schema(db)
+        await _migrate_custom_container_items(db)
         from llm.media.image_store import SCHEMA as image_schema
         await db.executescript(image_schema)
         await _migrate_legacy(db)
@@ -556,6 +560,44 @@ async def init_db() -> None:
         logger.exception("[schema] Memory schema initialization failed")
 
     logger.info("数据库初始化完成: %s", DB_PATH)
+
+
+async def _migrate_custom_container_items(db) -> None:
+    """Give legacy custom entries a fresh lease and retain the newest five."""
+    await _ensure_columns(db, "bot_container_items", (
+        ("remaining_rounds", "remaining_rounds INTEGER"),
+        ("last_maintained_order", "last_maintained_order INTEGER"),
+    ))
+    await db.execute("BEGIN")
+    try:
+        await db.execute(
+            """UPDATE bot_container_items
+               SET remaining_rounds=?, last_maintained_order=created_at
+               WHERE section='custom' AND is_deleted=0 AND remaining_rounds IS NULL""",
+            (CUSTOM_LIFETIME_ROUNDS,),
+        )
+        await db.execute(
+            """UPDATE bot_container_items SET last_maintained_order=created_at
+               WHERE section='custom' AND is_deleted=0 AND last_maintained_order IS NULL"""
+        )
+        async with db.execute(
+            """SELECT item_id FROM bot_container_items
+               WHERE section='custom' AND is_deleted=0
+               ORDER BY last_maintained_order DESC, created_at DESC, item_id DESC
+               LIMIT -1 OFFSET ?""",
+            (CUSTOM_LIMIT,),
+        ) as cur:
+            evicted = [row[0] for row in await cur.fetchall()]
+        if evicted:
+            await db.executemany(
+                """UPDATE bot_container_items SET is_deleted=1, updated_at=?
+                   WHERE item_id=?""",
+                [(_ms(), item_id) for item_id in evicted],
+            )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
 
 _MEMORY_TABLE_RENAMES: tuple[tuple[str, str], ...] = (
@@ -2806,26 +2848,106 @@ async def write_container_item(
     item_key: str = "",
     content: str = "",
     metadata: dict | None = None,
-) -> None:
-    """写入或更新一条 container 条目。"""
+) -> tuple[list[str], int | None]:
+    """Write an item; return evicted IDs and its maintenance order."""
     now = _ms()
     meta_str = json.dumps(metadata or {}, ensure_ascii=False)
     async with _connect() as db:
-        await db.execute(
-            """INSERT INTO bot_container_items
-               (item_id, section, item_key, content, metadata_json, created_at, updated_at, is_deleted)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-               ON CONFLICT(item_id) DO UPDATE SET
-                   section=excluded.section,
-                   item_key=excluded.item_key,
-                   content=excluded.content,
-                   metadata_json=excluded.metadata_json,
-                   updated_at=excluded.updated_at,
-                   is_deleted=0""",
-            (item_id, section, item_key, content, meta_str, now, now),
-        )
-        await db.commit()
+        await db.execute("BEGIN")
+        try:
+            order = None
+            if section == "custom":
+                async with db.execute(
+                    "SELECT COALESCE(MAX(last_maintained_order), 0) FROM bot_container_items"
+                ) as cur:
+                    order = max(now, int((await cur.fetchone())[0]) + 1)
+            await db.execute(
+                """INSERT INTO bot_container_items
+                   (item_id, section, item_key, content, metadata_json, created_at, updated_at,
+                    is_deleted, remaining_rounds, last_maintained_order)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                   ON CONFLICT(item_id) DO UPDATE SET
+                       section=excluded.section,
+                       item_key=excluded.item_key,
+                       content=excluded.content,
+                       metadata_json=excluded.metadata_json,
+                       updated_at=excluded.updated_at,
+                       is_deleted=0,
+                       remaining_rounds=excluded.remaining_rounds,
+                       last_maintained_order=excluded.last_maintained_order""",
+                (item_id, section, item_key, content, meta_str, now, now,
+                 CUSTOM_LIFETIME_ROUNDS if section == "custom" else None, order),
+            )
+            evicted: list[str] = []
+            if section == "custom":
+                async with db.execute(
+                    """SELECT item_id FROM bot_container_items
+                       WHERE section='custom' AND is_deleted=0
+                       ORDER BY last_maintained_order DESC, created_at DESC, item_id DESC
+                       LIMIT -1 OFFSET ?""",
+                    (CUSTOM_LIMIT,),
+                ) as cur:
+                    evicted = [row[0] for row in await cur.fetchall()]
+                if evicted:
+                    await db.executemany(
+                        """UPDATE bot_container_items SET is_deleted=1, updated_at=?
+                           WHERE item_id=?""",
+                        [(now, evicted_id) for evicted_id in evicted],
+                    )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
     logger.debug("已写入 container 条目: item_id=%s, section=%s", item_id, section)
+    return evicted, order
+
+
+async def keep_custom_container_item(item_id: str) -> int | None:
+    """Renew an active custom item and return its new maintenance order."""
+    async with _connect() as db:
+        await db.execute("BEGIN")
+        try:
+            async with db.execute(
+                "SELECT COALESCE(MAX(last_maintained_order), 0) FROM bot_container_items"
+            ) as cur:
+                order = max(_ms(), int((await cur.fetchone())[0]) + 1)
+            cur = await db.execute(
+                """UPDATE bot_container_items
+                   SET remaining_rounds=?, last_maintained_order=?, updated_at=?
+                   WHERE item_id=? AND section='custom' AND is_deleted=0""",
+                (CUSTOM_LIFETIME_ROUNDS, order, _ms(), item_id),
+            )
+            await db.commit()
+            return order if cur.rowcount else None
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def advance_custom_container_round() -> dict[str, int]:
+    """Spend one completed main round and archive expired custom items."""
+    async with _connect() as db:
+        await db.execute("BEGIN")
+        try:
+            await db.execute(
+                """UPDATE bot_container_items SET remaining_rounds=remaining_rounds-1
+                   WHERE section='custom' AND is_deleted=0 AND remaining_rounds>0"""
+            )
+            await db.execute(
+                """UPDATE bot_container_items SET is_deleted=1, updated_at=?
+                   WHERE section='custom' AND is_deleted=0 AND remaining_rounds<=0""",
+                (_ms(),),
+            )
+            async with db.execute(
+                """SELECT item_id, remaining_rounds FROM bot_container_items
+                   WHERE section='custom' AND is_deleted=0"""
+            ) as cur:
+                remaining = {row[0]: int(row[1]) for row in await cur.fetchall()}
+            await db.commit()
+            return remaining
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def soft_delete_container_item(item_id: str) -> bool:
@@ -2844,7 +2966,8 @@ async def load_container_items() -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT item_id, section, item_key, content, metadata_json, created_at, updated_at
+            """SELECT item_id, section, item_key, content, metadata_json, created_at, updated_at,
+                      remaining_rounds, last_maintained_order
                FROM bot_container_items
                WHERE is_deleted=0
                ORDER BY created_at ASC"""

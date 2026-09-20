@@ -75,6 +75,19 @@ def test_container_empty_renders_self_closing_tag():
     assert container.build_container_xml() == "<container/>"
 
 
+def test_custom_render_has_five_item_safety_limit():
+    container.restore([
+        {"item_id": f"item_{i}", "section": "custom", "content": str(i),
+         "created_at": i, "remaining_rounds": 8}
+        for i in range(7)
+    ])
+    root = ET.fromstring(container.build_container_xml(contracts=[]))
+    assert {item.attrib["id"] for item in root.findall("custom/item")} == {
+        f"item_{i}" for i in range(2, 7)
+    }
+    assert "keep" in root.findtext("custom/des")
+
+
 def test_container_renders_strict_skeleton_with_items():
     # 只有 custom 条目
     container.restore([
@@ -88,7 +101,8 @@ def test_container_renders_strict_skeleton_with_items():
     xml = container.build_container_xml()
     assert xml.startswith("<container>\n  <des>")
     assert xml.index("  <preset/>") < xml.index("  <custom>")
-    assert '<item id="cont_001" key="user_note">some custom content</item>' in xml
+    assert '<item id="cont_001" key="user_note" remaining_rounds="8">some custom content</item>' in xml
+    assert "at most 5 entries" in xml
     assert xml.endswith("</custom>\n</container>")
 
     # 只有 preset 条目

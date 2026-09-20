@@ -741,6 +741,12 @@ async def consciousness_main_loop() -> None:
                 )
                 if not await _persist_round(session, focus, result, elapsed_ms=elapsed_ms):
                     continue
+                try:
+                    from llm.prompt import container as _container
+
+                    await _container.advance_completed_round()
+                except Exception:
+                    logger.warning("[main] custom container 寿命递减失败", exc_info=True)
                 if await core_restart.shutdown_after_round_if_requested():
                     return
                 if maintenance_service.is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
