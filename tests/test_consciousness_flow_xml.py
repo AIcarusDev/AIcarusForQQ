@@ -323,7 +323,8 @@ def test_to_xml_messages_collapses_six_rounds_after_summary_and_keeps_two_cognit
     assert [message["role"] for message in messages] == [
         "user", "user", "assistant", "user", "assistant", "user",
     ]
-    assert messages[0]["content"] == "<summary>\nsummary through one\n</summary>"
+    assert messages[0]["content"].startswith("<summary>\n<des>")
+    assert "summary through one\n</summary>" in messages[0]["content"]
     old_cycles = messages[1]["content"]
     assert isinstance(old_cycles, str)
     assert old_cycles.count("<cycle ") == 6

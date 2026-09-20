@@ -199,25 +199,3 @@ def test_event_structuring_does_not_hold_write_lock_during_model_call(tmp_path, 
     assert result["model_errors"] == []
     with sqlite3.connect(db_path) as con:
         assert con.execute("SELECT COUNT(*) FROM lock_probe").fetchone()[0] == 1
-
-
-def test_schema_replaces_legacy_pending_mount_tables(tmp_path):
-    from memory.maintenance.preprocessing import ensure_preprocessing_schema
-
-    with sqlite3.connect(tmp_path / "legacy-pending.sqlite3") as con:
-        con.executescript(
-            """
-            CREATE TABLE MemoryMounts (mount_id TEXT PRIMARY KEY);
-            CREATE TABLE MemoryLocalStorylineMounts (proposal_id TEXT PRIMARY KEY);
-            INSERT INTO MemoryMounts VALUES ('old');
-            INSERT INTO MemoryLocalStorylineMounts VALUES ('old');
-            """
-        )
-        ensure_preprocessing_schema(con)
-        ensure_preprocessing_schema(con)
-        tables = {
-            row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        assert "MemoryMounts" not in tables
-        assert "MemoryLocalStorylineMounts" not in tables
-        assert "MemoryCandidateStorylines" in tables

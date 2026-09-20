@@ -32,19 +32,22 @@ from database import (
     load_chat_sessions,
     load_chat_messages,
     load_goals,
+    load_todo_snapshot,
+    load_container_items,
     load_adapter_contents,
     save_adapter_contents,
     load_namespace_runtime_state,
     save_namespace_runtime_state,
 )
 from llm.compression.config import normalize_generation_config
-from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     sessions,
     update_bot_info,
 )
 import llm.prompt.goals as _goals
+import llm.prompt.todo as _todo
+import llm.prompt.container as _container
 from memory.tokenizer import (
     load_custom_dict_from_events,
     configure as _configure_tokenizer,
@@ -121,6 +124,17 @@ async def startup() -> None:
     _goal_rows = await load_goals(limit=_goals.get_max_entries())
     _goals.restore(_goal_rows)
     logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
+
+    _todo.restore(await load_todo_snapshot())
+    logger.info("[startup] 已恢复待办: %d 条", len(_todo.get_snapshot()["plan"]))
+
+    # 恢复上下文契约 container
+    try:
+        _container_rows = await load_container_items()
+        _container.restore(_container_rows)
+        logger.info("[startup] 已恢复 container 条目: %d 条", len(_container_rows))
+    except Exception:
+        logger.warning("[startup] 恢复 container 条目失败", exc_info=True)
 
     _restart_intent = core_restart.read_pending_intent()
 
@@ -212,22 +226,7 @@ async def startup() -> None:
                 platform=_meta.get("focus_platform") or "qq",
             )
 
-    # 启动时清理过期 / 超量的图片缓存
-    _evict_cfg = app_state.config.get("vision_bridge", {}).get("cache_eviction", {})
-    try:
-        _max_age = int(_evict_cfg.get("max_age_days", 30))
-    except (ValueError, TypeError):
-        logger.warning("[startup] cache_eviction.max_age_days 配置无效，已回退到默认值 30")
-        _max_age = 30
-    try:
-        _max_size = int(_evict_cfg.get("max_size_mb", 0))
-    except (ValueError, TypeError):
-        logger.warning("[startup] cache_eviction.max_size_mb 配置无效，已回退到默认值 0")
-        _max_size = 0
-    if _max_age or _max_size:
-        await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
-
-    # 启动时全面检查表情包收藏（校验文件/SHA-256、纳入孤儿、去重、修复编号空洞）
+    # Original images are durable; legacy stores are handled by explicit migration.
     from llm.media.sticker_collection import reconcile_stickers
     _rc_stats = await asyncio.to_thread(reconcile_stickers)
     logger.info(
@@ -347,6 +346,11 @@ async def startup() -> None:
         async def _handle_qq_adapter_connect() -> None:
             global _qq_metadata_refresh_task
             try:
+                if qq_runtime.friends:
+                    try:
+                        await qq_runtime.friends.list_requests()
+                    except Exception:
+                        logger.warning("[qq] 恢复好友申请失败", exc_info=True)
                 try:
                     await client.detect_adapter()
                 except Exception:
@@ -413,14 +417,6 @@ async def startup() -> None:
         consciousness_main_loop(), name="consciousness_main_loop",
     )
     logger.info("[startup] 意识主循环已启动，等待首次输入")
-
-    # ── 邮件远程指令控制器（Phase 3）──────────────────
-    ec = app_state.email_controller
-    if ec is not None:
-        try:
-            await ec.start()
-        except Exception:
-            logger.warning("[startup] EmailController 启动失败", exc_info=True)
 
     # ── 续跑上次未完成的归档任务（Ctrl+C / 崩溃残留） ─────
     try:
@@ -550,14 +546,6 @@ async def shutdown() -> None:
             await tts_server.stop()
         except Exception:
             logger.warning("[shutdown] TTS 插件服务端停止异常", exc_info=True)
-
-    # ── 停止邮件远程指令控制器 ─────────────────────────
-    ec = app_state.email_controller
-    if ec is not None:
-        try:
-            await ec.stop()
-        except Exception:
-            logger.warning("[shutdown] EmailController 停止异常", exc_info=True)
 
     try:
         from browser.session import close_browser_sessions

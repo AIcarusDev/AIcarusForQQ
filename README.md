@@ -63,13 +63,11 @@ Edit the bot's personality in `config/persona.md`.
 
 ### 5. Agent Prompt
 
-The Agent's drive and cognition instructions live in:
+The Agent's custom instructions live in:
 
-- `config/drive/drive.md`
-- `config/cognition_content/cognition_content.md`
-- `config/cognition_prompt/cognition_prompt.md`
+- `config/instruction.md`
 
-Missing files are initialized from their tracked `.md.template` files. Direct edits take effect on the next Agent round. The paths can be overridden through `prompt_files` in `config/config_user.yaml`, or the documents can be edited from **WebUI → Settings → Agent Prompt**.
+The file is initialized empty when missing. Direct edits take effect on the next Agent round. Its path can be overridden through `prompt_files.instruction` in `config/config_user.yaml`, or the document can be edited from **WebUI → Settings → Agent Prompt**.
 
 ### 6. Self Image
 

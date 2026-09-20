@@ -13,7 +13,7 @@ from web import routes_settings
 def _write_prompt_fixture(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     prompt_paths = {
         key: tmp_path / f"{key}.md"
-        for key in ("drive", "cognition_content", "cognition_prompt")
+        for key in ("instruction",)
     }
     for key, path in prompt_paths.items():
         path.write_text(f"{key}-initial", encoding="utf-8", newline="")
@@ -56,6 +56,7 @@ def test_agent_prompt_settings_route_preserves_files_and_revision_guard(
         loaded = await client.get("/settings/agent-prompt")
         assert loaded.status_code == 200
         snapshot = (await loaded.get_json())["data"]
+        assert snapshot["schema_version"] == "agent-prompt-v2"
         assert loaded.headers["ETag"] == f'"{snapshot["revision"]}"'
         assert loaded.headers["Cache-Control"] == "no-store"
 
@@ -66,9 +67,7 @@ def test_agent_prompt_settings_route_preserves_files_and_revision_guard(
         assert missing_revision.status_code == 428
 
         values = {
-            "drive": "  drive\n",
-            "cognition_content": "",
-            "cognition_prompt": "prompt\n\n",
+            "instruction": "updated instruction\n",
         }
         saved_response = await client.patch(
             "/settings/agent-prompt",
@@ -87,8 +86,8 @@ def test_agent_prompt_settings_route_preserves_files_and_revision_guard(
             for key, path in prompt_paths.items()
         } == values
 
-        prompt_paths["drive"].write_text(
-            "externally-edited-drive",
+        prompt_paths["instruction"].write_text(
+            "externally-edited-instruction",
             encoding="utf-8",
             newline="",
         )
@@ -100,7 +99,7 @@ def test_agent_prompt_settings_route_preserves_files_and_revision_guard(
         conflict_payload = await conflict.get_json()
         assert conflict.status_code == 409
         assert conflict_payload["error"]["code"] == "agent_prompt_revision_conflict"
-        assert conflict_payload["latest"]["values"]["drive"] == "externally-edited-drive"
+        assert conflict_payload["latest"]["values"]["instruction"] == "externally-edited-instruction"
 
     asyncio.run(scenario())
 
@@ -127,7 +126,7 @@ def test_agent_prompt_settings_route_rejects_invalid_values(
             response = await client.patch(
                 "/settings/agent-prompt",
                 headers={"If-Match": loaded["revision"]},
-                json={"values": {**loaded["values"], "drive": invalid}},
+                json={"values": {**loaded["values"], "instruction": invalid}},
             )
             assert response.status_code == 422
 
@@ -138,5 +137,11 @@ def test_agent_prompt_settings_route_rejects_invalid_values(
         )
         assert unknown.status_code == 422
 
-    asyncio.run(scenario())
+        retired_field = await client.patch(
+            "/settings/agent-prompt",
+            headers={"If-Match": loaded["revision"]},
+            json={"values": {"cognition_content": "legacy"}},
+        )
+        assert retired_field.status_code == 422
 
+    asyncio.run(scenario())

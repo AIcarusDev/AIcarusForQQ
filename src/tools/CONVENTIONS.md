@@ -94,11 +94,12 @@ PROMPT_SIGNATURE = """
 goal_manage(args:
   | {
       action: "create";
-      goals: { title: string; content: string; reason: string }[];
+      goal: string;
+      background: string;
     }
   | {
-      action: "resolve";
-      goal_ids: string[];
+      action: "delete";
+      goal_id: string;
       resolution: "completed" | "abandoned" | "duplicate" | "superseded" | "mistaken";
     }
 )

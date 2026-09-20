@@ -94,11 +94,11 @@ def inspect_image_payload(
 
 
 class ImageResolver:
-    """Resolve an ``image_ref`` using the same visibility order as the world view."""
+    """Resolve an ``image_ref`` via fast L1 memory cache and reliable L2 SQLite media_registry."""
 
     def __init__(
         self,
-        session: Any,
+        session: Any = None,
         *,
         history_loader: HistoryLoader | None = None,
         browser_image_reader: BrowserImageReader | None = None,
@@ -107,43 +107,25 @@ class ImageResolver:
         self.history_loader = history_loader or load_history_window
         self.browser_image_reader = browser_image_reader or read_browser_image_file
 
-    def resolve(self, image_ref: object) -> tuple[dict[str, Any], str] | None:
-        """Return the first visible image and its source, or ``None``."""
+    def resolve(self, image_ref: object, *, include_browser: bool = True) -> tuple[dict[str, Any], str] | None:
+        """Return the first resolved image and its source, or ``None``."""
 
         normalized_ref = normalize_image_ref(image_ref)
         if not normalized_ref:
             return None
 
-        for entry in getattr(self.session, "context_messages", []) or []:
-            if image := image_from_entry(entry, normalized_ref):
-                return image, "chat"
-
-        if getattr(self.session, "is_browsing_history", lambda: False)():
-            view = getattr(self.session, "chat_window_view", {}) or {}
-            top_db_id = view.get("top_db_id")
-            if top_db_id:
-                try:
-                    page_size = int(view.get("page_size") or 10)
-                    for entry in self.history_loader(self.session, int(top_db_id), page_size):
-                        if image := image_from_entry(entry, normalized_ref):
-                            return image, "history"
-                except Exception:
-                    logger.debug("[tools] view_image: 历史窗口查找失败", exc_info=True)
-
-        for entry in visible_forward_entries(self.session):
-            if image := image_from_entry(entry, normalized_ref):
-                return image, "forward"
-
-        try:
-            browser_image = self.browser_image_reader(normalized_ref)
-        except Exception:
-            logger.debug("[tools] view_image: browser 图片查找失败", exc_info=True)
-            browser_image = None
-        if browser_image is not None:
-            raw, mime = browser_image
-            return {"data": raw, "mime": mime or "image/jpeg"}, "browser"
-
+        from .image_store import read_image
+        record = read_image(normalized_ref)
+        if record is not None:
+            return record, str(record.get("source_type") or "media")
         return None
+
+    @staticmethod
+    def _visible_result(image_ref: str, image: dict[str, Any], source: str) -> tuple[dict[str, Any], str]:
+        from .media_cache import cache_recent_image
+
+        cache_recent_image(image_ref, image, source=source)
+        return image, source
 
     @staticmethod
     def payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
@@ -192,12 +174,30 @@ def image_from_entry(entry: dict[str, Any], image_ref: str) -> dict[str, Any] | 
 
 
 def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
+    if image.get("image_ref"):
+        from .image_store import read_image
+        current = read_image(image["image_ref"])
+        if current is None or current.get("unavailable_status"):
+            return None
+        return current["data"], current["mime"]
+    if image.get("unavailable_status"):
+        return None
     mime = str(image.get("mime") or image.get("mime_type") or "image/jpeg")
     data = image.get("data")
     if isinstance(data, bytes):
         return data, mime
     if isinstance(data, str) and data:
         return data, mime
+
+    file_path = image.get("file_path")
+    if file_path:
+        from pathlib import Path
+        p = Path(str(file_path))
+        if p.is_file():
+            try:
+                return p.read_bytes(), mime
+            except OSError:
+                pass
 
     b64 = image.get("base64")
     if isinstance(b64, str) and b64:
@@ -207,21 +207,12 @@ def image_payload(image: dict[str, Any]) -> tuple[str | bytes, str] | None:
             return None
         return b64, mime
 
-    phash = image.get("phash")
-    if phash:
-        try:
-            from llm.media.image_cache import read_image_b64
-
-            cached = read_image_b64(str(phash))
-        except Exception:
-            logger.debug("[tools] view_image: cache 读取失败 phash=%s", phash, exc_info=True)
-            cached = None
-        if cached:
-            return cached
     return None
 
 
 def image_unavailable_status(image: dict[str, Any]) -> str:
+    if status := image.get("unavailable_status"):
+        return str(status)
     for key in ("pending", "expired", "failed"):
         if image.get(key):
             return key
@@ -232,3 +223,17 @@ def image_unavailable_status(image: dict[str, Any]) -> str:
         except (binascii.Error, ValueError):
             return "invalid_image_data"
     return "unavailable"
+
+
+def image_bytes(image: dict[str, Any]) -> tuple[bytes, str] | None:
+    """Decode the shared payload without transforming the original image bytes."""
+    payload = image_payload(image)
+    if payload is None:
+        return None
+    data, mime = payload
+    if isinstance(data, bytes):
+        return data, mime
+    try:
+        return base64.b64decode(data, validate=True), mime
+    except (binascii.Error, ValueError):
+        return None

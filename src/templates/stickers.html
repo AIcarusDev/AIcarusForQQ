@@ -330,18 +330,18 @@
     <div class="stk-toolbar">
       <div class="stk-search-wrap">
         <span class="stk-search-icon">🔍</span>
-        <input type="text" id="searchInput" placeholder="搜索描述或 ID…" oninput="filterGrid()">
+        <input type="text" id="searchInput" placeholder="搜索描述或 image_ref…" oninput="filterGrid()">
       </div>
       <select class="stk-sort-select" id="sortSelect" onchange="filterGrid()">
-        <option value="id-asc">ID 升序</option>
-        <option value="id-desc">ID 降序</option>
+        <option value="ref-asc">引用升序</option>
+        <option value="ref-desc">引用降序</option>
         <option value="date-desc">最新优先</option>
-        <option value="date-asc">最早优先</option>
+        <option value="date-asc" selected>最早优先</option>
         <option value="desc-asc">描述 A→Z</option>
       </select>
       <span id="filterCount" style="font-size:12px;color:var(--text-sec);"></span>
       <span id="stickerCount" class="stk-toolbar-meta"></span>
-      <button class="stk-btn" id="reconcileBtn" onclick="doReconcile()" title="检查并修复索引、去重、重编号">🔧 整理收藏</button>
+      <button class="stk-btn" id="reconcileBtn" onclick="doReconcile()" title="检查索引、修复改名和去重">🔧 整理收藏</button>
     </div>
 
     <!-- 卡片网格 -->
@@ -436,6 +436,7 @@
     try {
       const r = await fetch("/api/stickers/list");
       const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "收藏加载失败");
       _stickers = d.stickers || [];
       updateStats(_stickers);
       filterGrid();
@@ -461,16 +462,16 @@
 
     if (query) {
       items = items.filter(s =>
-        s.id.toLowerCase().includes(query) ||
+        s.image_ref.toLowerCase().includes(query) ||
         (s.description || "").toLowerCase().includes(query)
       );
     }
 
-    if      (sort === "id-desc")   items.sort((a, b) => b.id.localeCompare(a.id));
+    if      (sort === "ref-desc")   items.sort((a, b) => b.image_ref.localeCompare(a.image_ref));
     else if (sort === "date-desc") items.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
     else if (sort === "date-asc")  items.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
     else if (sort === "desc-asc")  items.sort((a, b) => (a.description || "").localeCompare(b.description || ""));
-    else items.sort((a, b) => a.id.localeCompare(b.id));
+    else items.sort((a, b) => a.image_ref.localeCompare(b.image_ref));
 
     document.getElementById("filterCount").textContent =
       query ? (items.length + " / " + _stickers.length + " 个") : "";
@@ -512,14 +513,14 @@
   function buildCard(s) {
     const card = document.createElement("div");
     card.className = "stk-card";
-    card.dataset.id = s.id;
+    card.dataset.imageRef = s.image_ref;
 
     // 图片区
     const imgWrap = document.createElement("div");
     imgWrap.className = "stk-card-img";
     const img = document.createElement("img");
-    img.src = "/api/sticker/" + encodeURIComponent(s.id) + "?v=" + _imgVersion;
-    img.alt = s.description || s.id;
+    img.src = "/api/sticker/" + encodeURIComponent(s.image_ref) + "?v=" + _imgVersion;
+    img.alt = s.description || s.image_ref;
     img.loading = "lazy";
     imgWrap.append(img);
 
@@ -528,8 +529,8 @@
     ov.className = "stk-card-img-overlay";
     [
       ["🔍", "放大", e => { e.stopPropagation(); openLightbox(s); }],
-      ["✎",  "编辑描述", e => { e.stopPropagation(); startEditDesc(s.id); }],
-      ["✕",  "删除", e => { e.stopPropagation(); deleteSticker(s.id); }],
+      ["✎",  "编辑描述", e => { e.stopPropagation(); startEditDesc(s.image_ref); }],
+      ["✕",  "删除", e => { e.stopPropagation(); deleteSticker(s.image_ref); }],
     ].forEach(([icon, title, fn], i) => {
       const b = document.createElement("button");
       b.className = "stk-overlay-btn" + (i === 2 ? " del" : "");
@@ -545,7 +546,9 @@
 
     const idEl = document.createElement("div");
     idEl.className = "stk-card-id";
-    idEl.textContent = "#" + s.id;
+    idEl.textContent = s.image_ref;
+    idEl.title = "image_ref: " + s.image_ref;
+    idEl.style.overflowWrap = "anywhere";
     info.append(idEl);
 
     const descEl = document.createElement("div");
@@ -553,7 +556,7 @@
     descEl.textContent = s.description || "点击添加描述…";
     descEl.title = "点击编辑";
     if (!s.description) descEl.style.opacity = ".4";
-    descEl.onclick = () => startEditDesc(s.id);
+    descEl.onclick = () => startEditDesc(s.image_ref);
     info.append(descEl);
 
     const descInput = document.createElement("textarea");
@@ -562,8 +565,8 @@
     descInput.value = s.description || "";
     descInput.placeholder = "描述表情包的含义…";
     descInput.onkeydown = e => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveDesc(s.id); }
-      if (e.key === "Escape") cancelEditDesc(s.id);
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveDesc(s.image_ref); }
+      if (e.key === "Escape") cancelEditDesc(s.image_ref);
     };
     info.append(descInput);
 
@@ -582,14 +585,14 @@
     saveBtn.className = "stk-act-btn accent save-desc-btn";
     saveBtn.textContent = "✓ 保存";
     saveBtn.style.display = "none";
-    saveBtn.onclick = () => saveDesc(s.id);
+    saveBtn.onclick = () => saveDesc(s.image_ref);
     actions.append(saveBtn);
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "stk-act-btn cancel-desc-btn";
     cancelBtn.textContent = "✕";
     cancelBtn.style.display = "none";
-    cancelBtn.onclick = () => cancelEditDesc(s.id);
+    cancelBtn.onclick = () => cancelEditDesc(s.image_ref);
     actions.append(cancelBtn);
 
     meta.append(actions);
@@ -600,7 +603,7 @@
 
   // ── Desc editing ──
   function getCard(id) {
-    return document.querySelector(".stk-card[data-id='" + CSS.escape(id) + "']");
+    return document.querySelector(".stk-card[data-image-ref='" + CSS.escape(id) + "']");
   }
 
   function startEditDesc(id) {
@@ -619,7 +622,7 @@
   function cancelEditDesc(id) {
     const card = getCard(id);
     if (!card) return;
-    const s = _stickers.find(x => x.id === id);
+    const s = _stickers.find(x => x.image_ref === id);
     card.querySelector(".stk-card-desc-input").value = s ? (s.description || "") : "";
     card.querySelector(".stk-card-desc").classList.remove("editing");
     card.querySelector(".stk-card-desc-input").classList.remove("editing");
@@ -640,13 +643,13 @@
       });
       const d = await r.json();
       if (!d.success) { showStatus("保存失败: " + d.error, "error"); return; }
-      const s = _stickers.find(x => x.id === id);
+      const s = _stickers.find(x => x.image_ref === id);
       if (s) s.description = desc;
       const descEl = card.querySelector(".stk-card-desc");
       descEl.textContent = desc || "点击添加描述…";
       descEl.style.opacity = desc ? "" : ".4";
       cancelEditDesc(id);
-      showStatus("#" + id + " 描述已更新", "ok");
+      showStatus("ref: " + id + " 描述已更新", "ok");
     } catch (e) {
       showStatus("保存异常: " + e, "error");
     }
@@ -654,13 +657,13 @@
 
   // ── Delete ──
   async function deleteSticker(id) {
-    if (!confirm("确定删除表情包 #" + id + "？\n删除后剩余编号将自动重排，此操作不可撤销。")) return;
+    if (!confirm("确定删除表情包 " + id + "？\n该收藏及其引用别名将删除，工作空间副本保留。")) return;
     try {
       const r = await fetch("/api/stickers/" + encodeURIComponent(id), { method: "DELETE" });
       const d = await r.json();
       if (!d.success) { showStatus("删除失败: " + d.error, "error"); return; }
-      _imgVersion = Date.now(); // bust cache after renumbering
-      showStatus("#" + id + " 已删除", "ok");
+      _imgVersion = Date.now(); // refresh previews after deletion
+      showStatus("ref: " + id + " 已删除", "ok");
       await loadStickers();
     } catch (e) {
       showStatus("删除异常: " + e, "error");
@@ -682,6 +685,7 @@
       if (stats.adopted_orphans)    parts.push("收录孤儿 " + stats.adopted_orphans + " 个");
       if (stats.removed_duplicates) parts.push("去除重复 " + stats.removed_duplicates + " 个");
       if (stats.updated_hash)       parts.push("更新哈希 " + stats.updated_hash + " 个");
+      if (stats.skipped_overflow)   parts.push("容量已满，保留未收录文件 " + stats.skipped_overflow + " 个");
       _imgVersion = Date.now(); // bust cache after reconcile
       showStatus(parts.length ? "整理完成：" + parts.join("，") : "整理完成，索引无需修改", "ok");
       await loadStickers();
@@ -695,9 +699,9 @@
   // ── Lightbox ──
   function openLightbox(s, ver) {
     ver = ver || _imgVersion;
-    document.getElementById("imgOverlayImg").src = "/api/sticker/" + encodeURIComponent(s.id) + "?v=" + ver;
+    document.getElementById("imgOverlayImg").src = "/api/sticker/" + encodeURIComponent(s.image_ref) + "?v=" + ver;
     document.getElementById("lightboxMeta").textContent =
-      "#" + s.id + (s.description ? "  ·  " + s.description : "");
+      "ref: " + s.image_ref + (s.description ? "  ·  " + s.description : "");
     document.getElementById("imgOverlay").classList.add("show");
   }
   function closeLightbox() {

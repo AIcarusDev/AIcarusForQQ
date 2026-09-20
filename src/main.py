@@ -32,12 +32,11 @@ from quart import Quart
 from zoneinfo import ZoneInfo
 
 import app_state
-from alerting import AlertManager
-from email_controller import EmailController
 from config_loader import AGENT_PROMPT_KEYS, load_config
 from web.debug_server import debug_bp, init_debug, broadcast_platform_status
 from lifecycle import startup, shutdown
 from log_config import setup_logging
+from llm.media.image_upgrade import ensure_images_ready
 from platforms import PlatformRegistry
 from platforms.core import CoreRuntime
 from platforms.qq import QQRuntime
@@ -47,7 +46,6 @@ from tts import TTSServer
 from llm.core.provider import (
     create_adapter,
     build_tool_execution_guard_adapter_cfg,
-    build_slow_thinking_adapter_cfg,
     build_event_extraction_adapter_cfg,
     build_memory_processing_adapter_cfg,
     build_compression_adapter_cfg,
@@ -80,6 +78,7 @@ _LAUNCHER_MODE = os.environ.get("AICQ_LAUNCHER_MODE") == "1"
 # ── 环境变量 & 日志 ───────────────────────────────────────
 load_dotenv()
 setup_logging()
+ensure_images_ready(Path(__file__).resolve().parents[1])
 
 # ── 加载配置 & 填充 app_state ─────────────────────────────
 config, prompt_docs = load_config()
@@ -132,14 +131,6 @@ if not _WEBUI_ONLY:
             )
         except (ValueError, Exception):
             app_state.tool_execution_guard_adapter = None
-
-    # ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
-    app_state.slow_thinking_cfg = config.get("slow_thinking", {})
-    _st_cfg = app_state.slow_thinking_cfg
-    if _st_cfg.get("enabled", True) and _st_cfg.get("provider") and _st_cfg.get("model"):
-        app_state.slow_thinking_adapter = create_adapter(
-            build_slow_thinking_adapter_cfg(config, _st_cfg)
-        )
 
     # ── 记忆事件提取子模型初始化 ────────────────────────────────────
     app_state.event_extraction_cfg = config.get("memory", {}).get("auto_archive", {})
@@ -226,28 +217,13 @@ if not _WEBUI_ONLY:
         on_audio_chunk=_buffer_tts_audio,
         max_concurrent_tasks_per_plugin=int(app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)),
     ) if _tts_enabled else None
-    # ── 掉线告警（可选）────────────────────────────────
-    _alerting_cfg = config.get("alerting", {}) or {}
-    app_state.alert_manager = AlertManager(_alerting_cfg)
-    if _qq_client and app_state.alert_manager.enabled:
-        _qq_client.set_alert_manager(
-            app_state.alert_manager,
-            heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
-        )
     # ── QQ adapter 自动重启 监管器（可选）──────────────────
     _qq_runtime.supervisor = QQAdapterSupervisor(
         _qq_runtime.config.get("supervisor", {}) or {},
         client=_qq_client,
-        alert=app_state.alert_manager,
     )
     if _qq_client and _qq_runtime.supervisor.is_configured():
         _qq_client.set_supervisor(_qq_runtime.supervisor)
-    # ── 邮件远程指令（Phase 3，可选）────────────────────
-    app_state.email_controller = EmailController(
-        _alerting_cfg,
-        supervisor=_qq_runtime.supervisor,
-        alert=app_state.alert_manager,
-    )
     register_qq_platform_handlers(_qq_runtime)
 
 _qq_runtime_for_debug = app_state.platform_registry.get("qq") if app_state.platform_registry else None

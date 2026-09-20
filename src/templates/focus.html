@@ -1215,12 +1215,20 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       } else if (t === "image" || t === "sticker") {
         const imageRef = seg.image_ref || seg.ref || "";
         const imgData = imageRef ? imgs[imageRef] : null;
-        // bot 发出的贴纸：有 sticker_id，用后端路由直接加载
-        if (t === "sticker" && seg.sticker_id) {
+        // 已收藏图片通过固定 image_ref 加载；可见聊天图片优先使用消息本身的数据。
+        if (t === "sticker" && imageRef && !imgData?.base64) {
           const img = document.createElement("img");
           img.className = "seg-image";
-          img.src = `/api/sticker/${encodeURIComponent(seg.sticker_id)}`;
+          img.src = `/api/sticker/${encodeURIComponent(imageRef)}`;
           img.alt = "[贴纸]";
+          img.title = `image_ref: ${imageRef}`;
+          img.onerror = () => {
+            const tag = document.createElement("span");
+            tag.className = "seg-placeholder";
+            tag.textContent = "[贴纸不可用]";
+            tag.title = `image_ref: ${imageRef}`;
+            img.replaceWith(tag);
+          };
           img.onclick = () => openLightbox(img.src);
           container.append(img);
         } else if (imgData && imgData.base64 && imgData.mime) {
@@ -1238,7 +1246,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
             : imgData?.failed
               ? "[图片加载失败]"
               : t === "sticker"
-                ? "[贴纸]"
+                ? (imageRef ? "[贴纸]" : "[历史表情包]")
                 : "[图片]";
           container.append(tag);
         }

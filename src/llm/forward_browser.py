@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from platforms.qq.adapter.segments import (
     _determine_content_type,
-    build_content_segments,
+    build_message_content,
     get_forward_node_message_segments,
     get_reply_message_id,
     qq_adapter_segments_to_text,
@@ -127,13 +127,13 @@ def _normalize_forward_node(
         ts = datetime.now(timezone).isoformat()
 
     text = qq_adapter_segments_to_text(message, bot_id=bot_id, bot_display_name=bot_display_name)
-    content_segments = build_content_segments(message, bot_id=bot_id, bot_display_name=bot_display_name)
+    content = build_message_content(message, bot_id=bot_id, bot_display_name=bot_display_name)
     content_type = _determine_content_type(message)
     if not text and content_type == "text":
         raw_message = str(node.get("raw_message", "") or "").strip()
         if raw_message and "[CQ:" not in raw_message:
             text = raw_message
-            content_segments = [{"type": "text", "text": raw_message}]
+            content["content_segments"] = [{"type": "text", "text": raw_message}]
     entry: dict = {
         "role": "user",
         "sender_id": str(sender.get("user_id", "")),
@@ -146,47 +146,11 @@ def _normalize_forward_node(
         "timestamp": ts,
         "content": text,
         "content_type": content_type,
-        "content_segments": content_segments,
+        **content,
     }
     if reply_to := get_reply_message_id(message):
         entry["reply_to"] = reply_to
-    _attach_forward_images(entry, message)
     return entry
-
-
-def _attach_forward_images(entry: dict, message: list[dict]) -> None:
-    """Attach normal image state for images/stickers inside a forward node."""
-    image_refs = [
-        (seg.get("image_ref") or seg.get("ref"), "动画表情" if seg["type"] == "sticker" else "图片")
-        for seg in entry.get("content_segments", [])
-        if seg.get("type") in ("image", "sticker") and (seg.get("image_ref") or seg.get("ref"))
-    ]
-    if not image_refs:
-        return
-
-    image_tasks: list[tuple[str, str, str]] = []
-    for seg in message:
-        if seg.get("type") not in ("image", "mface"):
-            continue
-        data = seg.get("data", {}) or {}
-        if raw_b64 := data.get("base64", ""):
-            image_tasks.append(("b64", raw_b64, "image/jpeg"))
-        elif url := data.get("url", ""):
-            image_tasks.append(("url", url, ""))
-
-    images: dict[str, dict] = {}
-    pending_downloads: list[tuple[str, str, str]] = []
-    for (image_ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
-        if kind == "b64":
-            images[image_ref] = {"base64": value, "mime": preset_mime, "label": label}
-        else:
-            images[image_ref] = {"pending": True, "label": label}
-            pending_downloads.append((image_ref, value, label))
-
-    if images:
-        entry["images"] = images
-    if pending_downloads:
-        entry["_pending_images"] = pending_downloads
 
 
 async def _download_forward_node_images(nodes: list[dict]) -> None:

@@ -31,10 +31,12 @@ import sqlite3
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Any
 
 import aiosqlite
 
 from cognition_sources_schema import COGNITION_SOURCES_SCHEMA_SQL
+from llm.prompt.container import CUSTOM_LIMIT, CUSTOM_LIFETIME_ROUNDS
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 # 数据库路径 (data/AICQ.db)
@@ -163,6 +165,16 @@ async def init_db() -> None:
         await db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA foreign_keys=ON;
+
+            CREATE TABLE IF NOT EXISTS qq_friend_requests (
+                account_id TEXT NOT NULL,
+                flag TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                comment TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending',
+                PRIMARY KEY (account_id, flag)
+            );
 
             -- 会话注册表：记住历史会话的 key → meta，重启后可按 key 恢复
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -345,6 +357,8 @@ async def init_db() -> None:
                 goal_id      TEXT    PRIMARY KEY,
                 created_at   INTEGER NOT NULL DEFAULT 0,
                 updated_at   INTEGER NOT NULL DEFAULT 0,
+                goal         TEXT    NOT NULL DEFAULT '',
+                background   TEXT    NOT NULL DEFAULT '',
                 title        TEXT    NOT NULL DEFAULT '',
                 content      TEXT    NOT NULL DEFAULT '',
                 reason       TEXT    NOT NULL DEFAULT '',
@@ -363,6 +377,22 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_bot_goals_active
                 ON bot_goals(created_at) WHERE is_deleted=0 AND status='active';
 
+            -- 模型上下文契约 container 表：全局单例条目存储
+            CREATE TABLE IF NOT EXISTS bot_container_items (
+                item_id      TEXT    PRIMARY KEY,
+                section      TEXT    NOT NULL,
+                item_key     TEXT    NOT NULL DEFAULT '',
+                content      TEXT    NOT NULL DEFAULT '',
+                metadata_json TEXT   NOT NULL DEFAULT '{}',
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                is_deleted   INTEGER NOT NULL DEFAULT 0,
+                remaining_rounds INTEGER,
+                last_maintained_order INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_container_items_active
+                ON bot_container_items(section, created_at) WHERE is_deleted=0;
+
             -- adapter 意识流持久化：跨重启保留函数调用历史
             CREATE TABLE IF NOT EXISTS adapter_state (
                 key          TEXT    PRIMARY KEY,
@@ -370,6 +400,13 @@ async def init_db() -> None:
                 adapter_type TEXT    NOT NULL DEFAULT '',
                 contents     TEXT    NOT NULL DEFAULT '[]',
                 timestamps   TEXT    NOT NULL DEFAULT '[]'
+            );
+
+            CREATE TABLE IF NOT EXISTS bot_todo_snapshot (
+                id           INTEGER PRIMARY KEY CHECK (id = 1),
+                updated_at   INTEGER NOT NULL,
+                plan_json    TEXT NOT NULL,
+                explanation  TEXT
             );
 
             -- namespace 运行时状态：独立于意识流历史，作为跨重启恢复的事实来源
@@ -503,11 +540,15 @@ async def init_db() -> None:
                 name       TEXT    PRIMARY KEY,
                 applied_at INTEGER NOT NULL DEFAULT 0
             );
+
         """)
         await db.commit()
 
         await _migrate_memory_schema_to_primary(db)
         await _migrate_schema(db)
+        await _migrate_custom_container_items(db)
+        from llm.media.image_store import SCHEMA as image_schema
+        await db.executescript(image_schema)
         await _migrate_legacy(db)
         await _migrate_rename_tables(db)
         await _backfill_llm_usage_from_bot_turns(db)
@@ -519,6 +560,44 @@ async def init_db() -> None:
         logger.exception("[schema] Memory schema initialization failed")
 
     logger.info("数据库初始化完成: %s", DB_PATH)
+
+
+async def _migrate_custom_container_items(db) -> None:
+    """Give legacy custom entries a fresh lease and retain the newest five."""
+    await _ensure_columns(db, "bot_container_items", (
+        ("remaining_rounds", "remaining_rounds INTEGER"),
+        ("last_maintained_order", "last_maintained_order INTEGER"),
+    ))
+    await db.execute("BEGIN")
+    try:
+        await db.execute(
+            """UPDATE bot_container_items
+               SET remaining_rounds=?, last_maintained_order=created_at
+               WHERE section='custom' AND is_deleted=0 AND remaining_rounds IS NULL""",
+            (CUSTOM_LIFETIME_ROUNDS,),
+        )
+        await db.execute(
+            """UPDATE bot_container_items SET last_maintained_order=created_at
+               WHERE section='custom' AND is_deleted=0 AND last_maintained_order IS NULL"""
+        )
+        async with db.execute(
+            """SELECT item_id FROM bot_container_items
+               WHERE section='custom' AND is_deleted=0
+               ORDER BY last_maintained_order DESC, created_at DESC, item_id DESC
+               LIMIT -1 OFFSET ?""",
+            (CUSTOM_LIMIT,),
+        ) as cur:
+            evicted = [row[0] for row in await cur.fetchall()]
+        if evicted:
+            await db.executemany(
+                """UPDATE bot_container_items SET is_deleted=1, updated_at=?
+                   WHERE item_id=?""",
+                [(_ms(), item_id) for item_id in evicted],
+            )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
 
 _MEMORY_TABLE_RENAMES: tuple[tuple[str, str], ...] = (
@@ -753,6 +832,35 @@ async def _migrate_schema(db) -> None:
         logger.info("[schema] bot_goals 已添加 resolution 列")
     except Exception:
         pass  # 列已存在则跳过
+
+    # bot_goals 新增 goal 与 background 列
+    for col in ("goal", "background"):
+        try:
+            await db.execute(f"ALTER TABLE bot_goals ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+            await db.commit()
+            logger.info("[schema] bot_goals 已添加 %s 列", col)
+        except Exception:
+            pass
+
+    # 将旧版 title/content/reason 回填到新版 goal/background。
+    # content 与 reason 都存在时用换行直接拼接，避免丢失目标的具体描述。
+    try:
+        await db.execute(
+            "UPDATE bot_goals SET goal=title "
+            "WHERE (goal='' OR goal IS NULL) AND title<>''"
+        )
+        await db.execute(
+            "UPDATE bot_goals SET background="
+            "CASE "
+            "WHEN content<>'' AND reason<>'' THEN content || char(10) || reason "
+            "ELSE content || reason "
+            "END "
+            "WHERE (background='' OR background IS NULL) AND (content<>'' OR reason<>'')"
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] bot_goals 旧字段回填失败")
+        raise
 
     # 兼容旧版：此前 complete_goal 会把 status 直接写成 completed
     try:
@@ -1037,6 +1145,8 @@ async def _migrate_focus_refs(db) -> None:
     except Exception:
         logger.exception("[schema] focus 引用迁移失败")
         raise
+
+
 
 
 async def _backfill_llm_usage_from_bot_turns(db) -> None:
@@ -1448,6 +1558,9 @@ async def get_existing_chat_message_ids(session_key: str, message_ids: list[str]
 async def save_chat_message(session_key: str, entry: dict) -> None:
     """将一条上下文条目写入 chat_messages 表。"""
     import json as _json
+    from llm.media.image_store import register_entry
+    import asyncio
+    await asyncio.to_thread(register_entry, entry)
     now = _ms()
     reply_to = str(entry.get("reply_to", "") or "")
     async with _connect() as db:
@@ -1490,6 +1603,108 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
             )
         await _index_qq_file_message(db, session_key, entry, now)
         await db.commit()
+
+
+def _media_payload_items(images: object) -> list[tuple[str, dict[str, Any]]]:
+    """Normalize current and legacy chat image containers."""
+    if isinstance(images, dict):
+        return [
+            (str(image_ref).strip(), info)
+            for image_ref, info in images.items()
+            if str(image_ref).strip() and isinstance(info, dict)
+        ]
+    if isinstance(images, list):
+        items: list[tuple[str, dict[str, Any]]] = []
+        for info in images:
+            if not isinstance(info, dict):
+                continue
+            image_ref = str(info.get("image_ref") or info.get("ref") or "").strip()
+            if image_ref:
+                items.append((image_ref, info))
+        return items
+    return []
+
+
+
+
+
+
+
+
+def lookup_media_ref_sync(image_ref: str) -> dict[str, Any] | None:
+    from llm.media.image_store import lookup_image
+    return lookup_image(str(image_ref or "").strip())
+
+
+def load_chat_image_payload_sync(session_key: str, message_id: str, image_ref: str) -> dict[str, Any] | None:
+    """根据 session_key 和 message_id 从 chat_messages 精准读取对应 image_ref 的图片数据。"""
+    s_key = str(session_key or "").strip()
+    m_id = str(message_id or "").strip()
+    ref = str(image_ref or "").strip()
+    if not s_key or not m_id or not ref:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT images FROM chat_messages WHERE session_key = ? AND message_id = ? LIMIT 1",
+                (s_key, m_id),
+            ).fetchone()
+            if not row:
+                return None
+            raw_images = row["images"]
+            if not raw_images:
+                return None
+            import json as _json
+            data = _json.loads(raw_images)
+            for image_ref, info in _media_payload_items(data):
+                if image_ref == ref:
+                    return info
+            return None
+    except Exception:
+        logger.exception("[database] load_chat_image_payload_sync 失败 session=%s msg=%s ref=%s", s_key, m_id, ref)
+        return None
+
+
+async def register_media_ref(
+    image_ref: str,
+    source_type: str,
+    locator: str,
+    mime: str = "image/jpeg",
+    sha256: str | None = None,
+    created_at: int | None = None,
+) -> None:
+    """向 media_registry 注册或更新媒体凭据。"""
+    from llm.media.image_store import register_image
+    from pathlib import Path
+    import asyncio
+    path = Path(locator)
+    if not path.is_file():
+        raise ValueError("Register image bytes before associating a message")
+    await asyncio.to_thread(register_image, path.read_bytes(), source_type, image_ref)
+
+
+async def lookup_media_ref(image_ref: str) -> dict[str, Any] | None:
+    """异步按 image_ref 点查 media_registry。"""
+    import asyncio as _asyncio
+    return await _asyncio.to_thread(lookup_media_ref_sync, image_ref)
+
+
+def lookup_media_by_sha256_sync(sha256: str) -> dict[str, Any] | None:
+    from llm.media.image_store import connection, read_image
+    with connection() as db:
+        try:
+            row = db.execute("SELECT image_ref FROM media_images WHERE sha256=?", (sha256,)).fetchone()
+        except sqlite3.OperationalError:
+            return None
+    record = read_image(row[0]) if row else None
+    return record if record and not record.get("unavailable_status") else None
+
+
+async def lookup_media_by_sha256(sha256: str) -> dict[str, Any] | None:
+    """异步按 sha256 查找已有 media_registry 记录。"""
+    import asyncio as _asyncio
+    return await _asyncio.to_thread(lookup_media_by_sha256_sync, sha256)
 
 
 async def _index_qq_file_message(
@@ -2536,44 +2751,25 @@ async def soft_delete_event(event_id: int) -> bool:
 
 async def write_goal(
     goal_id: str,
-    title: str,
-    content: str,
-    reason: str,
-    conv_type: str = "",
-    conv_id: str = "",
-    conv_name: str = "",
+    goal: str,
+    background: str,
     status: str = "active",
     resolution: str = "",
 ) -> None:
     """写入一条新目标。"""
     now = _ms()
-    platform, focus_type, focus_id, focus_name, _focus_key, focus_json = _focus_tuple_from_legacy(
-        conv_type=conv_type,
-        conv_id=conv_id,
-        conv_name=conv_name,
-    )
     async with _connect() as db:
         await db.execute(
             """INSERT INTO bot_goals
-               (goal_id, created_at, updated_at, title, content, reason,
-                focus_platform, focus_type, focus_id, focus_name, focus_ref_json,
-                conv_type, conv_id, conv_name, status, resolution, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+               (goal_id, created_at, updated_at, goal, background,
+                status, resolution, is_deleted)
+               VALUES (?,?,?,?,?,?,?,0)""",
             (
                 goal_id,
                 now,
                 now,
-                title,
-                content,
-                reason,
-                platform,
-                focus_type,
-                focus_id,
-                focus_name,
-                focus_json,
-                focus_type or conv_type,
-                focus_id or conv_id,
-                focus_name or conv_name,
+                goal,
+                background,
                 status,
                 resolution,
             ),
@@ -2610,7 +2806,15 @@ async def load_goals(limit: int = 10) -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT goal_id, created_at, updated_at, title, content, reason,
+            """SELECT goal_id, created_at, updated_at,
+                      COALESCE(NULLIF(goal, ''), title) AS goal,
+                      COALESCE(
+                          NULLIF(background, ''),
+                          CASE
+                              WHEN content<>'' AND reason<>'' THEN content || char(10) || reason
+                              ELSE content || reason
+                          END
+                      ) AS background,
                       COALESCE(NULLIF(focus_platform, ''), 'qq') AS focus_platform,
                       COALESCE(NULLIF(focus_type, ''), conv_type) AS focus_type,
                       COALESCE(NULLIF(focus_id, ''), conv_id) AS focus_id,
@@ -2632,6 +2836,150 @@ async def load_goals(limit: int = 10) -> list[dict]:
         item["conv_type"] = item.get("focus_type", "")
         item["conv_id"] = item.get("focus_id", "")
         item["conv_name"] = item.get("focus_name", "")
+        out.append(item)
+    return out
+
+
+# ── 上下文契约 container ──────────────────────────────────
+
+async def write_container_item(
+    item_id: str,
+    section: str,
+    item_key: str = "",
+    content: str = "",
+    metadata: dict | None = None,
+) -> tuple[list[str], int | None]:
+    """Write an item; return evicted IDs and its maintenance order."""
+    now = _ms()
+    meta_str = json.dumps(metadata or {}, ensure_ascii=False)
+    async with _connect() as db:
+        await db.execute("BEGIN")
+        try:
+            order = None
+            if section == "custom":
+                async with db.execute(
+                    "SELECT COALESCE(MAX(last_maintained_order), 0) FROM bot_container_items"
+                ) as cur:
+                    order = max(now, int((await cur.fetchone())[0]) + 1)
+            await db.execute(
+                """INSERT INTO bot_container_items
+                   (item_id, section, item_key, content, metadata_json, created_at, updated_at,
+                    is_deleted, remaining_rounds, last_maintained_order)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                   ON CONFLICT(item_id) DO UPDATE SET
+                       section=excluded.section,
+                       item_key=excluded.item_key,
+                       content=excluded.content,
+                       metadata_json=excluded.metadata_json,
+                       updated_at=excluded.updated_at,
+                       is_deleted=0,
+                       remaining_rounds=excluded.remaining_rounds,
+                       last_maintained_order=excluded.last_maintained_order""",
+                (item_id, section, item_key, content, meta_str, now, now,
+                 CUSTOM_LIFETIME_ROUNDS if section == "custom" else None, order),
+            )
+            evicted: list[str] = []
+            if section == "custom":
+                async with db.execute(
+                    """SELECT item_id FROM bot_container_items
+                       WHERE section='custom' AND is_deleted=0
+                       ORDER BY last_maintained_order DESC, created_at DESC, item_id DESC
+                       LIMIT -1 OFFSET ?""",
+                    (CUSTOM_LIMIT,),
+                ) as cur:
+                    evicted = [row[0] for row in await cur.fetchall()]
+                if evicted:
+                    await db.executemany(
+                        """UPDATE bot_container_items SET is_deleted=1, updated_at=?
+                           WHERE item_id=?""",
+                        [(now, evicted_id) for evicted_id in evicted],
+                    )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    logger.debug("已写入 container 条目: item_id=%s, section=%s", item_id, section)
+    return evicted, order
+
+
+async def keep_custom_container_item(item_id: str) -> int | None:
+    """Renew an active custom item and return its new maintenance order."""
+    async with _connect() as db:
+        await db.execute("BEGIN")
+        try:
+            async with db.execute(
+                "SELECT COALESCE(MAX(last_maintained_order), 0) FROM bot_container_items"
+            ) as cur:
+                order = max(_ms(), int((await cur.fetchone())[0]) + 1)
+            cur = await db.execute(
+                """UPDATE bot_container_items
+                   SET remaining_rounds=?, last_maintained_order=?, updated_at=?
+                   WHERE item_id=? AND section='custom' AND is_deleted=0""",
+                (CUSTOM_LIFETIME_ROUNDS, order, _ms(), item_id),
+            )
+            await db.commit()
+            return order if cur.rowcount else None
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def advance_custom_container_round() -> dict[str, int]:
+    """Spend one completed main round and archive expired custom items."""
+    async with _connect() as db:
+        await db.execute("BEGIN")
+        try:
+            await db.execute(
+                """UPDATE bot_container_items SET remaining_rounds=remaining_rounds-1
+                   WHERE section='custom' AND is_deleted=0 AND remaining_rounds>0"""
+            )
+            await db.execute(
+                """UPDATE bot_container_items SET is_deleted=1, updated_at=?
+                   WHERE section='custom' AND is_deleted=0 AND remaining_rounds<=0""",
+                (_ms(),),
+            )
+            async with db.execute(
+                """SELECT item_id, remaining_rounds FROM bot_container_items
+                   WHERE section='custom' AND is_deleted=0"""
+            ) as cur:
+                remaining = {row[0]: int(row[1]) for row in await cur.fetchall()}
+            await db.commit()
+            return remaining
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def soft_delete_container_item(item_id: str) -> bool:
+    """软删除一条 container 条目。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE bot_container_items SET is_deleted=1, updated_at=? WHERE item_id=? AND is_deleted=0",
+            (_ms(), item_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def load_container_items() -> list[dict]:
+    """加载所有未删除的 container 条目，按 created_at 正序排序。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT item_id, section, item_key, content, metadata_json, created_at, updated_at,
+                      remaining_rounds, last_maintained_order
+               FROM bot_container_items
+               WHERE is_deleted=0
+               ORDER BY created_at ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+    out: list[dict] = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+        except Exception:
+            item["metadata"] = {}
         out.append(item)
     return out
 
@@ -2672,6 +3020,33 @@ async def load_adapter_contents() -> "tuple[str, list, list] | None":
         return str(row[0]), contents, timestamps
     except Exception:
         return None
+
+
+async def save_todo_snapshot(snapshot: dict) -> None:
+    """Atomically replace the single global checklist snapshot."""
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO bot_todo_snapshot (id, updated_at, plan_json, explanation)
+               VALUES (1, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   updated_at = excluded.updated_at,
+                   plan_json = excluded.plan_json,
+                   explanation = excluded.explanation""",
+            (snapshot["updated_at"], json.dumps(snapshot["plan"], ensure_ascii=False), snapshot["explanation"]),
+        )
+        await db.commit()
+
+
+async def load_todo_snapshot() -> dict | None:
+    """Read the latest checklist, including an explicitly cleared list."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT updated_at, plan_json, explanation FROM bot_todo_snapshot WHERE id = 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if row is None:
+        return None
+    return {"updated_at": row[0], "plan": json.loads(row[1]), "explanation": row[2]}
 
 
 async def save_namespace_runtime_state(state: dict) -> None:

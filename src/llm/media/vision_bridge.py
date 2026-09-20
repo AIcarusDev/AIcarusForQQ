@@ -2,7 +2,7 @@
 
 当 config.vision=false（或主模型不支持视觉）时，此模块：
   1. 调用独立的 VLM（通过 OpenAI 兼容端点）生成图片的文字描述
-  2. 描述结果写入 image_cache sidecar (.meta.json)
+  2. 描述结果写入 统一图片索引
   3. 相同图片再次出现时直接复用缓存描述，不重复消费 token
 
 同时提供 examine() 接口供 examine_image 工具调用精查。
@@ -24,15 +24,11 @@ import logging
 import os
 from typing import Any, Optional
 
-from .image_cache import (
-    append_examination,
-    cache_image,
-    load_meta,
-    update_description,
-)
+from .image_store import append_examination, update_description, read_image, description_claim
 from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider, resolve_model_thinking_control
 from llm.core.transport import (
+    ProviderRequestIdentity,
     add_extra_generation_kwargs,
     create_streamed_chat_completion,
     normalize_generation_for_provider,
@@ -86,6 +82,7 @@ class VisionBridge:
         self._base_url: str = ""
         self._api_key_env: str = ""
         self._thinking_control: str = "enable_thinking"
+        self._request_identity = ProviderRequestIdentity()
         if self._enabled:
             provider_cfg: dict[str, Any] = dict(full_cfg)
             provider_cfg["provider"] = self._provider
@@ -96,6 +93,7 @@ class VisionBridge:
                 resolved,
                 self._model,
             )
+            self._request_identity = ProviderRequestIdentity.from_provider(resolved)
         self._describe_prompt: str = bridge_cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
         self._sim_threshold: int = _coerce_int(bridge_cfg.get("similarity_threshold"), 10)
         self._generation: dict = {
@@ -130,6 +128,8 @@ class VisionBridge:
             kwargs: dict = {"api_key": api_key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+            if default_headers := self._request_identity.headers_for():
+                kwargs["default_headers"] = default_headers
             
             # 代理配置：直接从环境变量读取（OPENAI_PROXY）
             if proxy_url := os.environ.get("OPENAI_PROXY", "").strip() or None:
@@ -197,7 +197,10 @@ class VisionBridge:
                 self._client,
                 provider=self._provider or "vision_bridge",
                 all_messages=messages,
-                create_kwargs=request_kwargs,
+                create_kwargs=self._request_identity.apply(
+                    request_kwargs,
+                    session_scope="vision-bridge",
+                ),
             )
         except Exception:
             record_llm_usage(
@@ -222,8 +225,8 @@ class VisionBridge:
 
     # ── 公共方法 ───────────────────────────────────────
 
-    def describe(self, phash: str, b64: str, mime: str) -> Optional[str]:
-        """为图片生成初步描述并写入 sidecar，返回描述文本。
+    def describe(self, image_ref: str, b64: str, mime: str) -> Optional[str]:
+        """为图片生成初步描述并写入统一图片索引，返回描述文本。
 
         失败时返回 None（不抛异常）。
         """
@@ -232,24 +235,24 @@ class VisionBridge:
         try:
             result = self._call_vlm(b64, mime, self._describe_prompt, "describe")
             if result:
-                update_description(phash, result)
+                update_description(image_ref, result)
                 logger.debug(
-                    "[VisionBridge] 描述已生成: phash=%.8s …%s",
-                    phash, result[:30].replace("\n", " "),
+                    "[VisionBridge] 描述已生成: image_ref=%.8s …%s",
+                    image_ref, result[:30].replace("\n", " "),
                 )
             return result or None
         except Exception as exc:
             logger.warning(
-                "[VisionBridge] describe 失败 (phash=%.8s): %s", phash, exc
+                "[VisionBridge] describe 失败 (image_ref=%.8s): %s", image_ref, exc
             )
             return None
 
     def examine(
-        self, phash: Optional[str], b64: str, mime: str, focus: str
+        self, image_ref: Optional[str], b64: str, mime: str, focus: str
     ) -> Optional[str]:
-        """对图片进行带焦点的精细观察，结果追加到 sidecar。
+        """对图片进行带焦点的精细观察，结果追加到统一图片索引。
 
-        phash 为 None 时结果仍返回，但不持久化。
+        image_ref 为 None 时结果仍返回，但不持久化。
         失败时返回 None（不抛异常）。
         """
         if not self.enabled:
@@ -257,73 +260,31 @@ class VisionBridge:
         try:
             prompt = _DEFAULT_EXAMINE_PROMPT_TMPL.format(focus=focus)
             result = self._call_vlm(b64, mime, prompt, "examine")
-            if result and phash:
-                append_examination(phash, focus, result)
+            if result and image_ref:
+                append_examination(image_ref, focus, result)
                 logger.debug(
-                    "[VisionBridge] examine 完成: focus=%r phash=%.8s", focus, phash
+                    "[VisionBridge] examine 完成: focus=%r image_ref=%.8s", focus, image_ref
                 )
             return result or None
         except Exception as exc:
             logger.warning(
-                "[VisionBridge] examine 失败 (phash=%.8s focus=%r): %s",
-                phash or "?", focus, exc,
+                "[VisionBridge] examine 失败 (image_ref=%.8s focus=%r): %s",
+                image_ref or "?", focus, exc,
             )
             return None
 
     def process_entry(self, entry: dict) -> None:
-        """处理一条上下文消息中的所有图片（同步，适合在线程池运行）。
-
-        对每张图片：
-          1. 计算 pHash，落盘（去重）
-          2. 加载 sidecar，检查是否有已有描述
-          3. 缓存有描述 → 直接复用；无描述且桥已启用 → 调 VLM 生成
-          4. 将 phash / description / examinations 写回 img_info（内存）
-        """
-        images: dict = entry.get("images") or {}
-        for image_ref, img_info in images.items():
-            b64: str = img_info.get("base64", "")
-            mime: str = img_info.get("mime", "image/jpeg")
-            if not b64:
+        """Share descriptions by exact registered image identity."""
+        from .image_store import register_entry
+        register_entry(entry)
+        for ref, payload in (entry.get("images") or {}).items():
+            record = read_image(ref)
+            if not record or record.get("unavailable_status"):
                 continue
-
-            # ── 1. 落盘 + pHash ──────────────────────
-            try:
-                raw = base64.b64decode(b64)
-                phash, _ = cache_image(raw, mime)
-            except Exception as exc:
-                logger.warning(
-                    "[VisionBridge] 图片缓存失败 (image_ref=%s): %s", image_ref, exc
-                )
-                # 即便缓存失败，仍设置空描述占位
-                img_info.setdefault("phash", None)
-                img_info.setdefault("description", None)
-                img_info.setdefault("examinations", [])
-                continue
-
-            img_info["phash"] = phash
-
-            if phash is None:
-                img_info.setdefault("description", None)
-                img_info.setdefault("examinations", [])
-                continue
-
-            # ── 2. 复用或生成描述 ──────────────────────
-            meta = load_meta(phash)
-            description: Optional[str] = meta.get("description")
-            examinations: list = meta.get("examinations") or []
-
-            if description:
-                # 缓存命中，直接复用
-                img_info["description"] = description
-                img_info["examinations"] = examinations
-                logger.debug(
-                    "[VisionBridge] 复用缓存描述: phash=%.8s", phash
-                )
-            elif self.enabled:
-                # 首次见到，调 VLM 描述
-                new_desc = self.describe(phash, b64, mime)
-                img_info["description"] = new_desc
-                img_info["examinations"] = []
-            else:
-                img_info["description"] = None
-                img_info["examinations"] = []
+            if self.enabled and not record.get("description"):
+                with description_claim(ref) as acquired:
+                    if acquired:
+                        self.describe(ref, base64.b64encode(record["data"]).decode("ascii"), record["mime"])
+                record = read_image(ref)
+            payload["description"] = record.get("description")
+            payload["examinations"] = record.get("examinations", [])

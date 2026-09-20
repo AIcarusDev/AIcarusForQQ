@@ -225,7 +225,7 @@ def _format_focus_key(focus_key: str | None) -> str:
 async def _is_friend(client: Any, target_id: str) -> bool | None:
     if not client or not client.connected:
         return None
-    friends = await client.send_api("get_friend_list", {}) or []
+    friends = await client.send_api("get_friend_list", {})
     if not isinstance(friends, list):
         return None
     return target_id in {str(f.get("user_id", "")) for f in friends if isinstance(f, dict)}
@@ -284,12 +284,12 @@ async def _resolve_temp_target(target_id: str) -> dict[str, str]:
         return {"error": reason}
 
     existing = await _resolve_existing_temp(target_id)
-    if existing:
+    if existing and existing.get("temp_source_group_id"):
         return existing
 
     source = await _current_group_source()
     if source is None:
-        return {"error": f"临时会话用户 {target_id} 尚未打开，且当前焦点不是群聊，无法首次打开"}
+        return {"error": f"临时会话用户 {target_id} 缺少来源群，请先进入该用户所在的群聊再打开私聊"}
 
     group_id, group_name = source
     member_error = await _validate_group_member(_qq_client(), group_id, target_id)
@@ -300,6 +300,7 @@ async def _resolve_temp_target(target_id: str) -> dict[str, str]:
         key=make_temp_session_key(target_id),
         conv_type=TEMP_CONV_TYPE,
         conv_id=target_id,
+        conv_name=(existing or {}).get("name", ""),
         temp_source_group_id=group_id,
         temp_source_group_name=group_name,
     )
@@ -331,9 +332,7 @@ async def _resolve_enter_target(target_type: str, target_id: str) -> dict[str, s
     if is_friend is False:
         return await _resolve_temp_target(target_id)
     if is_friend is None:
-        existing_temp = await _resolve_existing_temp(target_id)
-        if existing_temp:
-            return existing_temp
+        return {"error": "无法查询好友关系，请在 QQ adapter 恢复后重试"}
     return _session_dict(
         key=make_session_key("private", target_id),
         conv_type="private",

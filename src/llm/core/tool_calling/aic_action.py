@@ -22,6 +22,8 @@ _LEGACY_AIC_ACTION_ERROR_NAMES = frozenset({"tool_call_error"})
 
 AIC_ACTION_PROMPT_TEMPLATE = """
 <tools>
+<des>This section lists the currently available tools, capabilities, namespaces, and the formatting rules for using them.</des>
+
 ## Examples
 
 Single tool:

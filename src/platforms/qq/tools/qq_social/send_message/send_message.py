@@ -12,15 +12,19 @@ import re
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 from pydantic import Field, RootModel
 
+from llm.media.image_resolver import ImagePayloadError, ImageResolver, image_bytes, inspect_image_payload, normalize_image_ref
+from llm.media.sticker_collection import MAX_STICKER_BYTES, valid_image_ref
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.prompt_signatures import build_prompt_signature
 from platforms.qq.adapter.conversation import format_adapter_error
+from workspace.errors import WorkspaceError
 
 from .prompt import get_description
 
@@ -42,20 +46,14 @@ _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
     re.DOTALL,
 )
 
-_STICKER_REF_FALLBACK_WARNING = (
-    'The provided "sticker_id" was invalid; however, the system still sent a '
-    "sticker based on a hash match—serving as a fallback mechanism. Whenever "
-    'possible, please use "list_stickers" to check your sticker collection '
-    "first before initiating a send action. If the sticker sent by the system "
-    "in this instance does not meet your expectations, you may retract it."
-)
-
-
 _MESSAGE_SHAPE_ARRAY = "array"
 _MESSAGE_SHAPE_SINGLE = "single"
 _SINGLE_SHAPE_ALIASES = {"single", "single_message", "message", "segments"}
 _ARRAY_SHAPE_ALIASES = {"array", "messages", "multi", "multi_message", "batch"}
 _PENDING_RECHECK_DELAYS = (0.2, 2.0, 5.0, 10.0)
+_MAX_LOCAL_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_LOCAL_IMAGE_PIXELS = 100_000_000
+_MAX_LOCAL_IMAGES_PER_CALL = 4
 
 
 class TextSegment(ToolArgsModel):
@@ -70,22 +68,28 @@ class AtSegment(ToolArgsModel):
 
 class ImageSegment(ToolArgsModel):
     command: Literal["image"]
+    path: str = Field(
+        default="",
+        pattern=r"^(?:|/home/agent/[^\r\n]+)$",
+        description=(
+            "Agent Linux 中已有图片的绝对路径，必须位于 /home/agent 下。"
+        ),
+    )
     image_ref: str = Field(
         default="",
-        description="已固化图片的 image_ref。不要和 resource_ref 同时填写。",
+        description="image_ref 。",
     )
     resource_ref: str = Field(
         default="",
         description=(
             "<browser><images> 中原图候选的 resource_ref。系统会在发送前按需固化原图；"
-            "不要把 source_url 或视口截图 image_ref 填到这里。"
         ),
     )
 
 
 class StickerSegment(ToolArgsModel):
     command: Literal["sticker"]
-    sticker_id: str = Field(min_length=1)
+    image_ref: str = Field(min_length=4, description="已收藏或可见聊天图片的 image_ref。")
 
 
 class SendMessageSegment(RootModel[TextSegment | AtSegment | ImageSegment | StickerSegment]):
@@ -104,22 +108,12 @@ class SendMessageItem(ToolArgsModel):
     )
 
 
-class SendMessageSingleArgs(SendMessageItem):
-    pass
-
-
 class SendMessageArrayArgs(ToolArgsModel):
     messages: list[SendMessageItem] = Field(
         min_length=1,
         description="要发送的消息列表，每个元素作为一条消息独立发送。",
     )
 
-
-SEND_MESSAGE_SINGLE_CONTRACT = ToolContract(
-    name="send_message",
-    description=get_description(_MESSAGE_SHAPE_SINGLE),
-    args_model=SendMessageSingleArgs,
-)
 
 SEND_MESSAGE_ARRAY_CONTRACT = ToolContract(
     name="send_message",
@@ -132,31 +126,11 @@ TOOL_CONTRACT = SEND_MESSAGE_ARRAY_CONTRACT
 
 def get_send_message_shape(config: dict | None = None) -> str:
     """Return the configured model-facing send_message shape."""
-    tools_cfg = (config or {}).get("tools")
-    send_cfg: Any = {}
-    if isinstance(tools_cfg, dict):
-        send_cfg = tools_cfg.get("send_message", {})
-    raw_shape: Any = None
-    if isinstance(send_cfg, dict):
-        raw_shape = (
-            send_cfg.get("message_shape")
-            or send_cfg.get("shape")
-            or send_cfg.get("mode")
-        )
-    elif isinstance(send_cfg, str):
-        raw_shape = send_cfg
-    shape = str(raw_shape or "").strip().lower().replace("-", "_")
-    if shape in _SINGLE_SHAPE_ALIASES:
-        return _MESSAGE_SHAPE_SINGLE
-    if shape in _ARRAY_SHAPE_ALIASES:
-        return _MESSAGE_SHAPE_ARRAY
     return _MESSAGE_SHAPE_ARRAY
 
 
 def get_declaration(session: Any | None = None, config: dict | None = None, **_: Any) -> dict:
-    message_shape = get_send_message_shape(config)
-    contract = SEND_MESSAGE_SINGLE_CONTRACT if message_shape == _MESSAGE_SHAPE_SINGLE else SEND_MESSAGE_ARRAY_CONTRACT
-    return contract.declaration()
+    return SEND_MESSAGE_ARRAY_CONTRACT.declaration()
 
 
 def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
@@ -165,31 +139,11 @@ def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
 
 def _repair_schema_args_for_shape(
     args: dict[str, Any],
-    message_shape: str,
+    message_shape: str = _MESSAGE_SHAPE_ARRAY,
 ) -> tuple[dict[str, Any], list[str]]:
     """修复 send_message 的 messages 容器结构性字段错误。"""
     repair_notes: list[str] = []
     messages = args.get("messages")
-    root_segments = args.get("segments")
-    if (
-        message_shape == _MESSAGE_SHAPE_ARRAY
-        and not isinstance(messages, list)
-        and isinstance(root_segments, list)
-    ):
-        message: dict[str, Any] = {"segments": root_segments}
-        if "quote" in args and args.get("quote") not in (None, ""):
-            quote = args.get("quote")
-            if isinstance(quote, int) and not isinstance(quote, bool):
-                quote = str(quote)
-            message["quote"] = quote
-        repaired_args = {
-            key: value
-            for key, value in args.items()
-            if key not in {"segments", "quote"}
-        }
-        repaired_args["messages"] = [message]
-        return repaired_args, ["wrapped root single-message fields into messages[0]"]
-
     if not isinstance(messages, list):
         return args, repair_notes
 
@@ -238,10 +192,8 @@ def _repair_schema_args_for_shape(
 def make_schema_repairer(
     config: dict | None = None,
 ) -> Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]:
-    message_shape = get_send_message_shape(config)
-
     def _repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-        return _repair_schema_args_for_shape(args, message_shape)
+        return _repair_schema_args_for_shape(args, _MESSAGE_SHAPE_ARRAY)
 
     return _repair_schema_args
 
@@ -307,11 +259,11 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
             text_parts.append(f"@{uid}")
             content_segments.append({"type": "mention", "uid": uid, "display": f"@{uid}"})
         elif cmd == "sticker":
-            sticker_id = seg.get("sticker_id", "")
-            text_parts.append("[动画表情]")
-            content_segments.append({"type": "sticker", "sticker_id": sticker_id})
-        elif cmd == "image":
             image_ref = seg.get("image_ref", "")
+            text_parts.append("[动画表情]")
+            content_segments.append({"type": "sticker", "image_ref": image_ref})
+        elif cmd == "image":
+            image_ref = seg.get("image_ref") or seg.get("_local_image_ref", "")
             text_parts.append("[图片]")
             content_segments.append({"type": "image", "image_ref": image_ref})
     text = "".join(text_parts)
@@ -544,34 +496,6 @@ def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | No
     return None, None, None, f"当前会话类型不支持发送 QQ 消息: {conv_type or 'unknown'}"
 
 
-def _load_context_sticker_ref(session: Any, image_ref: str) -> tuple[bytes, str] | None:
-    for entry in reversed(getattr(session, "context_messages", []) or []):
-        images = entry.get("images") or {}
-        if not isinstance(images, dict) or image_ref not in images:
-            continue
-
-        target_img = images[image_ref] or {}
-        b64: str = target_img.get("base64", "")
-        mime: str = target_img.get("mime", "image/jpeg")
-        raw_bytes: bytes | None = None
-        if b64:
-            try:
-                raw_bytes = base64.b64decode(b64)
-            except Exception as exc:
-                logger.warning("[send_message] 表情 image_ref base64 解码失败 image_ref=%s: %s", image_ref, exc)
-
-        if raw_bytes is None and (phash := target_img.get("phash")):
-            try:
-                from llm.media.image_cache import read_image_bytes
-                raw_bytes = read_image_bytes(str(phash))
-            except Exception as exc:
-                logger.warning("[send_message] 表情 image_ref 缓存读取失败 image_ref=%s phash=%s: %s", image_ref, phash, exc)
-
-        if raw_bytes is not None:
-            return raw_bytes, mime
-    return None
-
-
 def _prepare_sendable_segments(
     segments: list[dict],
     session: Any,
@@ -591,37 +515,101 @@ def _prepare_sendable_segments(
         elif cmd == "at" and str(seg.get("user_id", "") or ""):
             has_sendable = True
         elif cmd == "sticker":
-            sticker_id = str(seg.get("sticker_id", "") or "")
-            if not sticker_id:
-                return None, "sticker segment 缺少 sticker_id。发送表情包前请先调用 list_stickers 获取自己的表情包 ID。", warnings
+            image_ref = normalize_image_ref(seg.get("image_ref"))
+            if "sticker_id" in seg or not valid_image_ref(image_ref):
+                return None, "sticker segment 需要 image_ref，旧表情包编号已停用。", warnings
+            resolver = ImageResolver(session)
+            found = resolver.resolve(image_ref, include_browser=False)
+            if found is None:
+                return None, f"未找到可见或已收藏的图片 image_ref={image_ref!r}。", warnings
+            image, _source = found
+            payload = image_bytes(image)
+            if payload is None:
+                return None, f"图片不可用 image_ref={image_ref!r}: {resolver.unavailable_status(image)}", warnings
+            raw, mime = payload
             try:
-                from llm.media.sticker_collection import load_sticker_bytes
-                sticker_data = load_sticker_bytes(sticker_id)
-            except Exception as exc:
-                logger.warning("[send_message] 校验表情包失败 id=%s: %s", sticker_id, exc)
-                sticker_data = None
-            if sticker_data is None:
-                fallback = _load_context_sticker_ref(session, sticker_id)
-                if fallback is None:
-                    return None, (
-                        f"表情包 sticker_id \"{sticker_id}\" 不存在。"
-                    ), warnings
-                raw_bytes, mime = fallback
-                prepared_seg["_fallback_base64"] = base64.b64encode(raw_bytes).decode("ascii")
-                prepared_seg["_fallback_mime"] = mime
-                prepared_seg["_fallback_ref"] = sticker_id
-                warnings.append(_STICKER_REF_FALLBACK_WARNING)
+                info = inspect_image_payload(raw, max_bytes=MAX_STICKER_BYTES, max_pixels=100_000_000)
+            except ImagePayloadError as exc:
+                return None, f"图片内容无效 image_ref={image_ref!r}: {exc.code}", warnings
+            mime = info.mime_type
+            prepared_seg["image_ref"] = str(image.get("image_ref") or image_ref)
+            prepared_seg["_image_bytes"] = raw
+            prepared_seg["_image_mime"] = mime
+            prepared_seg["_image_source"] = _source
             has_sendable = True
         elif cmd == "image":
             image_ref = str(seg.get("image_ref", "") or "")
-            if not image_ref:
-                return None, "image segment 缺少 image_ref 或尚未完成 resource_ref 固化。", warnings
+            local_image_base64 = str(seg.get("_local_image_base64", "") or "")
+            if not image_ref and not local_image_base64:
+                return None, "image segment 缺少可发送的图片来源。", warnings
             has_sendable = True
         prepared_segments.append(prepared_seg)
 
     if not has_sendable:
         return None, "消息没有可发送的内容，未发送。", warnings
     return prepared_segments, None, warnings
+
+
+async def _materialize_local_image_paths(
+    messages: list[dict[str, Any]],
+    workspace_service: Any,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Validate Agent-local image paths and embed their bytes for the adapter."""
+
+    prepared = copy.deepcopy(messages)
+    local_segments: list[tuple[dict[str, Any], str]] = []
+    for message in prepared:
+        if not isinstance(message, dict):
+            continue
+        for segment in message.get("segments") or []:
+            if not isinstance(segment, dict) or segment.get("command") != "image":
+                continue
+            sources = {
+                "path": str(segment.get("path") or "").strip(),
+                "image_ref": str(segment.get("image_ref") or "").strip(),
+                "resource_ref": str(segment.get("resource_ref") or "").strip(),
+            }
+            selected = [(name, value) for name, value in sources.items() if value]
+            if len(selected) != 1:
+                return None, "image segment 的 path、image_ref、resource_ref 必须且只能提供一个。"
+            if selected[0][0] == "path":
+                local_segments.append((segment, selected[0][1]))
+
+    if len(local_segments) > _MAX_LOCAL_IMAGES_PER_CALL:
+        return None, f"单次发送最多选择 {_MAX_LOCAL_IMAGES_PER_CALL} 张 Agent Linux 本地图片。"
+    if local_segments and workspace_service is None:
+        return None, "Agent 电脑服务不可用，无法读取本地图片。"
+
+    try:
+        for segment, path in local_segments:
+            async with workspace_service.stage_host_file(path) as staged:
+                if staged.size > _MAX_LOCAL_IMAGE_BYTES:
+                    return None, "本地图片超过 20 MiB 大小限制。"
+                raw = await asyncio.to_thread(Path(staged.host_path).read_bytes)
+                image_info = await asyncio.to_thread(
+                    inspect_image_payload,
+                    raw,
+                    max_bytes=_MAX_LOCAL_IMAGE_BYTES,
+                    max_pixels=_MAX_LOCAL_IMAGE_PIXELS,
+                )
+                from llm.media.image_store import register_image
+                record = await asyncio.to_thread(register_image, raw, "workspace")
+                segment.pop("path", None)
+                segment["image_ref"] = record["image_ref"]
+                segment["_local_image_ref"] = record["image_ref"]
+                segment["_local_image_base64"] = base64.b64encode(raw).decode("ascii")
+                segment["_local_image_mime"] = image_info.mime_type
+    except WorkspaceError as exc:
+        logger.info("[send_message] Agent Linux 图片暂存失败 code=%s", exc.code.value)
+        return None, "无法读取指定的 Agent Linux 图片。"
+    except ImagePayloadError as exc:
+        logger.info("[send_message] Agent Linux 图片校验失败 status=%s", exc.code)
+        return None, f"Agent Linux 图片内容无效（{exc.code}）。"
+    except OSError:
+        logger.warning("[send_message] Agent Linux 图片读取失败", exc_info=True)
+        return None, "无法读取指定的 Agent Linux 图片。"
+
+    return prepared, None
 
 
 def _materialize_selected_browser_resources(
@@ -699,11 +687,15 @@ def _unconfirmed_high_risk_image_error(
         if not isinstance(message, dict):
             continue
         for segment in message.get("segments") or []:
-            if not isinstance(segment, dict) or segment.get("command") != "image":
+            if not isinstance(segment, dict) or segment.get("command") not in ("image", "sticker"):
                 continue
             image_ref = str(segment.get("image_ref") or "").strip()
             if not image_ref:
                 continue
+            from llm.media.image_store import lookup_image
+            record = lookup_image(image_ref)
+            if record:
+                image_ref = record["image_ref"]
             if image_ref in pending_refs:
                 return "该原图属于待确认批次，必须使用 confirm_browser_image_send，不能直接发送。"
             artifact = read_sendable_browser_image_file(image_ref)
@@ -886,6 +878,42 @@ def make_handler(
             }
 
         if not confirmed_batch_id:
+            prepared_messages, local_image_error = run_coroutine_sync(
+                _materialize_local_image_paths(
+                    send_messages,
+                    getattr(app_state, "workspace_service", None),
+                ),
+                loop,
+            )
+            if local_image_error or prepared_messages is None:
+                return {
+                    "to": target,
+                    "error": local_image_error or "Agent Linux 图片读取失败。",
+                    "sent_count": 0,
+                    "failed_count": len(send_messages),
+                    "total_count": len(send_messages),
+                    "interrupted": False,
+                }
+            send_messages = prepared_messages
+            if (
+                any(
+                    isinstance(segment, dict) and segment.get("_local_image_base64")
+                    for message in send_messages
+                    if isinstance(message, dict)
+                    for segment in (message.get("segments") or [])
+                )
+                and round_inbound_revision is not None
+                and int(getattr(session, "inbound_revision", 0) or 0)
+                != int(round_inbound_revision)
+            ):
+                return {
+                    "to": target,
+                    "error": "读取图片期间收到新消息，本次图片发送意图已失效，未发送。",
+                    "sent_count": 0,
+                    "failed_count": len(send_messages),
+                    "total_count": len(send_messages),
+                    "interrupted": True,
+                }
             confirmation_bypass_error = _unconfirmed_high_risk_image_error(
                 send_messages,
                 session,
@@ -982,6 +1010,11 @@ def make_handler(
         conversation_id = session.key or f"qq:{conv_type}:{conv_id}"
         bot_sender_id = session._qq_id or "bot"
         bot_sender_name = session._qq_name or ""
+        # Keep the image-visible window for the entire batch before sending snaps UI to live.
+        image_session = copy.copy(session)
+        image_session.context_messages = copy.deepcopy(getattr(session, "context_messages", []))
+        image_session.chat_window_view = dict(getattr(session, "chat_window_view", {}) or {})
+        image_session.forward_browser_stack = copy.deepcopy(getattr(session, "forward_browser_stack", []) or [])
         snapped_to_latest = _snap_chat_window_to_latest_for_send(session)
 
         # 发送前快照现有非 bot 消息 ID，用于统计发送期间新增消息数。
@@ -1023,7 +1056,7 @@ def make_handler(
                     i,
                 )
                 continue
-            prepared_segments, validation_error, segment_warnings = _prepare_sendable_segments(segments, session)
+            prepared_segments, validation_error, segment_warnings = _prepare_sendable_segments(segments, image_session)
             if validation_error:
                 failed_count += 1
                 failed_messages.append({
@@ -1156,6 +1189,19 @@ def make_handler(
                 "content_type": content_type,
                 "content_segments": content_segments,
             }
+            # Ordinary message image metadata keeps uncollected sends visible in history.
+            # Collection images remain addressable by ref without duplicating their bytes in the DB.
+            sent_images = {
+                seg["image_ref"]: {
+                    "base64": base64.b64encode(seg["_image_bytes"]).decode("ascii"),
+                    "mime": seg["_image_mime"],
+                    "label": "动画表情",
+                }
+                for seg in segments
+                if seg.get("command") == "sticker" and seg.get("_image_source") != "sticker"
+            }
+            if sent_images:
+                entry["images"] = sent_images
             if delivery_state:
                 entry["delivery_state"] = delivery_state
             if delivery_error:

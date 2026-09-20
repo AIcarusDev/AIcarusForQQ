@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
     from consciousness import ConsciousnessFlow
-    from email_controller import EmailController
     from tts.server import TTSServer
     from platforms import FocusRef, PlatformRegistry
     from runtime.events import RuntimeEventHub
@@ -65,17 +64,9 @@ tts_cfg: dict = {}
 tts_server: "TTSServer | None" = None
 tts_audio_buffers: dict[str, bytearray] = {}
 
-# ── 掉线告警管理器（SMTP）───────────────────────────
-alert_manager: Any = None  # alerting.AlertManager
-
-# ── 邮件远程指令控制器（Phase 3）───────────────────
-email_controller: "EmailController" = None  # type: ignore[assignment]
-
 tool_execution_guard_adapter: Any = None  # 外界可感知工具执行前守门子模型
 tool_execution_guard_cfg: dict = {}
 
-slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器
-slow_thinking_cfg: dict = {}
 
 event_extraction_adapter: Any = None  # 记忆事件提取专用适配器
 event_extraction_cfg: dict = {}

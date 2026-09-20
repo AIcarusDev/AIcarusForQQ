@@ -10,7 +10,7 @@ import base64
 import json
 import logging
 import re
-import uuid
+from typing import Any
 
 _seg_logger = logging.getLogger("AICQ.qq_adapter.segments")
 
@@ -422,7 +422,21 @@ def build_content_segments(
       {"type": "file",    "filename": "...", "size_bytes": 123, "is_downloaded": False}
       其他: {"type": "..."}
     """
+    return build_message_content(message, bot_id=bot_id, bot_display_name=bot_display_name)["content_segments"]
+
+
+def build_message_content(
+    message: list[dict],
+    bot_id: str | None = None,
+    bot_display_name: str = "",
+) -> dict:
+    """Build content and image state together, binding each ref to its source segment.
+
+    This only records URL downloads; callers fetch them with download_pending_images.
+    """
     parts: list[dict] = []
+    images: dict[str, dict] = {}
+    pending_downloads: list[tuple[str, str, str]] = []
     for seg in message:
         seg_type = seg.get("type", "")
         data = seg.get("data", {})
@@ -447,16 +461,27 @@ def build_content_segments(
                 name = data.get("name", "").strip()
                 display_name = name if name else qq
                 parts.append({"type": "mention", "uid": qq, "display": f"@{display_name}"})
-        elif seg_type == "mface":
-            image_ref = uuid.uuid4().hex[:12]
-            parts.append({"type": "sticker", "image_ref": image_ref})
-        elif seg_type == "image":
-            sub_type = get_image_sub_type(data)
-            image_ref = uuid.uuid4().hex[:12]
-            if sub_type == 1:
-                parts.append({"type": "sticker", "image_ref": image_ref})
+        elif seg_type in ("image", "mface"):
+            data = data if isinstance(data, dict) else {}
+            is_sticker = seg_type == "mface" or get_image_sub_type(data) == 1
+            from llm.media.media_storage import generate_time_ref
+            image_ref = generate_time_ref()
+            parts.append({"type": "sticker" if is_sticker else "image", "image_ref": image_ref})
+            label = "动画表情" if is_sticker else "图片"
+            if raw_b64 := data.get("base64", ""):
+                import base64 as _b64
+                from llm.media.image_store import register_image, image_link
+                record = register_image(_b64.b64decode(raw_b64, validate=True), "chat", image_ref)
+                image_ref = record["image_ref"]
+                parts[-1]["image_ref"] = image_ref
+                images[image_ref] = image_link(record, label=label)
+            elif url := data.get("url", ""):
+                images[image_ref] = {"pending": True, "label": label}
+                pending_downloads.append((image_ref, url, label))
             else:
-                parts.append({"type": "image", "image_ref": image_ref})
+                images[image_ref] = {"failed": True, "label": label}
+                from llm.media.image_store import set_ref_status
+                set_ref_status(image_ref, "failed")
         elif seg_type == "file":
             parts.append(_build_file_segment(data if isinstance(data, dict) else {}))
         elif seg_type == "reply":
@@ -474,15 +499,40 @@ def build_content_segments(
             parts.append(voice_seg)
         elif seg_type in _CARD_SEG_TYPES:
             parts.append(_build_card_segment(seg_type, data if isinstance(data, dict) else {}))
-        elif seg_type in ("video", "poke"):
-            label_map = {
-                "video": "视频",
-                "poke": "戳一戳",
+        elif seg_type == "video":
+            data = data if isinstance(data, dict) else {}
+            url = str(data.get("url") or data.get("file") or "").strip()
+            from llm.media.video_store import register_video_source
+            video_ref = register_video_source(url, source="qq")
+            file_size = data.get("file_size")
+            file_id = str(data.get("file_id") or "")
+            file_name = str(data.get("file_name") or data.get("name") or "")
+            duration = _coerce_duration_seconds(data)
+            video_seg: dict[str, Any] = {
+                "type": "video",
+                "video_ref": video_ref,
             }
-            parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
+            if url:
+                video_seg["url"] = url
+            if file_size is not None:
+                video_seg["file_size"] = file_size
+            if file_id:
+                video_seg["file_id"] = file_id
+            if file_name:
+                video_seg["file_name"] = file_name
+            if duration is not None:
+                video_seg["duration"] = duration
+            parts.append(video_seg)
+        elif seg_type == "poke":
+            parts.append({"type": "poke", "label": "戳一戳"})
         else:
             parts.append({"type": seg_type, "label": seg_type})
-    return parts
+    content: dict = {"content_segments": parts}
+    if images:
+        content["images"] = images
+    if pending_downloads:
+        content["_pending_images"] = pending_downloads
+    return content
 
 
 def _determine_content_type(message_segs: list[dict]) -> str:
@@ -550,28 +600,29 @@ def llm_segments_to_qq_adapter(
             if user_id:
                 qq_adapter_segs.append({"type": "at", "data": {"qq": str(user_id)}})
         elif cmd == "sticker":
-            sticker_id = seg.get("sticker_id", "")
-            if sticker_id:
-                _data = _load_sticker_for_send(sticker_id)
-                if _data is not None:
-                    _raw, _mime = _data
-                    _b64 = base64.b64encode(_raw).decode("ascii")
-                    qq_adapter_segs.append({
-                        "type": "image",
-                        "data": _sticker_image_data(f"base64://{_b64}", adapter),
-                    })
-                elif seg.get("_fallback_base64"):
-                    qq_adapter_segs.append({
-                        "type": "image",
-                        "data": _sticker_image_data(f"base64://{seg['_fallback_base64']}", adapter),
-                    })
+            image_ref = str(seg.get("image_ref") or "")
+            raw = seg.get("_image_bytes")
+            if "sticker_id" in seg or not image_ref or not isinstance(raw, bytes) or not raw:
+                raise ImageLoadError(image_ref, "sticker requires a prepared image_ref payload")
+            encoded = base64.b64encode(raw).decode("ascii")
+            qq_adapter_segs.append({
+                "type": "image",
+                "data": _sticker_image_data(f"base64://{encoded}", adapter),
+            })
         elif cmd == "image":
+            local_image_base64 = str(seg.get("_local_image_base64", "") or "")
+            if local_image_base64:
+                qq_adapter_segs.append({
+                    "type": "image",
+                    "data": {"file": f"base64://{local_image_base64}"},
+                })
+                continue
             image_ref = seg.get("image_ref", "")
             if not image_ref:
                 raise ImageLoadError("image_ref", "image segment missing image_ref")
-            file_val = _load_browser_image_as_base64(str(image_ref))
+            file_val = _load_image_as_base64(str(image_ref))
             if file_val is _IMAGE_LOAD_FAILED:
-                raise ImageLoadError(str(image_ref), "browser image_ref not found")
+                raise ImageLoadError(str(image_ref), "image_ref not found")
             qq_adapter_segs.append({
                 "type": "image",
                 "data": {"file": file_val},
@@ -594,35 +645,24 @@ def llm_segments_to_qq_adapter(
     return result
 
 
-# ── 表情包加载辅助 ────────────────────────────────────────────────────────────
-
-def _load_sticker_for_send(sticker_id: str):
-    """懒加载表情包字节，供 llm_segments_to_qq_adapter 使用。返回 (bytes, mime) 或 None。"""
-    try:
-        from llm.media.sticker_collection import load_sticker_bytes
-        return load_sticker_bytes(sticker_id)
-    except Exception as e:
-        _seg_logger.warning("懒加载表情包失败 id=%s: %s", sticker_id, e)
-        return None
-
-
-# ── 浏览器图片缓存加载辅助 ────────────────────────────────────────────────────
+# ── 图片缓存加载辅助 ────────────────────────────────────────────────────
 
 _IMAGE_LOAD_FAILED = "__image_load_failed__"
 
 
-def _load_browser_image_as_base64(image_ref: str) -> str:
+def _load_image_as_base64(image_ref: str) -> str:
     try:
-        from browser import read_sendable_browser_image_file
 
-        item = read_sendable_browser_image_file(image_ref)
+        from llm.media.image_store import read_image
+        record = read_image(image_ref)
+        item = (record["data"], record["mime"]) if record and not record.get("unavailable_status") else None
     except Exception as exc:
-        _seg_logger.warning("[segments] 浏览器图片缓存读取失败 image_ref=%s — %s", image_ref, exc)
+        _seg_logger.warning("[segments] 图片缓存读取失败 image_ref=%s — %s", image_ref, exc)
         return _IMAGE_LOAD_FAILED
     if item is None:
-        _seg_logger.warning("[segments] 浏览器图片缓存不存在 image_ref=%s", image_ref)
+        _seg_logger.warning("[segments] 图片缓存不存在 image_ref=%s", image_ref)
         return _IMAGE_LOAD_FAILED
-    raw, _mime, _manifest = item
+    raw, _mime = item
     if not raw:
         return _IMAGE_LOAD_FAILED
     return f"base64://{base64.b64encode(raw).decode('ascii')}"

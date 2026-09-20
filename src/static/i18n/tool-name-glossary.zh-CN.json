@@ -152,12 +152,20 @@
       "zh_definition": "根据联想词或相关概念主动回忆细节。"
     },
     "goal_manage": {
-      "zh_name": "目标管理",
-      "zh_definition": "创建或结束一个或多个活跃目标。"
+      "zh_name": "管理目标",
+      "zh_definition": "创建目标，或移除活跃目标并保留历史记录及结束方式。"
     },
     "core.goal_manage": {
-      "zh_name": "核心·目标管理",
-      "zh_definition": "创建或结束一个或多个活跃目标。"
+      "zh_name": "核心·管理目标",
+      "zh_definition": "创建目标，或移除活跃目标并保留历史记录及结束方式。"
+    },
+    "update_plan": {
+      "zh_name": "更新待办",
+      "zh_definition": "完整更新全局待办列表及步骤状态，保存并在容器预设中展示。"
+    },
+    "core.update_plan": {
+      "zh_name": "核心·更新待办",
+      "zh_definition": "完整更新全局待办列表及步骤状态，保存并在容器预设中展示。"
     },
     "get_weather": {
       "zh_name": "查询天气",
@@ -174,14 +182,6 @@
     "core.restart": {
       "zh_name": "核心·重启进程",
       "zh_definition": "重新启动当前核心进程以加载运行时变化。"
-    },
-    "think_deeply": {
-      "zh_name": "深入思考",
-      "zh_definition": "针对当前问题进行额外的深入思考。"
-    },
-    "core.think_deeply": {
-      "zh_name": "核心·深入思考",
-      "zh_definition": "针对当前问题进行额外的深入思考。"
     },
     "list_contact": {
       "zh_name": "列出联系人",

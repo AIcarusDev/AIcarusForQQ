@@ -33,7 +33,8 @@ def test_world_wraps_platform_block_with_account_attrs():
         "2026年 夏天，7月1日，上午10点0分",
     )
 
-    assert world.startswith("<world>\n<current_time>")
+    assert world.startswith("<world>\n<des>")
+    assert world.index("</des>") < world.index("<current_time>")
     assert "<attention_events/>" in world
     assert world.index("<attention_events/>") < world.index('<platform name="qq"')
     assert (

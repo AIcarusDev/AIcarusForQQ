@@ -117,7 +117,6 @@ def test_world_snapshot_registers_resources_without_clips_or_internal_fields(mon
     assert "data" not in image
     assert "request_id" not in repr(snapshot)
     assert "frame_id" not in repr(snapshot)
-    assert not hasattr(session, "capture_viewport_clip")
 
 
 def test_materialization_uses_response_then_page_cache_without_network(tmp_path) -> None:

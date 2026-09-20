@@ -176,6 +176,13 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
             )
     merged["thinking_control"] = thinking_control
     merged["supports_enable_thinking"] = thinking_control == "enable_thinking"
+    if looks_like_opencode_console_go:
+        merged["session_header"] = "x-opencode-session"
+        merged["client_user_agent"] = "AIcarusForQQ/1.0"
+    else:
+        # Request identity is an endpoint contract, not a model-name heuristic.
+        merged.pop("session_header", None)
+        merged.pop("client_user_agent", None)
     model_thinking_controls = (
         dict(_OPENCODE_GO_MODEL_THINKING_CONTROLS)
         if looks_like_opencode_console_go
@@ -235,7 +242,7 @@ def normalize_profile_config_inplace(cfg: dict) -> dict:
     if _clean_text(cfg.get("model_name")) == "":
         cfg["model_name"] = main_model
 
-    for section_name in ("is", "slow_thinking", "cognition_compression"):
+    for section_name in ("is", "cognition_compression"):
         section = cfg.get(section_name)
         if isinstance(section, dict):
             _normalize_model_binding(section)

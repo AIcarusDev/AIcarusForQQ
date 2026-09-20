@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 from openai.types.chat import ChatCompletionMessageParam
@@ -19,6 +19,9 @@ from llm.discarded_response_log import (
     save_cognition_prefill_discard,
 )
 from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
+from llm.prompt.composer import MessageSection, PromptComposer, UserMessageSection
+from llm.prompt.sections import PromptPrelude, UserPromptSections
+from llm.prompt.output_requirements import build_output_requirements_prompt, normalize_output_requirements_config
 
 from .duplicate_response_guard import (
     build_duplicate_model_response_error,
@@ -130,8 +133,6 @@ def _log_finish_reason(tag: str, response: Any) -> str:
 
 
 def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
-    if log_tag.startswith("think_deeply/"):
-        return "slow_thinking", log_tag.split("/", 1)[1]
     if log_tag.startswith("memory/"):
         return "memory", log_tag.split("/", 1)[1]
     if log_tag == "cognition_compression":
@@ -176,6 +177,7 @@ class LLMRoundRunner:
     """Application-level LLM runner: prompts, AIC Action, flow, and usage."""
 
     def __init__(self, cfg: dict):
+        self._output_requirements_cfg = normalize_output_requirements_config(cfg.get("output_requirements"))
         self.transport = OpenAICompatClient(cfg)
         self.provider = self.transport.provider
         self.model = self.transport.model
@@ -232,6 +234,7 @@ class LLMRoundRunner:
         on_text_delta=None,
         on_reasoning_delta=None,
         on_chunk=None,
+        session_scope: str = "",
     ) -> Any:
         return self._get_transport().create_chat_completion(
             all_messages=all_messages,
@@ -239,6 +242,7 @@ class LLMRoundRunner:
             on_text_delta=on_text_delta,
             on_reasoning_delta=on_reasoning_delta,
             on_chunk=on_chunk,
+            session_scope=session_scope,
         )
 
     def call_one_round(
@@ -259,6 +263,7 @@ class LLMRoundRunner:
         agent_context: dict | None = None,
         assistant_prefill: str = "",
         prefill_exclusions: list[str] | tuple[str, ...] | None = None,
+        prompt_sections: UserPromptSections | None = None,
     ) -> RoundResult:
         """跑一轮 AIC Action：1 次 LLM 调用 + 本轮工具执行。"""
         gen = normalize_generation_config(gen)
@@ -300,17 +305,34 @@ class LLMRoundRunner:
         )
         prefill_cfg = duplicate_guard_cfg.get("prefill_guidance") or {}
 
+        if prompt_sections is None:
+            output_cfg = normalize_output_requirements_config(
+                getattr(self, "_output_requirements_cfg", None)
+            )
+            prompt_sections = UserPromptSections(
+                world=user_content,
+                output_requirements=build_output_requirements_prompt(
+                    native_reasoning_as_cognition=native_reasoning_as_cognition,
+                    cognition_language=output_cfg["cognition_language"],
+                ),
+            )
         if not self._vision_enabled:
-            user_content = _strip_images(user_content)
+            prompt_sections = replace(
+                prompt_sections,
+                world=_strip_images(prompt_sections.world),
+            )
 
-        full_system = system_prompt_builder(
+        prelude_value = system_prompt_builder(
             tool_collection.active_names(),
             tool_collection.latent_names(),
             native_reasoning_as_cognition=native_reasoning_as_cognition,
         )
-        log_prompt(self.provider, full_system, user_content)
-
-        user_msg: ChatCompletionMessageParam = {"role": "user", "content": user_content}
+        prelude = (
+            prelude_value
+            if isinstance(prelude_value, PromptPrelude)
+            else PromptPrelude(system_prompt=str(prelude_value))
+        )
+        full_system = prelude.system_prompt
         system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
         namespace_blocks = tool_collection.namespace_prompt_blocks()
@@ -324,7 +346,7 @@ class LLMRoundRunner:
             create_kwargs["extra_body"] = extra_body
         add_enabled_sampling_kwargs(create_kwargs, gen)
 
-        world_xml = extract_world_text(user_content)
+        world_xml = extract_world_text(prompt_sections.world)
         result = RoundResult(system_prompt=full_system, world_xml=world_xml)
         if agent_run_id:
             emit_agent_event(
@@ -352,28 +374,55 @@ class LLMRoundRunner:
 
         request_started_at = time.time()
         result.request_started_at = request_started_at
-        tools_messages: list[dict] = []
-        if namespace_blocks:
-            tools_messages.append({
-                "role": "user",
-                "content": build_aic_action_message(
-                    [],
-                    namespace_blocks=namespace_blocks,
-                ),
-            })
+        tools_content = (
+            build_aic_action_message([], namespace_blocks=namespace_blocks)
+            if namespace_blocks
+            else ""
+        )
         if flow:
             flow.promote_ready_compression_summary(max_rounds)
-        flow_messages = (
-            flow.to_xml_messages(
+        summary_message = flow.summary_message() if flow else None
+        timeline_messages = (
+            flow.timeline_messages(
                 reference_time=request_started_at,
                 native_reasoning_as_cognition=native_reasoning_as_cognition,
             )
             if flow
             else []
         )
-        all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
+        front_section = UserMessageSection((
+            prelude.instruction,
+            prelude.guardian_card,
+            tools_content,
+        ))
+        tail_section = UserMessageSection((
+            prompt_sections.memory,
+            prompt_sections.skills,
+            prompt_sections.world,
+            prompt_sections.container,
+            prompt_sections.output_requirements,
+        ))
+        composer = PromptComposer().add_section(
+            MessageSection("system", full_system, omit_if_empty=False)
+        ).add_section(front_section)
+        if summary_message is not None:
+            composer.add_section(MessageSection(
+                summary_message["role"],
+                summary_message["content"],
+            ))
+        for message in timeline_messages:
+            composer.add_section(MessageSection(
+                message["role"],
+                message.get("content", ""),
+                omit_if_empty=False,
+            ))
+        composer.add_section(tail_section)
         if assistant_prefill:
-            all_messages.append({"role": "assistant", "content": assistant_prefill})
+            composer.add_section(MessageSection("assistant", assistant_prefill))
+        all_messages = composer.compose()
+        tail_messages = tail_section.build_messages()
+        tail_user_content = tail_messages[0]["content"] if tail_messages else ""
+        log_prompt(self.provider, full_system, tail_user_content)
         result.prompt_snapshot_id = save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="main_round",
@@ -385,7 +434,10 @@ class LLMRoundRunner:
             subfeature=usage_subfeature,
             context=prompt_snapshot_context,
         )
-        stable_prefix = serialize_prompt_prefix(cast(list[dict[str, Any]], [system_msg, *tools_messages]))
+        front_messages = front_section.build_messages()
+        stable_prefix = serialize_prompt_prefix(
+            cast(list[dict[str, Any]], [system_msg, *front_messages])
+        )
         previous_stable_prefix = getattr(self, "_last_main_stable_prompt_prefix", None)
         log_prompt_prefix_comparison(
             provider=self.provider,
@@ -448,6 +500,11 @@ class LLMRoundRunner:
                     _observe_text_delta
                     if stream_projector is not None or cognition_repeat_guard is not None
                     else None
+                ),
+                "session_scope": str(
+                    (agent_context or {}).get("session_key")
+                    or (prompt_snapshot_context or {}).get("focus")
+                    or "main-round"
                 ),
             }
             if native_reasoning_as_cognition and stream_projector is not None:
@@ -804,7 +861,7 @@ class LLMRoundRunner:
             tool_collection=tool_collection,
             flow=flow,
             runtime_stale_checker=runtime_stale_checker,
-            decision_world=user_content,
+            decision_world=prompt_sections.world,
             current_world_provider=current_world_provider,
             decision_guard_snapshot=decision_guard_snapshot,
             current_guard_snapshot_provider=current_guard_snapshot_provider,
@@ -857,7 +914,7 @@ class LLMRoundRunner:
         system_prompt: str,
         user_content: str | list,
         gen: dict,
-        log_tag: str = "slow_thinking",
+        log_tag: str = "simple_text",
     ) -> str | None:
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
         gen = self._normalize_generation_for_transport(gen)
@@ -893,6 +950,7 @@ class LLMRoundRunner:
             response = self._create_chat_completion(
                 all_messages=messages,
                 create_kwargs=create_kwargs,
+                session_scope=f"simple-text:{log_tag}",
             )
         except Exception as exc:
             _record_usage_event(
@@ -936,4 +994,3 @@ class LLMRoundRunner:
         text = response.choices[0].message.content or ""
         log_response(self.provider, text)
         return text.strip() or None
-

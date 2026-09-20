@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import threading
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+
+from PIL import Image
 
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
@@ -12,14 +17,95 @@ from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.tools.qq_social.send_message import send_message as send_mod
 
 
-def test_get_declaration_switches_between_array_and_single_shapes():
-    array_decl = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
-    single_decl = send_mod.get_declaration(config={"tools": {"send_message": {"shape": "single"}}})
+def test_get_declaration_always_returns_array_shape():
+    decl_default = send_mod.get_declaration()
+    decl_single_cfg = send_mod.get_declaration(config={"tools": {"send_message": {"shape": "single"}}})
 
-    assert array_decl["parameters"]["required"] == ["messages"]
-    assert "messages" in array_decl["parameters"]["properties"]
-    assert single_decl["parameters"]["required"] == ["segments"]
-    assert "segments" in single_decl["parameters"]["properties"]
+    assert decl_default["parameters"]["required"] == ["messages"]
+    assert "messages" in decl_default["parameters"]["properties"]
+    assert decl_single_cfg["parameters"]["required"] == ["messages"]
+    assert "messages" in decl_single_cfg["parameters"]["properties"]
+
+
+def test_image_segment_accepts_one_agent_linux_path():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    result = process_tool_arguments(
+        json.dumps({
+            "messages": [{
+                "segments": [{
+                    "command": "image",
+                    "path": "/home/agent/output/result.png",
+                }],
+            }],
+        }),
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+    )
+
+    assert result.ok is True
+    assert result.args["messages"][0]["segments"][0]["path"] == "/home/agent/output/result.png"
+
+
+def test_image_segment_rejects_host_and_outside_agent_paths():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    for path in (r"C:\temp\result.png", "/tmp/result.png"):
+        result = process_tool_arguments(
+            json.dumps({
+                "messages": [{
+                    "segments": [{"command": "image", "path": path}],
+                }],
+            }),
+            "send_message",
+            "test",
+            tool_declaration=declaration,
+        )
+        assert result.ok is False
+
+
+def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch, tmp_path):
+    output = io.BytesIO()
+    Image.new("RGB", (12, 8), (1, 2, 3)).save(output, format="PNG")
+    raw = output.getvalue()
+    host_path = tmp_path / "result.png"
+    host_path.write_bytes(raw)
+
+    class WorkspaceService:
+        @asynccontextmanager
+        async def stage_host_file(self, path):
+            assert path == "/home/agent/output/result.png"
+            yield SimpleNamespace(
+                size=len(raw),
+                host_path=str(host_path),
+                workspace_path=path,
+                name="result.png",
+            )
+
+    messages, error = asyncio.run(send_mod._materialize_local_image_paths(
+        [{"segments": [{"command": "image", "path": "/home/agent/output/result.png"}]}],
+        WorkspaceService(),
+    ))
+
+    assert error is None
+    segment = messages[0]["segments"][0]
+    assert "path" not in segment
+    from llm.media.image_store import read_image
+    assert read_image(segment["_local_image_ref"])["data"] == raw
+    assert base64.b64decode(segment["_local_image_base64"]) == raw
+
+
+def test_materialize_local_image_path_rejects_ambiguous_sources():
+    messages, error = asyncio.run(send_mod._materialize_local_image_paths(
+        [{"segments": [{
+            "command": "image",
+            "path": "/home/agent/output/result.png",
+            "image_ref": "img_existing",
+        }]}],
+        object(),
+    ))
+
+    assert messages is None
+    assert "只能提供一个" in error
 
 
 def test_adapter_error_exposes_only_bounded_metadata():
@@ -85,7 +171,7 @@ def test_sanitize_semantic_args_splits_consecutive_text_segments():
     assert len(changes) == 1
 
 
-def test_array_shape_repairs_root_single_message_arguments_before_schema_validation():
+def test_array_shape_strictly_rejects_root_single_message_arguments_before_schema_validation():
     declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
     raw_arguments = json.dumps(
         {
@@ -106,16 +192,7 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
         semantic_sanitizer=send_mod.sanitize_semantic_args,
     )
 
-    assert result.ok is True
-    assert result.args == {
-        "messages": [
-            {
-                "quote": "-7549",
-                "segments": [{"command": "text", "content": "07.21元这个折扣价好可爱"}],
-            }
-        ]
-    }
-    assert len(result.schema_changes) == 1
+    assert result.ok is False
 
 
 def test_array_shape_repairs_nested_numeric_quote_through_refs():
@@ -148,7 +225,7 @@ def test_array_shape_repairs_nested_numeric_quote_through_refs():
     assert len(result.schema_changes) == 1
 
 
-def test_build_tools_single_shape_preserves_root_single_message_arguments():
+def test_build_tools_always_builds_array_declaration():
     state = NamespaceRuntimeState()
     state.open("qq_social", load_namespace_registry(), 1)
     collection = build_tools(
@@ -163,25 +240,8 @@ def test_build_tools_single_shape_preserves_root_single_message_arguments():
         qq_client=object(),
     )
     spec = collection.active_specs["qq_social.send_message"]
-    raw_arguments = json.dumps(
-        {
-            "segments": [{"command": "text", "content": "我在"}],
-        },
-        ensure_ascii=False,
-    )
-
-    result = process_tool_arguments(
-        raw_arguments,
-        "send_message",
-        "test",
-        tool_declaration=spec.declaration,
-        schema_repairer=spec.schema_repairer,
-        semantic_sanitizer=spec.semantic_sanitizer,
-    )
-
-    assert result.ok is True
-    assert result.args == {"segments": [{"command": "text", "content": "我在"}]}
-    assert result.schema_changes == ()
+    assert spec.declaration["parameters"]["required"] == ["messages"]
+    assert "messages" in spec.declaration["parameters"]["properties"]
 
 
 def test_coerce_execute_messages_accepts_single_message_shape():
@@ -293,7 +353,7 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
     assert error
     assert warnings == []
     prepared, error, warnings = send_mod._prepare_sendable_segments(
-        [{"command": "sticker", "sticker_id": "missing-sticker"}],
+        [{"command": "sticker", "image_ref": "missing-sticker"}],
         fake_session,
     )
     assert prepared is None

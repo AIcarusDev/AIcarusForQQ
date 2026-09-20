@@ -70,11 +70,7 @@ def test_cognition_sources_are_core_runtime_data():
     source_meta, repeated_source_meta = asyncio.run(scenario())
     with sqlite3.connect(database.DB_PATH) as conn:
         core_count = conn.execute("SELECT COUNT(*) FROM CognitionSources").fetchone()[0]
-        old_memory_table = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryCognitionSources'"
-        ).fetchone()
     assert core_count == 1
-    assert old_memory_table is None
     assert source_meta["1"]["source_uid"].startswith("cog_")
     assert repeated_source_meta["9"]["source_uid"] == source_meta["1"]["source_uid"]
 

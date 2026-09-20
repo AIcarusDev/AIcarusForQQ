@@ -201,7 +201,7 @@ runtime_manage(args:
 
 namespace 按领域归属划分，但任务链里的参数准备不一定只发生在同一领域内。attach 用来表达这种窄耦合。
 
-例子：`send_message` 属于 `qq_social`，但发送表情包需要 `sticker_id`。`list_stickers` 的真实归属是 `qq_stickers`，却可以作为 `qq_social` 的 attach 工具出现。
+例子：`send_message` 属于 `qq_social`，发送收藏表情包使用 `image_ref`。`list_stickers` 的真实归属是 `qq_stickers`，却可以作为 `qq_social` 的 attach 工具出现。
 
 规则：
 
@@ -226,7 +226,7 @@ qq_social:
   attach:
     - namespace: qq_stickers
       tool: list_stickers
-      reason: "send_message 发送 sticker 需要 sticker_id。"
+      reason: "send_message 可使用收藏表情包的 image_ref。"
 ```
 
 ## 7. 目标 Namespace 清单
@@ -241,7 +241,6 @@ qq_social:
 - `calculator`
 - `runtime_manage`
 - `enter_qq_session`
-- `think_deeply`
 - `recall_memory`
 - `goal_manage`（合并当前 `create_goal` + `resolve_goal`，常驻）
 - `restart`（当前 `restart_self`，基础自我恢复能力，常驻 core）
@@ -253,7 +252,7 @@ qq_social:
 
 说明：
 
-1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema `if/then` 明确约束：`action=create` 时要求创建目标所需字段，`action=resolve` 时要求 `goal_ids` 和 `resolution`。
+1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema 联合分支 明确约束：`action=create` 时要求 `goal` 和 `background`，`action=delete` 时要求 `goal_id` 和 `resolution`。
 2. 图像工具必须二选一：
    - 主模型支持直接看图：使用 `view_image`，可查看 `<world>` 中因为上下文预算或注入策略而只展示 image_ref 的图片，也可查看 `/home/agent` 内已有的 Linux 图片。
    - `save_image` 常驻 core，将可见 `image_ref` 或公开 HTTP(S) URL 的图片无覆盖地原子保存到 `/home/agent`。
@@ -262,8 +261,7 @@ qq_social:
 3. `get_self_image` 不进入任何 namespace，归入 `not_used` / 待清理工具，不作为 core 常驻候选。
 4. `restart` 是 core 常驻基础能力。它本身只是重启进程，不应在模型面对层被视为高风险工具；真正的安全边界在后端重启实现，必须保证状态落盘、重复触发处理和本轮剩余工具中断语义正确。
 5. `web_search`、`web_extract`、`get_weather` 属于轻量外界感知能力，固定放在 core 常驻，不拆成单独 `web_info` namespace。
-6. `think_deeply` 保持 core 常驻。它是认知辅助工具，不拆入独立 cognition namespace，也不参与外部动作守门。
-7. `recall_memory` 保持 core 常驻。长期记忆检索是基础认知能力，不拆入独立 memory namespace。
+6. `recall_memory` 保持 core 常驻。长期记忆检索是基础认知能力，不拆入独立 memory namespace。
 
 ### qq_social
 
@@ -426,7 +424,6 @@ namespaces:
       - calculator
       - runtime_manage
       - enter_qq_session
-      - think_deeply
       - recall_memory
       - goal_manage
       - restart
@@ -448,7 +445,7 @@ namespaces:
     attach:
       - namespace: qq_stickers
         tool: list_stickers
-        reason: "发送 sticker 需要 sticker_id。"
+        reason: "发送 sticker 可使用收藏表情包的 image_ref。"
 
   browser_use:
     description: "重型浏览器控制和精确 DOM 定位。"
@@ -571,11 +568,11 @@ namespace 重构后：
 19. `namespace_manage.open` 已确定下一轮生效；同轮先 open 再调用新 namespace 工具时拒绝执行，并返回明确原因。
 20. `namespace_manage.close` 已确定立即按顺序生效；先工具后 close 可执行但 close 覆盖续命，先 close 后工具则拒绝。
 21. `open`、`close`、`preview` 都支持一次传入多个 namespace。
-22. `create_goal` / `resolve_goal` 已确定合并为 core 常驻 `goal_manage`，并用 `action` + JSON Schema `if/then` 区分 create / resolve。
+22. `create_goal` / `resolve_goal` 已确定合并为 core 常驻 `goal_manage`，并用 `action` + JSON Schema 联合分支 区分 create / delete。
 23. 新工具不默认加 `additionalProperties: false`。
 24. `send_voice` 常驻在 `qq_social`；TTS 不可用时由执行层返回错误，暂不按配置摘除。
 25. `web_search`、`web_extract`、`get_weather` 固定放在 core 常驻。
-26. `think_deeply` 和 `recall_memory` 固定放在 core 常驻。
+26. `recall_memory` 固定放在 core 常驻。
 27. `get_avatar`、`list_contact`、`set_qq_signature`、`set_group_card` 只做 public name 改名，参数和行为暂时沿用现有工具。
 
 ## 14. 工具改名映射草案

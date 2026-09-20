@@ -4,7 +4,6 @@ import asyncio
 
 from runtime.events import RuntimeEventHub
 from tools import build_tools
-import tools as tools_package
 from tools.contract import get_contract_from_module
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.prompt_signatures import strip_schema_descriptions
@@ -248,14 +247,20 @@ def test_query_group_members_contract_is_action_specific():
     assert (query["minLength"], query["maxLength"]) == (1, 32)
 
 
-def test_goal_manage_contract_preserves_business_title_property():
+def test_goal_manage_contract():
     from tools.core import goal_manage
 
     declaration = goal_manage.TOOL_CONTRACT.declaration()
-    goal_item = declaration["parameters"]["$defs"]["GoalItem"]
+    assert declaration["name"] == "goal_manage"
+    branches = declaration["parameters"]["$defs"].values()
+    actions = {branch["properties"]["action"]["const"]: branch for branch in branches}
+    for action, fields in {
+        "create": {"action", "goal", "background"},
+        "delete": {"action", "goal_id", "resolution"},
+    }.items():
+        assert set(actions[action]["properties"]) == fields
+        assert set(actions[action]["required"]) == fields
 
-    assert "title" in goal_item["properties"]
-    assert goal_item["required"] == ["title", "content", "reason"]
 
 
 def test_browser_locator_contract_is_operation_specific():
@@ -276,23 +281,6 @@ def test_browser_locator_contract_is_operation_specific():
     assert "attribute" in operations["read_attribute"]["required"]
     assert "select_options" in operations["select_option"]["properties"]
     assert "arg" in defs["BrowserLocatorEvalOptions"]["properties"]
-
-
-def test_think_deeply_contract_keeps_intent_enum():
-    from tools.core import think_deeply
-
-    contract = get_contract_from_module(think_deeply)
-
-    assert contract is not None
-    properties = contract.declaration()["parameters"]["properties"]
-    assert properties["content"]["minLength"] == 1
-    assert _non_null_schema(properties["intent"])["enum"] == [
-        "affirmation",
-        "criticism",
-        "solving",
-        "inspiration",
-        "simulate",
-    ]
 
 
 def test_enter_qq_session_contract_preserves_enum_and_integer_compatibility():
@@ -323,7 +311,7 @@ def test_poke_user_id_contract_is_string_with_integer_compatibility():
     assert user_id_schema["x-coerce-integer"] is True
 
 
-def test_runtime_manage_replaces_wait_family_in_discovered_tools():
+def test_runtime_manage_contract_has_current_action_discriminator():
     from tools.core import runtime_manage
 
     contract = get_contract_from_module(runtime_manage)
@@ -333,8 +321,6 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
         "idle",
         "sleep",
     }
-    assert "wait_qq_event" not in tools_package._discovered_tool_names()
-    assert "wait_browser_event" not in tools_package._discovered_tool_names()
 
 
 def test_scroll_chat_log_contract_is_action_union():
@@ -413,6 +399,5 @@ def _has_schema_description_keyword(value, *, in_properties: bool = False) -> bo
     if isinstance(value, list):
         return any(_has_schema_description_keyword(item) for item in value)
     return False
-
 
 

@@ -152,7 +152,6 @@ def test_search_builds_stable_ripgrep_contract_with_context(monkeypatch, tmp_pat
             "limit": 10,
         }
     )
-    assert "--context-separator" not in captured
     assert captured[-3:] == ["--", "Needle", str(tmp_path)]
     assert captured[captured.index("--before-context") + 1] == "2"
     assert captured[captured.index("--after-context") + 1] == "3"

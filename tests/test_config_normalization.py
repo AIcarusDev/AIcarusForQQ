@@ -105,7 +105,6 @@ def test_generation_config_bounds_context_and_image_limits():
 
     cfg = normalize_generation_config(
         {
-            "json_self_repair_retries": 1,
             "llm_contents_max_rounds": 4,
             "cognition_compression_trigger_rounds": 99,
             "world_multimodal_image_limit": 0,
@@ -116,7 +115,6 @@ def test_generation_config_bounds_context_and_image_limits():
     assert cfg["cognition_compression_trigger_rounds"] == 5
     assert cfg["world_multimodal_image_limit"] == 0
     assert cfg["native_reasoning_as_cognition"] is False
-    assert "json_self_repair_retries" not in cfg
     assert normalize_generation_config(
         {"native_reasoning_as_cognition": 1}
     )["native_reasoning_as_cognition"] is True
@@ -463,3 +461,23 @@ def test_advanced_sampling_only_sends_enabled_parameters():
 
     assert create_kwargs == {"model": "test-model", "temperature": 0.7}
 
+
+
+def test_legacy_restart_config_migrates_to_supervisor():
+    from platforms.qq.adapter.config import normalize_qq_platform_config
+
+    config = {
+        "alerting": {
+            "enabled": True,
+            "email_control": {"enabled": True},
+            "qq_adapter_restart": {
+                "enabled": True,
+                "command": "adapter-start.cmd",
+                "qrcode_globs": ["**/*.png"],
+            },
+        },
+    }
+    qq = normalize_qq_platform_config(config, remove_legacy=True)
+    assert qq["supervisor"]["enabled"] is True
+    assert qq["supervisor"]["command"] == "adapter-start.cmd"
+    assert normalize_qq_platform_config(config, remove_legacy=True) == qq

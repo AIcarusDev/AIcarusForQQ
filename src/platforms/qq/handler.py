@@ -865,6 +865,27 @@ async def _handle_group_card_notice(event: dict, group_id: str) -> None:
 #  注册入口
 # ══════════════════════════════════════════════════════════
 
+async def _handle_qq_friend_request(event: dict) -> None:
+    from platforms.registry import get_platform
+
+    runtime = get_platform("qq")
+    if not runtime or not runtime.friends:
+        return
+    try:
+        if not await runtime.friends.receive(event):
+            return
+        hub = getattr(app_state, "runtime_event_hub", None)
+        loop = getattr(app_state, "main_loop", None)
+        if hub is not None and loop is not None and loop.is_running():
+            hub.publish_threadsafe(loop, {
+                "type": "attention",
+                "reason": "收到 QQ 好友申请，可通过 qq_contacts 查询和审批",
+                "from": "qq",
+            }, target=current_focus_key(app_state.current_focus) or "")
+    except Exception:
+        logger.exception("[qq] 好友申请处理失败")
+
+
 def register_qq_platform_handlers(runtime=None) -> None:
     """将消息 / 撤回 / 戳一戳回调注册到 QQ 平台客户端。"""
     client = getattr(runtime, "client", None) if runtime is not None else _qq_client()
@@ -874,5 +895,6 @@ def register_qq_platform_handlers(runtime=None) -> None:
     client.set_recall_handler(_handle_qq_adapter_recall)
     client.set_poke_handler(_handle_qq_adapter_poke)
     client.set_group_notice_handler(_handle_qq_adapter_group_notice)
+    client.set_request_handler(_handle_qq_friend_request)
 
 

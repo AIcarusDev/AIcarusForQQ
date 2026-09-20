@@ -44,7 +44,7 @@ namespaces:
     attach:
       - namespace: qq_stickers
         tool: list_stickers
-        reason: "`send_message` may need sticker_id。"
+        reason: "`send_message` 可使用收藏表情包的 image_ref。"
       - namespace: qq_chat_log_view
         tool: scroll_chat_log
         reason: "`send_message` / `recall_message` may need nearby quoted-message context。"
@@ -102,7 +102,7 @@ namespaces:
       - set_avatar
 
   qq_contacts:
-    description: "QQ 联系人。查看会话列表、搜索列表中存在的会话。"
+    description: "QQ 联系人。查看和搜索会话、自主审批好友申请、删除好友。"
     path: qq_contacts
     import_path: platforms.qq.tools.qq_contacts
     activation:
@@ -112,6 +112,9 @@ namespaces:
     tools:
       - list_contact
       - search_session
+      - list_friend_requests
+      - handle_friend_request
+      - delete_friend
 
   qq_group_info:
     description: "QQ群信息。查询群成员、查看群公告、设置自己的群名称（card）。在群聊中可用"

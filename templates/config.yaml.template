@@ -109,13 +109,6 @@ generation:
   # 换其它 provider（Gemini / 智谱 / OpenAI 等）时建议关闭。
   siliconflow_image_compat: false
 
-# --- 工具协议 ---
-tools:
-  send_message:
-    # array: send_message(messages=[...])，一次调用可顺序发送多条消息（默认，适合不稳定并行/多次 tool call 的模型）
-    # single: send_message(segments=[...], quote=...)，一次调用只发送一条消息
-    message_shape: "array"
-
 # --- 工具执行前守门 ---
 # 仅对 EXTERNALLY_PERCEPTIBLE=True 的工具生效。当工具即将执行时，如果当前 <world>
 # 相比模型决策帧发生语义变化，则调用该子模型直接输出 JSON 判断是否仍可执行。
@@ -139,7 +132,7 @@ prompt_snapshots:
   root_dir: "logs/llm_prompts"
   include:
     main_round: true      # 主意识循环请求
-    simple_text: false    # 慢思考 / 压缩等纯文本子调用
+    simple_text: false    # 压缩等纯文本子调用
     forced_tool: false    # 归档等原生 forced tool 子调用
   compress_after_days: 1        # 旧 jsonl 自动 gzip
   bundle_after_days: 14         # 更旧的 gzip 按日期打 tar.gz 包
@@ -195,12 +188,16 @@ self_name: "AIcarus"
 # --- 监护人介绍（可选，null 表示尚未填写）---
 guardian: null
 
+# --- 主模型输出要求 ---
+output_requirements:
+  # auto / zh-CN / zh-TW / en / ja / ko / es / fr / de
+  # 普通模式约束 cognition；原生思维链模式约束内部思考的默认语言。
+  cognition_language: auto
+
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:
   persona: "config/persona.md"
-  drive: "config/drive/drive.md"
-  cognition_content: "config/cognition_content/cognition_content.md"
-  cognition_prompt: "config/cognition_prompt/cognition_prompt.md"
+  instruction: "config/instruction.md"
 
 # --- 模拟打字速度 ---
 # 打字速度倍率，值越大打字越快，延迟越短，封顶时间也同步缩放
@@ -277,18 +274,6 @@ memory:
     world_query_chunks: 6 # 从当前 world/chat 中提取参与被动召回的高质量文本片段上限
     cognition_query_chunks: 3 # 从最近内心流中提取参与被动召回的片段上限
 
-# --- 主动思考（think_deeply 工具） ---
-# 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
-# 这里也使用显式 provider + model 绑定。
-slow_thinking:
-  enabled: true
-  provider: "siliconflow"
-  model: "Pro/zai-org/GLM-5"
-  generation:
-    temperature: 1.0
-    max_output_tokens: 10000
-    enable_thinking: true
-
 # ══════════════════════════════════════════
 #  平台集成
 # ══════════════════════════════════════════
@@ -337,7 +322,6 @@ platforms:
       cooldown_seconds: 300
       max_attempts_per_hour: 4
       recovery_grace_seconds: 45
-      qrcode_globs: []
 
 # ══════════════════════════════════════════
 #  Vision Bridge（视觉桥）
@@ -359,4 +343,19 @@ vision_bridge:
   cache_eviction:
     max_age_days: 30         # 超过此天数的缓存图片将被删除，0 = 不按时间清理
     max_size_mb: 500         # 缓存目录总大小上限(MB)，超出则淘汰最旧的条目，0 = 不限大小
+
+# ══════════════════════════════════════════
+#  Video Understanding（视频理解）
+#  用于 analyze_video 工具函数的专用多模态视频理解配置。
+#  支持 Google Gemini 原生端点、Sub2API 反重力中转或 OpenAI 兼容多模态端点。
+# ══════════════════════════════════════════
+video_understanding:
+  protocol: "auto"             # 协议类型: auto (自动探测推导) | gemini_native (Google 原生 generateContent) | openai_compatible (OpenAI 兼容)
+  provider: ""                 # 关联 model_providers；设置页选“继承供应商”会清除以下三项覆盖
+  base_url: ""                 # 显式端点根路径（留空则继承 provider 的 base_url）
+  api_key_env: ""              # 环境变量名称（留空则继承 provider 的 api_key_env）
+  api_key: ""                  # 显式 API Key（留空则优先使用 api_key_env 或 provider 的 Key）
+  model: "gemini-3.8-flash"    # 视频理解专用多模态模型名称（如 gemini-3.8-flash, gemini-2.5-flash 等）
+  max_size_mb: 20              # 原文件 MiB，范围 1~128；编码后请求体另校验，Google 官方总请求最多 20 MB
+  timeout: 120.0               # 请求超时时间（秒）
 

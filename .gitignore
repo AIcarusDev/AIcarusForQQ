@@ -53,6 +53,7 @@ debug/
 # ── WebUI 前端依赖与本地设计验收证据 ─────────
 /artifacts/
 /design-qa.md
+/output/playwright/
 
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/
@@ -77,11 +78,10 @@ config/self_image/
 config/drive/drive.md
 config/cognition_content/cognition_content.md
 config/cognition_prompt/cognition_prompt.md
+config/instruction.md
 src/skills/qq-social-style/SKILL.md
 src/skills/qq-social-style/references
-src/skills/core-chat/SKILL.md
-src/skills/core-chat/references
-src/skills/project-source/SKILL.md
-src/skills/project-source/references
-src/skills/computer/SKILL.md
-src/skills/computer/references
+
+# Unified image migration evidence and recoverable local backups
+/output/unified-image*.log
+/output/unified-images-*/

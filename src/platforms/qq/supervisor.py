@@ -13,19 +13,17 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""platforms.qq.supervisor — QQ adapter 自动重启 + 二维码捕获
+"""platforms.qq.supervisor — QQ adapter 自动重启与恢复检测
 
 职责：
     1. 接收掉线告警事件，按冷却 + 每小时熔断策略拉起 QQ adapter 启动批处理。
     2. 重启后等待 recovery_grace_seconds 秒观察心跳是否自动恢复。
-    3. 仍未恢复时扫描指定 glob 路径下重启时刻之后产生的二维码图片，
-       通过 AlertManager 以邮件附件形式发出，便于监护人远程扫码登录。
 
 设计要点：
-    - 所有外部命令路径来自 yaml 配置，绝不从邮件等不可信渠道拼接。
+    - 所有外部命令路径来自 yaml 配置，仅执行本地配置的命令。
     - Windows 下 .bat 必须经 cmd.exe 调起，create_subprocess_exec 比 shell=True 安全。
     - 单实例：通过 asyncio.Lock 防止并发重启风暴。
-    - 状态机由 QQAdapterClient 与 AlertManager 共同维护，本模块只触发 + 通知。
+    - 状态机由 QQAdapterClient 维护，本模块只触发 + 通知。
 """
 
 from __future__ import annotations
@@ -43,9 +41,9 @@ logger = logging.getLogger("AICQ.platforms.qq.supervisor")
 
 
 class QQAdapterSupervisor:
-    """QQ adapter 进程监管器：自动重启 + 二维码邮件。
+    """QQ adapter 进程监管器：自动重启与恢复检测。
 
-    cfg 字段（来自 alerting.qq_adapter_restart）:
+    cfg 字段（来自 platforms.qq.supervisor）:
         enabled: bool                  总开关
         command: str                   启动批处理 / 可执行文件路径（必填）
         args: list[str]                额外参数
@@ -63,11 +61,9 @@ class QQAdapterSupervisor:
         cooldown_seconds: int          两次重启最小间隔（秒），默认 300
         max_attempts_per_hour: int     1 小时滑窗内最大重启次数，默认 4
         recovery_grace_seconds: int    重启后等待心跳恢复的时间（秒），默认 45
-        qrcode_globs: list[str]        二维码图片 glob 列表（相对 cwd），
-                                       默认 ["**/qrcode*.png", "cache/qrcode*.png"]
     """
 
-    def __init__(self, cfg: dict | None, client: Any = None, alert: Any = None):
+    def __init__(self, cfg: dict | None, client: Any = None):
         cfg = cfg or {}
         self.enabled: bool = bool(cfg.get("enabled", False))
         self.command: str = str(cfg.get("command", "") or "").strip()
@@ -84,28 +80,13 @@ class QQAdapterSupervisor:
         self.cooldown_seconds: int = max(30, int(cfg.get("cooldown_seconds", 300)))
         self.max_attempts_per_hour: int = max(1, int(cfg.get("max_attempts_per_hour", 4)))
         self.recovery_grace_seconds: int = max(5, int(cfg.get("recovery_grace_seconds", 45)))
-        self.qrcode_globs: list[str] = [
-            str(g) for g in (cfg.get("qrcode_globs") or [
-                "**/qrcode*.png",
-                "cache/qrcode*.png",
-            ])
-        ]
-
         self._client = client          # QQAdapterClient
-        self._alert = alert            # AlertManager
         self._lock: asyncio.Lock = asyncio.Lock()
         self._last_attempt_at: float = 0.0
         self._attempt_history: deque[float] = deque(maxlen=64)
         self._inflight: bool = False   # 当前正在执行重启 + 观察流程
 
     # ── 配置 / 注入 ─────────────────────────────────────────
-
-    def attach(self, client: Any = None, alert: Any = None) -> None:
-        """运行时注入依赖（main.py / 热重载使用）。"""
-        if client is not None:
-            self._client = client
-        if alert is not None:
-            self._alert = alert
 
     def is_configured(self) -> bool:
         """是否具备最低运行条件。"""
@@ -123,23 +104,6 @@ class QQAdapterSupervisor:
             logger.debug("无运行中事件循环，重启请求忽略 (reason=%s)", reason)
             return
         loop.create_task(self._run_restart_flow(reason))
-
-    async def request_stop(self, reason: str) -> str:
-        """仅停止 QQ adapter 不重新拉起（用于远程 STOP 指令）。
-
-        返回一句话描述结果，便于回复邮件。
-        """
-        if not self.is_configured():
-            return "supervisor 未启用，已跳过"
-        async with self._lock:
-            if self._inflight:
-                return "已有重启流程在跑，stop 已忽略"
-            self._inflight = True
-        try:
-            await self._stop_existing()
-            return f"已尝试停止 QQ adapter 进程 (reason={reason})"
-        finally:
-            self._inflight = False
 
     # ── 核心流程 ────────────────────────────────────────────
 
@@ -170,13 +134,12 @@ class QQAdapterSupervisor:
             self._attempt_history.append(now)
             self._inflight = True
 
-        restart_wall_time = time.time()
         try:
             await self._stop_existing()
             ok = await self._launch()
             if not ok:
                 return
-            await self._wait_and_followup(reason, restart_wall_time)
+            await self._wait_for_recovery(reason)
         finally:
             self._inflight = False
 
@@ -288,46 +251,18 @@ class QQAdapterSupervisor:
             logger.exception("拉起 QQ adapter 启动脚本失败: %s", e)
             return False
 
-    async def _wait_and_followup(self, reason: str, restart_wall_time: float) -> None:
-        """等待心跳恢复；若超时则寻找二维码并发邮件。"""
+    async def _wait_for_recovery(self, reason: str) -> None:
+        """等待连接和心跳恢复，超时后记录结果。"""
         deadline = time.monotonic() + self.recovery_grace_seconds
-        # 每 2s 轮询一次
         while time.monotonic() < deadline:
             await asyncio.sleep(2.0)
             if self._client_is_alive():
-                logger.info(
-                    "重启成功：心跳已恢复（耗时约 %.0fs），等待 client 自身的恢复邮件流程",
-                    self.recovery_grace_seconds - (deadline - time.monotonic()),
-                )
-                # 心跳恢复路径会自动触发 alert.notify_recover()，无需此处再发
+                logger.info("重启成功：连接和心跳已恢复")
                 return
-
         logger.warning(
-            "重启后 %ds 内心跳未恢复，尝试发送二维码邮件 (reason=%s)",
+            "重启后 %ds 内心跳未恢复 (reason=%s)",
             self.recovery_grace_seconds, reason,
         )
-        if self._alert is None:
-            return
-
-        qr_path = await asyncio.to_thread(self._find_latest_qrcode, restart_wall_time)
-        if qr_path is None:
-            logger.info("未找到重启后生成的二维码文件，跳过二维码邮件")
-            try:
-                await self._alert.notify_disconnect_followup(
-                    f"自动重启已执行但未恢复，且未发现二维码文件。原因: {reason}"
-                )
-            except AttributeError:
-                # 老版 AlertManager 无此方法时静默
-                pass
-            return
-
-        try:
-            await self._alert.notify_qrcode(
-                reason, qr_path,
-                recovery_hint=f"等待 {self.recovery_grace_seconds}s 内",
-            )
-        except Exception:
-            logger.exception("发送二维码邮件失败")
 
     # ── 工具 ─────────────────────────────────────────────────────────
 
@@ -441,68 +376,6 @@ class QQAdapterSupervisor:
             return connected and not stale
         except Exception:
             return False
-
-    def _find_latest_qrcode(self, since_wall_time: float) -> Path | None:
-        """寻找 mtime 大于 since_wall_time 的最新二维码图片。
-
-        匹配规则：
-          - glob 条目以盘符 (X:) 或 / 开头视为绝对路径，使用 glob.glob 处理；
-          - 否则在 [cwd, cwd.parent] 两级范围内做相对 glob，
-            兼容 QQ adapter OneKey 那种 cwd=bootmain、二维码在兄弟目录的布局。
-        """
-        import glob as _glob_mod
-
-        cwd = Path(self.cwd or Path(self.command).parent)
-        if not cwd.is_dir():
-            return None
-        search_bases: list[Path] = [cwd]
-        try:
-            parent = cwd.resolve().parent
-            if parent != cwd and parent.is_dir():
-                search_bases.append(parent)
-        except OSError:
-            pass
-
-        candidates: list[tuple[float, Path]] = []
-
-        def _consider(path_obj: Path) -> None:
-            if not path_obj.is_file():
-                return
-            try:
-                mtime = path_obj.stat().st_mtime
-            except OSError:
-                return
-            if mtime + 1.0 < since_wall_time:
-                return
-            candidates.append((mtime, path_obj))
-
-        for pattern in self.qrcode_globs:
-            pattern_norm = pattern.replace("\\", "/")
-            is_abs = (
-                len(pattern_norm) >= 2 and pattern_norm[1] == ":"  # X:
-            ) or pattern_norm.startswith("/")
-            try:
-                if is_abs:
-                    for matched in _glob_mod.glob(pattern_norm, recursive=True):
-                        _consider(Path(matched))
-                else:
-                    for base in search_bases:
-                        for p in base.glob(pattern):
-                            _consider(p)
-            except (OSError, ValueError):
-                continue
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        return candidates[0][1]
-
-    def get_latest_qrcode(self) -> "Path | None":
-        """查找最新的 QQ adapter 登录二维码（不限修改时间，取最近一张）。
-
-        供 GET_CODE 邮件指令使用：无需重启即可重新获取当前二维码。
-        """
-        return self._find_latest_qrcode(since_wall_time=0.0)
 
     async def stop_on_shutdown(self) -> None:
         """AICQ 正常关闭时调用：停止由本 supervisor 管控的 QQ adapter 进程。

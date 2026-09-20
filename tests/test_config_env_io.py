@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 from config_loader import (
-    read_env_imap,
     read_env_keys,
     read_env_proxies,
-    read_env_smtp,
     read_env_values,
-    save_env_imap,
     save_env_key,
     save_env_proxy,
-    save_env_smtp,
     save_env_value,
 )
 
@@ -63,32 +59,3 @@ def test_browser_proxy_round_trips_through_legacy_env_helpers(tmp_path):
 
     save_env_proxy("BROWSER_PROXY", "", env_path=str(env_file))
     assert "BROWSER_PROXY=" not in env_file.read_text(encoding="utf-8")
-
-
-def test_smtp_and_imap_helpers_mask_passwords_and_skip_masked_updates(tmp_path):
-    env_file = tmp_path / "settings.txt"
-    env_file.write_text(
-        "AICQ_SMTP_HOST=mail.local\n"
-        "AICQ_SMTP_PASSWORD=secret\n"
-        "AICQ_IMAP_HOST=imap.local\n"
-        "AICQ_IMAP_PASSWORD=imap-secret\n",
-        encoding="utf-8",
-    )
-
-    smtp = read_env_smtp(env_path=str(env_file))
-    imap = read_env_imap(env_path=str(env_file))
-    assert smtp["AICQ_SMTP_PASSWORD"] == "**cret"
-    assert imap["AICQ_IMAP_PASSWORD"] == "*******cret"
-
-    save_env_smtp({"AICQ_SMTP_PASSWORD": "****", "AICQ_SMTP_PORT": "465"}, env_path=str(env_file))
-    save_env_imap({"AICQ_IMAP_PASSWORD": "", "AICQ_IMAP_PORT": "993"}, env_path=str(env_file))
-
-    assert read_env_values(
-        ["AICQ_SMTP_PASSWORD", "AICQ_SMTP_PORT", "AICQ_IMAP_PASSWORD", "AICQ_IMAP_PORT"],
-        env_path=str(env_file),
-    ) == {
-        "AICQ_SMTP_PASSWORD": "secret",
-        "AICQ_SMTP_PORT": "465",
-        "AICQ_IMAP_PASSWORD": "",
-        "AICQ_IMAP_PORT": "993",
-    }

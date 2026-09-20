@@ -37,6 +37,7 @@ from quart import Blueprint, render_template, request, jsonify, send_file
 import yaml
 
 import app_state
+from llm.media.sticker_collection import StickerCollectionError, valid_image_ref
 from config_loader import (
     AGENT_PROMPT_KEYS,
     PromptDocumentError,
@@ -51,20 +52,16 @@ from config_loader import (
     save_env_value,
     read_env_proxies,
     save_env_proxy,
-    read_env_smtp,
-    save_env_smtp,
-    read_env_imap,
-    save_env_imap,
 )
 from llm.core.provider import (
     create_adapter,
     build_tool_execution_guard_adapter_cfg,
     build_event_extraction_adapter_cfg,
     build_memory_processing_adapter_cfg,
-    build_slow_thinking_adapter_cfg,
     build_compression_adapter_cfg,
 )
 from llm.compression.config import normalize_generation_config
+from llm.prompt.output_requirements import COGNITION_LANGUAGES, normalize_output_requirements_config
 from llm.core.duplicate_response_guard import normalize_duplicate_model_response_guard_config
 from llm.core.profiles import (
     get_configured_api_key_names,
@@ -137,7 +134,7 @@ def _agent_prompt_snapshot(config: dict) -> dict:
     values = load_agent_prompt_docs(config)
     return {
         "domain": "agent-prompt",
-        "schema_version": "agent-prompt-v1",
+        "schema_version": "agent-prompt-v2",
         "revision": _agent_prompt_revision(values),
         "values": values,
         "secrets": {},
@@ -356,25 +353,10 @@ def _default_web_search_cfg(cfg: dict) -> dict:
     return web_search
 
 
-def _normalize_send_message_shape(value: object) -> str | None:
-    shape = str(value or "").strip().lower().replace("-", "_")
-    if shape in {"array", "messages", "multi", "multi_message", "batch"}:
-        return "array"
-    if shape in {"single", "single_message", "message", "segments"}:
-        return "single"
-    return None
-
-
 def _default_tools_cfg(cfg: dict) -> dict:
     """Return tool config with UI-visible defaults without mutating saved config."""
     raw = cfg.get("tools", {}) if isinstance(cfg, dict) else {}
-    tools = deepcopy(raw) if isinstance(raw, dict) else {}
-    send_raw = tools.get("send_message", {})
-    send_message = deepcopy(send_raw) if isinstance(send_raw, dict) else {}
-    shape = _normalize_send_message_shape(send_message.get("message_shape"))
-    send_message["message_shape"] = shape or "array"
-    tools["send_message"] = send_message
-    return tools
+    return deepcopy(raw) if isinstance(raw, dict) else {}
 
 
 def _qq_platform_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
@@ -445,7 +427,7 @@ async def _reload_qq_platform_client(
 
 @settings_bp.route("/settings")
 async def settings_page():
-    return await render_template("settings.html")
+    return await render_template("settings.html", cognition_languages=COGNITION_LANGUAGES)
 
 
 @settings_bp.route("/settings/agent-prompt", methods=["GET"])
@@ -547,7 +529,6 @@ async def settings_get():
     cfg.pop("is", None)
     normalize_profile_config_inplace(cfg)
     gen_cfg = normalize_generation_config(cfg.get("generation"))
-    gen_cfg.pop("final_reminder", None)
     return jsonify({
         "provider": get_selected_provider_name(cfg),
         "model_providers": get_model_providers(cfg),
@@ -555,6 +536,7 @@ async def settings_get():
         "model_name": cfg.get("model_name", ""),
         "vision": cfg.get("vision", True),
         "vision_bridge": cfg.get("vision_bridge", {}),
+        "video_understanding": cfg.get("video_understanding", {}),
         "generation": {
             **gen_cfg,
             "enable_thinking": gen_cfg.get("enable_thinking", True),
@@ -562,6 +544,7 @@ async def settings_get():
                 gen_cfg.get("duplicate_model_response_guard")
             ),
         },
+        "output_requirements": normalize_output_requirements_config(cfg.get("output_requirements")),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "self_name": cfg.get("self_name", ""),
         "guardian": normalize_guardian_info(cfg.get("guardian")),
@@ -580,25 +563,9 @@ async def settings_get():
         "web_search": _default_web_search_cfg(cfg),
         "tools": _default_tools_cfg(cfg),
         "browser_control": normalize_browser_control_config(cfg.get("browser_control")),
-        "alerting": cfg.get("alerting", {
-            "enabled": False,
-            "heartbeat_timeout": 120,
-            "cooldown": 600,
-            "subject_prefix": "[AIcarus 告警]",
-            "email_control": {
-                "enabled": False,
-                "allowed_commands": ["REQUEST", "RESTART", "STATUS"],
-                "token_ttl_seconds": 600,
-                "poll_interval": 30,
-                "reuse_smtp_credentials": True,
-            },
-        }),
-        "smtp": await asyncio.to_thread(read_env_smtp),
-        "imap": await asyncio.to_thread(read_env_imap),
         "tool_execution_guard": cfg.get("tool_execution_guard", {}),
         "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
         "memory": _default_memory_cfg(cfg),
-        "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
         "api_keys": await asyncio.to_thread(read_env_keys, _get_settings_api_key_names(cfg)),
@@ -654,13 +621,18 @@ async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
     data = await request.get_json() or {}
 
+    if "output_requirements" in data:
+        try:
+            output_cfg = normalize_output_requirements_config(data["output_requirements"], strict=True)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+    else:
+        output_cfg = normalize_output_requirements_config(app_state.config.get("output_requirements"))
+
     # ── 写 API Key 和代理（线程池，避免阻塞事件循环）──────
     api_keys_data = dict(data.get("api_keys") or {})
     service_env_data = dict(data.get("service_env") or {})
     proxies_data = dict(data.get("proxies") or {})
-    smtp_data = dict(data.get("smtp") or {})
-    imap_data = dict(data.get("imap") or {})
-
     def _write_env():
         for key_name, val in api_keys_data.items():
             if val:
@@ -673,18 +645,13 @@ async def settings_save():
             if proxy_name in proxies_data:
                 with contextlib.suppress(ValueError):
                     save_env_proxy(proxy_name, proxies_data.get(proxy_name, ""))
-        if smtp_data:
-            with contextlib.suppress(ValueError):
-                save_env_smtp(smtp_data)
-        if imap_data:
-            with contextlib.suppress(ValueError):
-                save_env_imap(imap_data)
         load_dotenv(override=True)
 
     await asyncio.to_thread(_write_env)
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
+    new_cfg["output_requirements"] = output_cfg
     new_cfg.pop("profiles", None)
     new_cfg.pop("openai_profiles", None)
 
@@ -729,7 +696,6 @@ async def settings_save():
     if "generation" in data and isinstance(data["generation"], dict):
         new_gen = dict(new_cfg.get("generation", {}))
         new_gen.update(data["generation"])
-        new_gen.pop("final_reminder", None)
         if "enable_thinking" in data["generation"]:
             new_gen["enable_thinking"] = bool(data["generation"]["enable_thinking"])
         if "llm_contents_max_rounds" in data["generation"]:
@@ -785,22 +751,9 @@ async def settings_save():
                     new_platforms[platform_key] = deepcopy(platform_cfg)
         new_cfg["platforms"] = new_platforms
     if "tools" in data and isinstance(data["tools"], dict):
-        tools_data = data["tools"]
         current_tools = new_cfg.get("tools", {})
         new_tools = dict(current_tools) if isinstance(current_tools, dict) else {}
-        send_data = tools_data.get("send_message")
-        if isinstance(send_data, dict):
-            current_send = new_tools.get("send_message", {})
-            new_send = dict(current_send) if isinstance(current_send, dict) else {}
-            if "message_shape" in send_data:
-                shape = _normalize_send_message_shape(send_data.get("message_shape"))
-                if shape is None:
-                    return jsonify({
-                        "success": False,
-                        "error": "send_message.message_shape 只能是 array 或 single",
-                    }), 400
-                new_send["message_shape"] = shape
-            new_tools["send_message"] = new_send
+        # tools.send_message.message_shape 已废弃，保持 tools 配置平滑兼容
         new_cfg["tools"] = new_tools
     if "tts" in data and isinstance(data["tts"], dict):
         td = data["tts"]
@@ -839,80 +792,6 @@ async def settings_save():
         new_cfg["web_search"] = new_ws
     if "browser_control" in data and isinstance(data["browser_control"], dict):
         new_cfg["browser_control"] = normalize_browser_control_config(data["browser_control"])
-    if "alerting" in data and isinstance(data["alerting"], dict):
-        ad = data["alerting"]
-        new_alerting = dict(new_cfg.get("alerting", {}))
-        if "enabled" in ad:
-            new_alerting["enabled"] = bool(ad["enabled"])
-        if "heartbeat_timeout" in ad:
-            new_alerting["heartbeat_timeout"] = max(30, int(ad["heartbeat_timeout"]))
-        if "cooldown" in ad:
-            new_alerting["cooldown"] = max(0, int(ad["cooldown"]))
-        if "subject_prefix" in ad:
-            new_alerting["subject_prefix"] = str(ad["subject_prefix"]).strip() or "[AIcarus 告警]"
-        # QQ 平台自动重启子节点
-        if "qq_adapter_restart" in ad and isinstance(ad["qq_adapter_restart"], dict):
-            nr_in = ad["qq_adapter_restart"]
-            platforms_cfg = dict(new_cfg.get("platforms", {}))
-            qq_cfg = dict(platforms_cfg.get("qq", {}))
-            nr_out = dict(qq_cfg.get("supervisor", {}))
-            if "enabled" in nr_in:
-                nr_out["enabled"] = bool(nr_in["enabled"])
-            if "command" in nr_in:
-                nr_out["command"] = str(nr_in["command"] or "").strip()
-            if "args" in nr_in and isinstance(nr_in["args"], list):
-                nr_out["args"] = [str(a) for a in nr_in["args"]]
-            if "cwd" in nr_in:
-                nr_out["cwd"] = str(nr_in["cwd"] or "").strip()
-            if "stop_command" in nr_in:
-                nr_out["stop_command"] = str(nr_in["stop_command"] or "").strip()
-            if "stop_image_names" in nr_in and isinstance(nr_in["stop_image_names"], list):
-                nr_out["stop_image_names"] = [
-                    str(n).strip() for n in nr_in["stop_image_names"] if str(n).strip()
-                ]
-            if "stop_path_filter" in nr_in:
-                nr_out["stop_path_filter"] = str(nr_in["stop_path_filter"] or "").strip()
-            if "force_kill_by_image_name" in nr_in:
-                nr_out["force_kill_by_image_name"] = bool(nr_in["force_kill_by_image_name"])
-            if "stop_grace_seconds" in nr_in:
-                nr_out["stop_grace_seconds"] = max(0, int(nr_in["stop_grace_seconds"]))
-            if "cooldown_seconds" in nr_in:
-                nr_out["cooldown_seconds"] = max(30, int(nr_in["cooldown_seconds"]))
-            if "max_attempts_per_hour" in nr_in:
-                nr_out["max_attempts_per_hour"] = max(1, int(nr_in["max_attempts_per_hour"]))
-            if "recovery_grace_seconds" in nr_in:
-                nr_out["recovery_grace_seconds"] = max(5, int(nr_in["recovery_grace_seconds"]))
-            if "qrcode_globs" in nr_in and isinstance(nr_in["qrcode_globs"], list):
-                nr_out["qrcode_globs"] = [str(g) for g in nr_in["qrcode_globs"] if str(g).strip()]
-            qq_cfg["supervisor"] = nr_out
-            platforms_cfg["qq"] = qq_cfg
-            new_cfg["platforms"] = platforms_cfg
-            new_alerting.pop("qq_adapter_restart", None)
-        # 邮件远程指令子节点（Phase 3）
-        if "email_control" in ad and isinstance(ad["email_control"], dict):
-            ec_in = ad["email_control"]
-            ec_out = dict(new_alerting.get("email_control", {}))
-            if "enabled" in ec_in:
-                ec_out["enabled"] = bool(ec_in["enabled"])
-            if "allowed_commands" in ec_in and isinstance(ec_in["allowed_commands"], list):
-                allowed_pool = {"REQUEST", "RESTART", "STOP", "STATUS", "KILL_AICQ"}
-                cleaned = []
-                for c in ec_in["allowed_commands"]:
-                    cu = str(c).strip().upper()
-                    if cu in allowed_pool and cu not in cleaned:
-                        cleaned.append(cu)
-                # REQUEST 为握手入口，必须保留，否则用户无法主动要 token
-                if "REQUEST" not in cleaned:
-                    cleaned.insert(0, "REQUEST")
-                ec_out["allowed_commands"] = cleaned
-            if "token_ttl_seconds" in ec_in:
-                ec_out["token_ttl_seconds"] = max(60, min(7 * 24 * 3600, int(ec_in["token_ttl_seconds"])))
-            if "poll_interval" in ec_in:
-                ec_out["poll_interval"] = max(10, min(600, int(ec_in["poll_interval"])))
-            if "reuse_smtp_credentials" in ec_in:
-                ec_out["reuse_smtp_credentials"] = bool(ec_in["reuse_smtp_credentials"])
-            new_alerting["email_control"] = ec_out
-        new_cfg["alerting"] = new_alerting
     if "tool_execution_guard" in data and isinstance(data["tool_execution_guard"], dict):
         guard_data = data["tool_execution_guard"]
         new_guard = dict(new_cfg.get("tool_execution_guard", {}))
@@ -1094,34 +973,6 @@ async def settings_save():
                 )
             new_mem["processing"] = new_mp
         new_cfg["memory"] = new_mem
-    if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
-        st_data = data["slow_thinking"]
-        new_st = dict(new_cfg.get("slow_thinking", {}))
-        if "enabled" in st_data:
-            new_st["enabled"] = bool(st_data["enabled"])
-        for key in ("model",):
-            if key in st_data:
-                if st_data[key]:
-                    new_st[key] = st_data[key]
-                else:
-                    new_st.pop(key, None)
-        if "provider" in st_data:
-            provider = st_data.get("provider")
-            if provider:
-                new_st["provider"] = provider
-            else:
-                new_st.pop("provider", None)
-        new_st.pop("profile", None)
-        new_st.pop("base_url", None)
-        new_st.pop("api_key_env", None)
-        if "generation" in st_data and isinstance(st_data["generation"], dict):
-            new_st["generation"] = _apply_generation_controls(
-                new_st.get("generation", {}),
-                st_data["generation"],
-                min_tokens=64,
-                default_temperature=1.0,
-            )
-        new_cfg["slow_thinking"] = new_st
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
     if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
@@ -1161,6 +1012,48 @@ async def settings_save():
         new_vb.pop("api_key_env", None)
         new_cfg["vision_bridge"] = new_vb
 
+    if "video_understanding" in data and isinstance(data["video_understanding"], dict):
+        vu_data = data["video_understanding"]
+        new_vu = dict(new_cfg.get("video_understanding", {}))
+        connection_mode = vu_data.get("connection_mode")
+        if connection_mode not in (None, "provider", "explicit"):
+            return jsonify({"success": False, "error": "视频连接方式无效"}), 400
+        if connection_mode == "provider" or (connection_mode is None and vu_data.get("provider")):
+            for key in ("base_url", "api_key", "api_key_env"):
+                new_vu.pop(key, None)
+        elif connection_mode == "explicit":
+            new_vu.pop("provider", None)
+            for key in ("base_url", "api_key_env", "api_key"):
+                if key in vu_data:
+                    new_vu[key] = str(vu_data.get(key) or "").strip()
+        if "protocol" in vu_data:
+            new_vu["protocol"] = str(vu_data["protocol"]).strip()
+        if "provider" in vu_data and connection_mode != "explicit":
+            provider = str(vu_data.get("provider") or "").strip()
+            if provider:
+                new_vu["provider"] = provider
+            else:
+                new_vu.pop("provider", None)
+        if "model" in vu_data:
+            new_vu["model"] = str(vu_data.get("model") or "").strip()
+        if "max_size_mb" in vu_data and vu_data["max_size_mb"] is not None:
+            new_vu["max_size_mb"] = vu_data["max_size_mb"]
+        if "timeout" in vu_data and vu_data["timeout"] is not None:
+            new_vu["timeout"] = vu_data["timeout"]
+        from tools.video.config import validate_video_settings
+        try:
+            new_vu = validate_video_settings(new_vu)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        video_provider = new_vu.get("provider")
+        if connection_mode == "explicit" and not new_vu.get("base_url"):
+            return jsonify({"success": False, "error": "视频专用连接需要填写端点"}), 400
+        if video_provider and video_provider not in get_model_providers(new_cfg):
+            return jsonify({"success": False, "error": "视频理解选择了未定义的供应商"}), 400
+        if (video_provider or new_vu.get("base_url")) and not new_vu.get("model"):
+            return jsonify({"success": False, "error": "视频理解需要填写模型 ID"}), 400
+        new_cfg["video_understanding"] = new_vu
+
     def _payload_binding_error(label: str, payload_part: dict, required: bool = True) -> str | None:
         provider = (payload_part.get("provider") or "").strip()
         model = (payload_part.get("model") or "").strip()
@@ -1198,7 +1091,6 @@ async def settings_save():
             memory_processing_required,
         ) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
-        _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
     ):
         if error:
             return jsonify({"success": False, "error": error}), 400
@@ -1236,7 +1128,6 @@ async def settings_save():
             _section_enabled(new_memory_processing, False),
         ),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
-        _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
     ):
         if error:
             return jsonify({"success": False, "error": error}), 400
@@ -1289,10 +1180,6 @@ async def settings_save():
             compression_adapter_ = create_adapter(
                 build_compression_adapter_cfg(new_cfg, compression_cfg_)
             )
-        st_cfg_ = new_cfg.get("slow_thinking", {})
-        st_adapter_ = None
-        if st_cfg_.get("enabled", True) and st_cfg_.get("provider") and st_cfg_.get("model"):
-            st_adapter_ = create_adapter(build_slow_thinking_adapter_cfg(new_cfg, st_cfg_))
         save_config(new_cfg)
         vb = VisionBridge(new_cfg)
         return (
@@ -1305,8 +1192,6 @@ async def settings_save():
             memory_processing_adapter_,
             compression_cfg_,
             compression_adapter_,
-            st_cfg_,
-            st_adapter_,
             vb,
         )
 
@@ -1321,8 +1206,6 @@ async def settings_save():
             new_memory_processing_adapter,
             new_compression_cfg,
             new_compression_adapter,
-            new_st_cfg,
-            new_st_adapter,
             new_vision_bridge,
         ) = await asyncio.to_thread(_create_and_save)
     except Exception as e:
@@ -1343,9 +1226,6 @@ async def settings_save():
     # ── 热重载上下文压缩 adapter ──────────────────────────
     app_state.cognition_compression_cfg = new_compression_cfg
     app_state.cognition_compression_adapter = new_compression_adapter
-    # ── 热重载 slow_thinking adapter ─────────────────────
-    app_state.slow_thinking_cfg = new_st_cfg
-    app_state.slow_thinking_adapter = new_st_adapter
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.GEN = new_cfg.get("generation", {})
@@ -1367,6 +1247,7 @@ async def settings_save():
         self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_info=new_cfg.get("guardian"),
+        prompt_files=new_cfg.get("prompt_files", {}) or {},
     )
 
     try:
@@ -1375,65 +1256,21 @@ async def settings_save():
         logger.exception("热重载 QQ adapter 失败")
         return jsonify({"success": False, "error": f"QQ 平台热重载失败: {exc}"}), 400
 
-    # ── 热重载 AlertManager 与 QQAdapterClient 心跳监视 ──────
-    try:
-        from alerting import AlertManager
-        from platforms.qq.supervisor import QQAdapterSupervisor
-        new_alerting_cfg = new_cfg.get("alerting", {}) or {}
-        new_alert = AlertManager(new_alerting_cfg)
-        # 迁移远程指令 token 注册表：避免“保存设置”时把已发出的 token 全部作废，
-        # 导致用户回信被判 token missing。
-        old_alert = app_state.alert_manager
-        if old_alert is not None:
-            try:
-                new_alert._pending_tokens.update(getattr(old_alert, "_pending_tokens", {}))
-                new_alert._recent_msgids.update(getattr(old_alert, "_recent_msgids", {}))
-            except (AttributeError, TypeError):
-                pass
-        app_state.alert_manager = new_alert
-        # QQ 平台监管器热重载
-        qq_runtime = get_platform("qq")
-        qq_client = getattr(qq_runtime, "client", None)
-        new_supervisor = QQAdapterSupervisor(
-            new_qq_platform_cfg.get("supervisor", {}) or {},
-            client=qq_client,
-            alert=new_alert,
+    # QQ 平台监管器热重载
+    from platforms.qq.supervisor import QQAdapterSupervisor
+
+    qq_runtime = get_platform("qq")
+    qq_client = getattr(qq_runtime, "client", None)
+    new_supervisor = QQAdapterSupervisor(
+        new_qq_platform_cfg.get("supervisor", {}) or {},
+        client=qq_client,
+    )
+    if qq_runtime is not None:
+        qq_runtime.supervisor = new_supervisor
+    if qq_client is not None:
+        qq_client.set_supervisor(
+            new_supervisor if new_supervisor.is_configured() else None
         )
-        if qq_runtime is not None:
-            qq_runtime.supervisor = new_supervisor
-        if qq_client is not None:
-            if new_alert.enabled:
-                qq_client.set_alert_manager(
-                    new_alert,
-                    heartbeat_timeout=float(new_alerting_cfg.get("heartbeat_timeout", 120)),
-                )
-            else:
-                # 关闭告警：解绑 alert，watchdog 仍在跑但不会发邮件
-                qq_client.set_alert_manager(None, heartbeat_timeout=120.0)
-            # 同步重启能力
-            qq_client.set_supervisor(
-                new_supervisor if new_supervisor.is_configured() else None
-            )
-        # ── 邮件远程指令控制器热重载（Phase 3）────────────
-        from email_controller import EmailController
-        old_ec = app_state.email_controller
-        if old_ec is not None:
-            try:
-                await old_ec.stop()
-            except Exception:
-                logger.warning("热重载：停旧 EmailController 异常", exc_info=True)
-        new_ec = EmailController(
-            new_alerting_cfg,
-            supervisor=new_supervisor,
-            alert=new_alert,
-        )
-        app_state.email_controller = new_ec
-        try:
-            await new_ec.start()
-        except Exception:
-            logger.warning("热重载：启新 EmailController 异常", exc_info=True)
-    except Exception:
-        logger.exception("热重载 AlertManager 失败")
 
     # ── 热重载 TTS 插件服务端 ───────────────────────
     try:
@@ -1466,34 +1303,6 @@ async def settings_save():
         logger.exception("热重载 TTS 插件服务端失败")
 
     return jsonify({"success": True})
-
-
-@settings_bp.route("/settings/alerting/test", methods=["POST"])
-async def alerting_test():
-    """触发一次测试告警邮件，验证 SMTP 配置可用。
-
-    使用当前 .env 中已写入的 SMTP 凭据（前端必须先点"保存并应用"再点测试）。
-    ⚠️ 必须复用全局 app_state.alert_manager，否则签发的远程指令 token
-       只会进临时实例的注册表，等用户回复邮件时全局实例查不到 token。
-    """
-    mgr = app_state.alert_manager
-    if mgr is None:
-        return jsonify({"success": False, "error": "AlertManager 尚未初始化"}), 500
-
-    # 临时启用 + 改前缀，发完恢复
-    saved_enabled = mgr.cfg.get("enabled", False)
-    saved_prefix = mgr.cfg.get("subject_prefix", "[AIcarus 告警]")
-    mgr.cfg["enabled"] = True
-    mgr.cfg["subject_prefix"] = saved_prefix + "[WebUI 测试]"
-    try:
-        await mgr.notify_disconnect("WebUI 测试: 这是一封测试邮件，可忽略")
-        return jsonify({"success": True, "message": "已尝试发送测试邮件，请到收件箱确认"})
-    except Exception as e:
-        logger.exception("发送测试告警邮件失败")
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        mgr.cfg["enabled"] = saved_enabled
-        mgr.cfg["subject_prefix"] = saved_prefix
 
 
 @settings_bp.route("/settings/persona", methods=["POST"])
@@ -1754,6 +1563,12 @@ async def cache_clear():
 
 # ── 表情包管理 ────────────────────────────────────────────────────────────────
 
+@settings_bp.errorhandler(StickerCollectionError)
+def sticker_collection_error(exc: StickerCollectionError):
+    status = 503 if exc.code in {"invalid_index", "migration_failed", "write_failed", "recovery_failed"} else 400
+    return jsonify({"success": False, "error": str(exc), "code": exc.code}), status
+
+
 @settings_bp.route("/stickers")
 async def stickers_page():
     return await render_template("stickers.html")
@@ -1790,43 +1605,41 @@ async def stickers_upload():
     result = await asyncio.to_thread(save_sticker, raw, mime, description)
     if result is None:
         return jsonify({"success": False, "error": "已达表情包数量上限"}), 400
-    sid, is_dup = result
-    return jsonify({"success": True, "id": sid, "duplicate": is_dup})
+    image_ref, is_dup = result
+    return jsonify({"success": True, "image_ref": image_ref, "duplicate": is_dup})
 
 
-@settings_bp.route("/api/stickers/<sticker_id>", methods=["PATCH"])
-async def stickers_update(sticker_id: str):
+@settings_bp.route("/api/stickers/<image_ref>", methods=["PATCH"])
+async def stickers_update(image_ref: str):
     """修改表情包描述。body: {"description": "..."}"""
     from llm.media.sticker_collection import update_sticker_description
-    if not sticker_id.isalnum():
-        return jsonify({"success": False, "error": "invalid id"}), 400
+    if not valid_image_ref(image_ref):
+        return jsonify({"success": False, "error": "invalid image_ref"}), 400
     data = await request.get_json() or {}
     description = str(data.get("description") or "")
     if len(description) > 200:
         return jsonify({"success": False, "error": "描述不能超过 200 个字符"}), 400
-    ok = await asyncio.to_thread(update_sticker_description, sticker_id, description)
+    ok = await asyncio.to_thread(update_sticker_description, image_ref, description)
     if not ok:
         return jsonify({"success": False, "error": "表情包不存在"}), 404
-    return jsonify({"success": True})
+    return jsonify({"success": True, "image_ref": ok})
 
 
-@settings_bp.route("/api/stickers/<sticker_id>", methods=["DELETE"])
-async def stickers_delete(sticker_id: str):
+@settings_bp.route("/api/stickers/<image_ref>", methods=["DELETE"])
+async def stickers_delete(image_ref: str):
     """删除指定表情包。"""
     from llm.media.sticker_collection import delete_sticker
-    if not sticker_id.isalnum():
-        return jsonify({"success": False, "error": "invalid id"}), 400
-    ok = await asyncio.to_thread(delete_sticker, sticker_id)
+    if not valid_image_ref(image_ref):
+        return jsonify({"success": False, "error": "invalid image_ref"}), 400
+    ok = await asyncio.to_thread(delete_sticker, image_ref)
     if not ok:
         return jsonify({"success": False, "error": "表情包不存在"}), 404
-    return jsonify({"success": True})
+    return jsonify({"success": True, "image_ref": ok})
 
 
 @settings_bp.route("/api/stickers/reconcile", methods=["POST"])
 async def stickers_reconcile():
-    """全量检查并修复表情包收藏（去重、补编号、清理孤儿文件）。"""
+    """全量检查并修复表情包收藏（修复改名、去重、纳入孤儿图片，保持引用稳定）。"""
     from llm.media.sticker_collection import reconcile_stickers
     stats = await asyncio.to_thread(reconcile_stickers)
     return jsonify({"success": True, "stats": stats})
-
-

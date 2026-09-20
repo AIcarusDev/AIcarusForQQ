@@ -1119,10 +1119,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       </button>
       <button
         type="button"
-        data-section-button="alerting"
-        onclick="showSection('alerting')"
+        data-section-button="qq-supervisor"
+        onclick="showSection('qq-supervisor')"
       >
-        告警与邮件 <span>Alerts</span>
+        QQ 自动重启 <span>Recovery</span>
       </button>
       <button
         type="button"
@@ -1318,12 +1318,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>原生 reasoning 接管 cognition</strong>
-                <span>将 API 返回的 reasoning_content 作为 cognition 保存和消费，并以 thinking 历史回灌主模型。</span>
+                <span>开启后自动启用思维链，以内部思考作为认知；正文只输出动机和行动。</span>
               </div>
               <label class="toggle"
                 ><input type="checkbox" id="native_reasoning_as_cognition" /><span
                   class="slider"
                 ></span></label>
+            </div>
+            <div class="field">
+              <label for="cognition_language">默认认知语言</label>
+              <select id="cognition_language">
+                {% for code, labels in cognition_languages.items() %}
+                <option value="{{ code }}">{{ labels[0] }}</option>
+                {% endfor %}
+              </select>
+              <span class="hint">用于认知或内部思考。自动表示不指定语言；对外消息按交流需要选择语言。</span>
             </div>
             <details class="advanced-sampling">
               <summary>高级采样参数</summary>
@@ -1451,22 +1460,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
             </details>
           </div>
-          <div class="group">
-            <div class="group-title">
-              <h3>AIC Action</h3>
-              <span class="subtle">模型可见的工具参数形态</span>
-            </div>
-            <div class="field">
-              <label>send_message 参数形态</label>
-              <select id="send_message_shape">
-                <option value="array">messages 数组：一次调用可发送多条消息</option>
-                <option value="single">单条消息：一次调用只发送一条消息</option>
-              </select>
-              <span class="hint"
-                >数组形态适合不稳定并行/多次 tool call 的模型；单条形态适合能稳定连续调用 send_message 的模型。</span
-              >
-            </div>
-          </div>
+
           <div class="group duplicate-guard-group">
             <div class="group-title duplicate-guard-title">
               <h3>重复输出保护</h3>
@@ -1556,7 +1550,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>配置辅助模型：视觉桥接、工具执行前守门、上下文压缩与慢思考。</p>
+            <p>配置辅助模型：视觉桥接、工具执行前守门、上下文压缩。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1675,6 +1669,86 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                       max="10240"
                     />
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="model-card" id="card-video-understanding">
+            <div
+              class="model-card-head"
+              onclick="toggleCard('card-video-understanding')"
+            >
+              <div class="model-card-title">
+                <h3>视频理解</h3>
+                <span class="card-badge">VIDEO</span>
+                <span class="card-desc">多模态视频识别与分析专用模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-video-understanding-body">
+              <div class="row">
+                <div class="field"><label>连接方式</label>
+                  <select id="video_understanding_connection_mode">
+                    <option value="provider">继承供应商（保存时清除专用端点和密钥覆盖）</option>
+                    <option value="explicit">使用专用端点和密钥</option>
+                  </select>
+                </div>
+                <div class="field"><label>专用端点（仅专用连接生效）</label><input id="video_understanding_base_url" type="text" /></div>
+              </div>
+              <div class="row">
+                <div class="field"><label>专用 Key 环境变量</label><input id="video_understanding_api_key_env" type="text" /></div>
+                <div class="field"><label>专用 API Key（优先于环境变量）</label><input id="video_understanding_api_key" type="password" autocomplete="off" /></div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="video_understanding_provider"></select>
+                </div>
+                <div
+                  class="field model-picker"
+                  data-provider-id="video_understanding_provider"
+                  data-model-id="video_understanding_model"
+                  data-model-label="视频理解"
+                >
+                  <label>模型 ID</label
+                  ><input
+                    id="video_understanding_model"
+                    type="text"
+                    placeholder="gemini-3.8-flash"
+                  />
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>调用协议</label
+                  ><select id="video_understanding_protocol">
+                    <option value="auto">自动探测 (推荐，自动规范化原生端点)</option>
+                    <option value="gemini_native">Google 原生协议 (generateContent)</option>
+                    <option value="openai_compatible">OpenAI 兼容协议 (video_url)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>单视频最大限制 (MB)</label
+                  ><input
+                    id="video_understanding_max_size_mb"
+                    type="number"
+                    min="1"
+                    max="128"
+                    step="1"
+                    placeholder="20"
+                  />
+                </div>
+                <div class="field">
+                  <label>超时时间 (秒)</label
+                  ><input
+                    id="video_understanding_timeout"
+                    type="number"
+                    min="10"
+                    max="600"
+                    step="1"
+                    placeholder="120"
+                  />
                 </div>
               </div>
             </div>
@@ -1835,91 +1909,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     id="compression_max_output_tokens"
                     type="number"
                     min="256"
-                    max="65536"
-                    step="1"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="model-card" id="card-slow-thinking">
-            <div
-              class="model-card-head"
-              onclick="toggleCard('card-slow-thinking')"
-            >
-              <div class="model-card-title">
-                <h3>慢思考</h3>
-                <span class="card-badge">THINK</span>
-                <span class="card-desc">think_deeply 工具的内在子模型</span>
-              </div>
-              <span class="model-card-chevron">&#9660;</span>
-            </div>
-            <div class="model-card-body" id="card-slow-thinking-body">
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>启用慢思考</strong
-                  ><span
-                    >主模型可调用 think_deeply，把念头交给内在子模型。</span
-                  >
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="st_enabled" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>供应商</label
-                  ><select id="st_provider"></select>
-                </div>
-                <div
-                  class="field model-picker"
-                  data-provider-id="st_provider"
-                  data-model-id="st_model"
-                  data-model-label="慢思考"
-                >
-                  <label>模型 ID</label
-                  ><input
-                    id="st_model"
-                    type="text"
-                    placeholder="例如 Pro/zai-org/GLM-5"
-                  />
-                </div>
-              </div>
-              <hr class="card-divider" />
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>思维链开关</strong>
-                  <span>开启思维链（具体请求参数会按模型供应商自动转换）。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="st_enable_thinking" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>Temperature</label>
-                  <div class="range-row">
-                    <input
-                      type="range"
-                      id="st_temperature"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      value="1.0"
-                    /><span class="val" id="stTempVal">1.00</span>
-                  </div>
-                </div>
-                <div class="field">
-                  <label>max_output_tokens</label
-                  ><input
-                    id="st_max_output_tokens"
-                    type="number"
-                    min="64"
                     max="65536"
                     step="1"
                   />
@@ -2447,53 +2436,23 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>Agent Prompt</h2>
-            <p>分别配置行为驱动性、认知内容提示，以及认知写法与其它注意事项提示；保存后从下一次 Agent 轮次开始生效。</p>
+            <p>配置全局自定义指令；保存后从下一次 Agent 轮次开始生效。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="group">
             <div class="group-title">
-              <h3>Drive</h3>
-              <span class="subtle">行为驱动性：提示 Agent 的行为方向与驱动力。</span>
+              <h3>自定义指令</h3>
+              <span class="subtle">优先于其它模型可见上下文；允许留空。</span>
             </div>
-            <pre id="agent-prompt-drive-preview" class="persona-preview"></pre>
+            <pre id="agent-prompt-instruction-preview" class="persona-preview"></pre>
             <textarea
-              id="agent-prompt-drive"
-              class="persona-edit-area"
-              style="min-height: 180px"
-              rows="10"
-              maxlength="200000"
-              placeholder="允许留空；保存后下一轮生效。"
-            ></textarea>
-          </div>
-          <div class="group">
-            <div class="group-title">
-              <h3>Cognition Content</h3>
-              <span class="subtle">认知内容提示：提示认知中需要包含和关注的内容。</span>
-            </div>
-            <pre id="agent-prompt-cognition-content-preview" class="persona-preview"></pre>
-            <textarea
-              id="agent-prompt-cognition-content"
+              id="agent-prompt-instruction"
               class="persona-edit-area"
               style="min-height: 220px"
               rows="12"
               maxlength="200000"
-              placeholder="认知可以覆盖的内容范围。"
-            ></textarea>
-          </div>
-          <div class="group">
-            <div class="group-title">
-              <h3>Cognition Prompt</h3>
-              <span class="subtle">认知写法与其它注意事项提示：提示认知如何书写，以及其它约束和注意事项。</span>
-            </div>
-            <pre id="agent-prompt-cognition-prompt-preview" class="persona-preview"></pre>
-            <textarea
-              id="agent-prompt-cognition-prompt"
-              class="persona-edit-area"
-              style="min-height: 300px"
-              rows="18"
-              maxlength="200000"
-              placeholder="认知过程的约束与注意事项。"
+              placeholder="输入需要 Agent 在所有会话中遵循的自定义指令。"
             ></textarea>
           </div>
           <div class="settings-actions" style="justify-content: flex-start">
@@ -2839,141 +2798,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
       <section
         class="settings-section"
-        id="section-alerting"
-        data-section-title="告警与邮件"
+        id="section-qq-supervisor"
+        data-section-title="QQ 自动重启"
       >
         <div class="section-head">
           <div>
-            <h2>告警与邮件</h2>
-            <p>配置掉线告警、SMTP/IMAP、自动重启和邮件远程指令。</p>
+            <h2>QQ 自动重启</h2>
+            <p>配置 QQ adapter 掉线后的进程重启和恢复检测。</p>
           </div>
         </div>
         <div class="section-body">
-          <div class="group">
-            <div class="toggle-row">
-              <div class="toggle-copy">
-                <strong>启用掉线告警</strong
-                ><span>WebSocket 断开或心跳超时时发送邮件提醒。</span>
-              </div>
-              <label class="toggle"
-                ><input type="checkbox" id="alerting_enabled" /><span
-                  class="slider"
-                ></span
-              ></label>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>心跳超时阈值（秒）</label
-                ><input
-                  id="alerting_heartbeat_timeout"
-                  type="number"
-                  min="30"
-                  max="3600"
-                  placeholder="120"
-                />
-              </div>
-              <div class="field">
-                <label>告警冷却（秒）</label
-                ><input
-                  id="alerting_cooldown"
-                  type="number"
-                  min="0"
-                  max="86400"
-                  placeholder="600"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label>邮件主题前缀</label
-              ><input
-                id="alerting_subject_prefix"
-                type="text"
-                placeholder="[AIcarus 告警]"
-              />
-            </div>
-          </div>
-          <details class="group" open>
-            <summary>SMTP 发送配置</summary>
-            <div class="details-body">
-              <div class="row">
-                <div class="field">
-                  <label>SMTP 主机</label
-                  ><input
-                    id="smtp_host"
-                    type="text"
-                    placeholder="smtp.qq.com"
-                  />
-                </div>
-                <div class="field">
-                  <label>端口</label
-                  ><input
-                    id="smtp_port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    placeholder="465"
-                  />
-                </div>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>使用 SSL</strong
-                  ><span>端口 465 通常启用 SSL；587 STARTTLS 通常关闭。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="smtp_use_ssl" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>SMTP 登录账号</label
-                  ><input
-                    id="smtp_user"
-                    type="text"
-                    placeholder="your@example.com"
-                  />
-                </div>
-                <div class="field">
-                  <label>授权码 / 密码</label
-                  ><input
-                    id="smtp_password"
-                    type="password"
-                    autocomplete="new-password"
-                    placeholder="留空则不修改"
-                  />
-                </div>
-              </div>
-              <div class="field">
-                <label>发件人地址</label
-                ><input
-                  id="smtp_sender"
-                  type="text"
-                  placeholder="留空则等同于登录账号"
-                />
-              </div>
-              <div class="field">
-                <label>收件人列表</label
-                ><input
-                  id="smtp_recipients"
-                  type="text"
-                  placeholder="多个收件人用逗号分隔"
-                />
-              </div>
-              <div>
-                <button
-                  class="btn-secondary"
-                  type="button"
-                  id="alerting_test_btn"
-                  onclick="sendAlertingTest()"
-                >
-                  发送测试邮件
-                </button>
-                <span class="hint">点击前请先保存并应用。</span>
-              </div>
-            </div>
-          </details>
           <details class="group">
             <summary>QQ adapter 自动重启</summary>
             <div class="details-body">
@@ -3090,134 +2924,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   min="5"
                   max="600"
                 />
-              </div>
-              <div class="field">
-                <label>二维码搜索路径（每行一个 glob）</label
-                ><textarea
-                  id="qq_adapter_restart_qrcode_globs"
-                  rows="4"
-                  placeholder="**/qrcode*.png"
-                ></textarea>
-              </div>
-            </div>
-          </details>
-          <details class="group">
-            <summary>邮件远程指令与 IMAP</summary>
-            <div class="details-body">
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>启用邮件远程指令</strong
-                  ><span>通过回复告警邮件执行 RESTART、STATUS 等指令。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="ec_enabled" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="field">
-                <label>允许的指令</label>
-                <div class="command-grid">
-                  <label
-                    ><input
-                      type="checkbox"
-                      id="ec_cmd_REQUEST"
-                      disabled
-                      checked
-                    />
-                    REQUEST</label
-                  ><label
-                    ><input type="checkbox" id="ec_cmd_RESTART" />
-                    RESTART</label
-                  ><label
-                    ><input type="checkbox" id="ec_cmd_STATUS" /> STATUS</label
-                  ><label><input type="checkbox" id="ec_cmd_STOP" /> STOP</label
-                  ><label
-                    ><input type="checkbox" id="ec_cmd_KILL_AICQ" />
-                    KILL_AICQ</label
-                  >
-                </div>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>Token 有效期（秒）</label
-                  ><input
-                    id="ec_token_ttl_seconds"
-                    type="number"
-                    min="60"
-                    max="3600"
-                  />
-                </div>
-                <div class="field">
-                  <label>IMAP 轮询周期（秒）</label
-                  ><input
-                    id="ec_poll_interval"
-                    type="number"
-                    min="10"
-                    max="600"
-                  />
-                </div>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>IMAP 复用 SMTP 凭据</strong
-                  ><span>使用 SMTP 的 USER / PASSWORD 登录 IMAP。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="ec_reuse_smtp_credentials" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>IMAP 主机</label
-                  ><input
-                    id="imap_host"
-                    type="text"
-                    placeholder="imap.163.com"
-                  />
-                </div>
-                <div class="field">
-                  <label>端口</label
-                  ><input
-                    id="imap_port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    placeholder="993"
-                  />
-                </div>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>IMAP 使用 SSL</strong
-                  ><span>端口 993 通常启用 SSL。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="imap_use_ssl" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>IMAP 登录账号</label
-                  ><input
-                    id="imap_user"
-                    type="text"
-                    placeholder="同 SMTP_USER"
-                  />
-                </div>
-                <div class="field">
-                  <label>IMAP 授权码 / 密码</label
-                  ><input
-                    id="imap_password"
-                    type="password"
-                    autocomplete="new-password"
-                    placeholder="留空则不修改"
-                  />
-                </div>
               </div>
             </div>
           </details>
@@ -3614,7 +3320,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["workspace", "Agent 电脑"],
     ["qq_adapter", "QQ / QQ adapter"],
     ["tts", "TTS 插件"],
-    ["alerting", "告警与邮件"],
+    ["qq-supervisor", "QQ 自动重启"],
     ["auxiliary", "辅助服务"],
     ["advanced", "高级"],
   ];
@@ -3873,11 +3579,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const selected = {
     provider: value("provider"),
     vision_bridge_provider: value("vision_bridge_provider"),
+    video_understanding_provider: value("video_understanding_provider"),
     guard_provider: value("guard_provider"),
     compression_provider: value("compression_provider"),
     event_extraction_provider: value("event_extraction_provider"),
     memory_processing_provider: value("memory_processing_provider"),
-    st_provider: value("st_provider"),
     };
     Object.entries(selected).forEach(([id, provider]) =>
       populateProviderSelect(id, provider),
@@ -4269,17 +3975,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
   function agentPromptValues() {
     return {
-      drive: preserveAgentPromptLineEndings(
-        "drive",
-        rawValue("agent-prompt-drive"),
-      ),
-      cognition_content: preserveAgentPromptLineEndings(
-        "cognition_content",
-        rawValue("agent-prompt-cognition-content"),
-      ),
-      cognition_prompt: preserveAgentPromptLineEndings(
-        "cognition_prompt",
-        rawValue("agent-prompt-cognition-prompt"),
+      instruction: preserveAgentPromptLineEndings(
+        "instruction",
+        rawValue("agent-prompt-instruction"),
       ),
     };
   }
@@ -4287,7 +3985,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function agentPromptHasUnsavedChanges() {
     if (!state.agentPromptEditing || !state.agentPromptSnapshot) return false;
     const current = agentPromptValues();
-    return ["drive", "cognition_content", "cognition_prompt"].some(
+    return ["instruction"].some(
       (key) =>
         normalizeAgentPromptLineEndings(current[key]) !==
         normalizeAgentPromptLineEndings(state.agentPromptSnapshot.values[key]),
@@ -4303,14 +4001,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
     const dirty = agentPromptHasUnsavedChanges();
     const fields = [
-      ["agent-prompt-drive", "agent-prompt-drive-preview"],
       [
-        "agent-prompt-cognition-content",
-        "agent-prompt-cognition-content-preview",
-      ],
-      [
-        "agent-prompt-cognition-prompt",
-        "agent-prompt-cognition-prompt-preview",
+        "agent-prompt-instruction",
+        "agent-prompt-instruction-preview",
       ],
     ];
     fields.forEach(([fieldId, previewId]) => {
@@ -4348,35 +4041,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     state.agentPromptSnapshot = snapshot;
     state.agentPromptConflict = null;
     state.agentPromptEditing = false;
-    setValue("agent-prompt-drive", snapshot.values.drive);
     setValue(
-      "agent-prompt-cognition-content",
-      snapshot.values.cognition_content,
+      "agent-prompt-instruction",
+      snapshot.values.instruction,
     );
-    setValue(
-      "agent-prompt-cognition-prompt",
-      snapshot.values.cognition_prompt,
-    );
-    $("agent-prompt-drive-preview").textContent =
-      snapshot.values.drive || "（空）";
-    $("agent-prompt-cognition-content-preview").textContent =
-      snapshot.values.cognition_content || "（空）";
-    $("agent-prompt-cognition-prompt-preview").textContent =
-      snapshot.values.cognition_prompt || "（空）";
+    $("agent-prompt-instruction-preview").textContent =
+      snapshot.values.instruction || "（空）";
     updateAgentPromptSaveButton();
   }
 
   function openAgentPromptEdit() {
     if (state.agentPromptSaving || !state.agentPromptSnapshot) return;
     state.agentPromptEditing = true;
-    setValue("agent-prompt-drive", state.agentPromptSnapshot.values.drive);
     setValue(
-      "agent-prompt-cognition-content",
-      state.agentPromptSnapshot.values.cognition_content,
-    );
-    setValue(
-      "agent-prompt-cognition-prompt",
-      state.agentPromptSnapshot.values.cognition_prompt,
+      "agent-prompt-instruction",
+      state.agentPromptSnapshot.values.instruction,
     );
     updateAgentPromptSaveButton();
   }
@@ -4466,14 +4145,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       if (agentPromptSnapshot) {
         hydrateAgentPromptSnapshot(agentPromptSnapshot);
       } else if (agentPromptDraft) {
-        setValue("agent-prompt-drive", agentPromptDraft.drive);
         setValue(
-          "agent-prompt-cognition-content",
-          agentPromptDraft.cognition_content,
-        );
-        setValue(
-          "agent-prompt-cognition-prompt",
-          agentPromptDraft.cognition_prompt,
+          "agent-prompt-instruction",
+          agentPromptDraft.instruction,
         );
         updateAgentPromptSaveButton();
       }
@@ -4502,6 +4176,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     populateProviderSelect(
       "vision_bridge_provider",
       getProviderName(data.vision_bridge || {}),
+    );
+    populateProviderSelect(
+      "video_understanding_provider",
+      getProviderName(data.video_understanding || {}),
     );
     populateProviderSelect(
       "guard_provider",
@@ -4555,6 +4233,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       vb.cache_eviction?.max_size_mb ?? 500,
     );
       onVisionModeChange();
+    const vu = data.video_understanding || {};
+    setValue("video_understanding_connection_mode", (vu.base_url || vu.api_key || vu.api_key_env) ? "explicit" : "provider");
+    setValue("video_understanding_base_url", vu.base_url || "");
+    setValue("video_understanding_api_key_env", vu.api_key_env || "");
+    setValue("video_understanding_api_key", vu.api_key || "");
+    setValue("video_understanding_provider", getProviderName(vu));
+    setValue("video_understanding_model", vu.model || "");
+    setValue("video_understanding_protocol", vu.protocol || "auto");
+    setValue("video_understanding_max_size_mb", vu.max_size_mb ?? 20);
+    setValue("video_understanding_timeout", vu.timeout ?? 120);
     const gen = data.generation || {};
     setValue("temperature", gen.temperature ?? 1.0);
     setValue("max_output_tokens", gen.max_output_tokens ?? 10000);
@@ -4568,15 +4256,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "world_multimodal_image_limit",
       gen.world_multimodal_image_limit ?? 5,
     );
-    setValue(
-      "send_message_shape",
-      data.tools?.send_message?.message_shape || "array",
-    );
+
     setChecked("enable_thinking", generationThinkingEnabled(gen));
     setChecked(
       "native_reasoning_as_cognition",
       gen.native_reasoning_as_cognition === true,
     );
+    syncCognitionThinkingMode();
+    setValue("cognition_language", data.output_requirements?.cognition_language || "auto");
     hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
     setValue("self_name", data.self_name || "");
@@ -4631,17 +4318,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "tts_max_concurrent_tasks_per_plugin",
       tts.max_concurrent_tasks_per_plugin ?? 8,
     );
-    const alerting = data.alerting || {};
-    setChecked("alerting_enabled", !!alerting.enabled);
-    setValue("alerting_heartbeat_timeout", alerting.heartbeat_timeout ?? 120);
-    setValue("alerting_cooldown", alerting.cooldown ?? 600);
-    setValue(
-      "alerting_subject_prefix",
-      alerting.subject_prefix || "[AIcarus 告警]",
-    );
-    hydrateSmtp(data.smtp || {});
     hydrateRestart(qqPlatform.supervisor || {});
-    hydrateEmailControl(alerting.email_control || {}, data.imap || {});
     hydrateToolExecutionGuard(data.tool_execution_guard || {});
     const compression = data.cognition_compression || {};
     setValue("compression_provider", getProviderName(compression));
@@ -4700,16 +4377,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       memoryProcessingGen.enable_thinking === true,
     );
     formatRange("memory_processing_temperature", "memoryProcessingTempVal");
-    const st = data.slow_thinking || {};
-    populateProviderSelect("st_provider", getProviderName(st));
-    setChecked("st_enabled", st.enabled !== false);
-    setValue("st_provider", getProviderName(st));
-    setValue("st_model", st.model || "");
-    const stGen = st.generation || {};
-    setValue("st_temperature", stGen.temperature ?? 1.0);
-    setValue("st_max_output_tokens", stGen.max_output_tokens ?? 10000);
-    setChecked("st_enable_thinking", generationThinkingEnabled(stGen));
-    formatRange("st_temperature", "stTempVal");
     const proxies = data.proxies || {};
     setValue("proxy_openai", "");
     setChecked("proxy_openai_clear", false);
@@ -4726,25 +4393,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     updateGuardianSaveButton();
   }
 
-  function hydrateSmtp(smtp) {
-    setValue("smtp_host", smtp.AICQ_SMTP_HOST || "");
-    setValue("smtp_port", smtp.AICQ_SMTP_PORT || "");
-    const sslRaw = (smtp.AICQ_SMTP_USE_SSL || "").toLowerCase();
-    setChecked(
-      "smtp_use_ssl",
-      sslRaw
-        ? ["1", "true", "yes", "on"].includes(sslRaw)
-        : String(smtp.AICQ_SMTP_PORT || "") === "465",
-    );
-    setValue("smtp_user", smtp.AICQ_SMTP_USER || "");
-    setPasswordPlaceholder(
-      "smtp_password",
-      smtp.AICQ_SMTP_PASSWORD,
-      "QQ/163 等需使用授权码而非登录密码",
-    );
-    setValue("smtp_sender", smtp.AICQ_SMTP_SENDER || "");
-    setValue("smtp_recipients", smtp.AICQ_SMTP_RECIPIENTS || "");
-  }
   function hydrateRestart(nr) {
     setChecked("qq_adapter_restart_enabled", !!nr.enabled);
     setValue("qq_adapter_restart_command", nr.command || "");
@@ -4774,42 +4422,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue(
       "qq_adapter_restart_recovery_grace_seconds",
       nr.recovery_grace_seconds ?? 45,
-    );
-    setValue(
-      "qq_adapter_restart_qrcode_globs",
-      Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "",
-    );
-  }
-  function hydrateEmailControl(ec, imap) {
-    setChecked("ec_enabled", !!ec.enabled);
-    const allowed = new Set(
-      (ec.allowed_commands || ["RESTART", "STATUS"]).map((item) =>
-        String(item).toUpperCase(),
-      ),
-    );
-    ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].forEach((cmd) =>
-      setChecked("ec_cmd_" + cmd, allowed.has(cmd) || cmd === "REQUEST"),
-    );
-    setValue("ec_token_ttl_seconds", ec.token_ttl_seconds ?? 300);
-    setValue("ec_poll_interval", ec.poll_interval ?? 30);
-    setChecked(
-      "ec_reuse_smtp_credentials",
-      ec.reuse_smtp_credentials !== false,
-    );
-    setValue("imap_host", imap.AICQ_IMAP_HOST || "");
-    setValue("imap_port", imap.AICQ_IMAP_PORT || "");
-    const sslRaw = (imap.AICQ_IMAP_USE_SSL || "").toLowerCase();
-    setChecked(
-      "imap_use_ssl",
-      sslRaw
-        ? ["1", "true", "yes", "on"].includes(sslRaw)
-        : String(imap.AICQ_IMAP_PORT || "") === "993" || !imap.AICQ_IMAP_PORT,
-    );
-    setValue("imap_user", imap.AICQ_IMAP_USER || "");
-    setPasswordPlaceholder(
-      "imap_password",
-      imap.AICQ_IMAP_PASSWORD,
-      "留空则用 AICQ_SMTP_PASSWORD",
     );
   }
   function hydrateToolExecutionGuard(cfg) {
@@ -5180,8 +4792,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function buildSettingsPayload() {
     const mainProvider = value("provider");
     const visionMode = value("vision_mode");
-    const smtpPassword = rawValue("smtp_password");
-    const imapPassword = rawValue("imap_password");
     const guardProvider = value("guard_provider");
     const compressionProvider = value("compression_provider");
     const eventExtractionProvider = value("event_extraction_provider");
@@ -5208,6 +4818,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           max_age_days: intValue("vision_bridge_cache_max_age_days", 30),
           max_size_mb: intValue("vision_bridge_cache_max_size_mb", 500),
         },
+      },
+      video_understanding: {
+        connection_mode: value("video_understanding_connection_mode"),
+        base_url: value("video_understanding_base_url"),
+        api_key_env: value("video_understanding_api_key_env"),
+        api_key: value("video_understanding_api_key"),
+        provider: value("video_understanding_provider"),
+        model: value("video_understanding_model"),
+        protocol: value("video_understanding_protocol"),
+        max_size_mb: floatValue("video_understanding_max_size_mb", 20.0),
+        timeout: floatValue("video_understanding_timeout", 120.0),
       },
       generation: {
         temperature: floatValue("temperature", 1.0),
@@ -5242,17 +4863,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             max_retries: intValue("cognition_prefill_guidance_max_retries", 2),
           },
         },
-        enable_thinking: checked("enable_thinking"),
+        enable_thinking: checked("native_reasoning_as_cognition") || checked("enable_thinking"),
         native_reasoning_as_cognition: checked(
           "native_reasoning_as_cognition",
         ),
       },
-      tools: {
-        send_message: {
-          message_shape: value("send_message_shape") || "array",
-        },
-      },
+
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
+      output_requirements: { cognition_language: value("cognition_language") || "auto" },
       self_name: value("self_name"),
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
@@ -5311,7 +4929,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             "qq_adapter_restart_recovery_grace_seconds",
             45,
           ),
-          qrcode_globs: splitLines("qq_adapter_restart_qrcode_globs"),
         },
         },
       },
@@ -5324,41 +4941,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "tts_max_concurrent_tasks_per_plugin",
           8,
         ),
-      },
-      alerting: {
-        enabled: checked("alerting_enabled"),
-        heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
-        cooldown: intValue("alerting_cooldown", 600),
-        subject_prefix: value("alerting_subject_prefix"),
-        email_control: {
-          enabled: checked("ec_enabled"),
-          allowed_commands: [
-            "REQUEST",
-            "RESTART",
-            "STATUS",
-            "STOP",
-            "KILL_AICQ",
-          ].filter((cmd) => checked("ec_cmd_" + cmd)),
-          token_ttl_seconds: intValue("ec_token_ttl_seconds", 300),
-          poll_interval: intValue("ec_poll_interval", 30),
-          reuse_smtp_credentials: checked("ec_reuse_smtp_credentials"),
-        },
-      },
-      smtp: {
-        AICQ_SMTP_HOST: value("smtp_host"),
-        AICQ_SMTP_PORT: value("smtp_port"),
-        AICQ_SMTP_USE_SSL: checked("smtp_use_ssl") ? "true" : "false",
-        AICQ_SMTP_USER: value("smtp_user"),
-        ...(smtpPassword ? { AICQ_SMTP_PASSWORD: smtpPassword } : {}),
-        AICQ_SMTP_SENDER: value("smtp_sender"),
-        AICQ_SMTP_RECIPIENTS: value("smtp_recipients"),
-      },
-      imap: {
-        AICQ_IMAP_HOST: value("imap_host"),
-        AICQ_IMAP_PORT: value("imap_port"),
-        AICQ_IMAP_USE_SSL: checked("imap_use_ssl") ? "true" : "false",
-        AICQ_IMAP_USER: value("imap_user"),
-        ...(imapPassword ? { AICQ_IMAP_PASSWORD: imapPassword } : {}),
       },
       tool_execution_guard: {
         enabled: checked("guard_enabled"),
@@ -5435,16 +5017,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           },
         },
       },
-      slow_thinking: {
-        enabled: checked("st_enabled"),
-        provider: value("st_provider"),
-        model: value("st_model"),
-        generation: {
-          temperature: floatValue("st_temperature", 1.0),
-          max_output_tokens: intValue("st_max_output_tokens", 10000),
-          enable_thinking: checked("st_enable_thinking"),
-        },
-      },
       api_keys: collectApiKeys(),
       service_env: collectServiceEnv(),
       proxies: collectProxies(),
@@ -5457,8 +5029,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "请至少添加一个模型供应商";
     if (!payload.provider) return "请选择主模型供应商";
     if (!payload.model) return "请填写主模型 ID";
-    if (!["array", "single"].includes(payload.tools?.send_message?.message_shape))
-      return "send_message 参数形态只能选择数组或单条";
+
     if (payload.vision_bridge.enabled && !payload.vision_bridge.provider)
       return "启用 Vision Bridge 时需要选择供应商";
     const qqPayload = payload.platforms?.qq || {};
@@ -5475,8 +5046,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       payload.tts.max_concurrent_tasks_per_plugin > 128
     )
       return "TTS 单插件并发上限必须在 1-128 之间";
-    if (payload.alerting.heartbeat_timeout < 30)
-      return "心跳超时阈值不能低于 30 秒";
     if (
       payload.web_search?.searxng?.enabled &&
       !payload.web_search.searxng.base_url
@@ -5512,11 +5081,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       !payload.memory.processing.enabled
     )
       return "启用事件结构化或算法故事线前需要先启用记忆处理模型";
-    if (
-      payload.slow_thinking.enabled &&
-      (!payload.slow_thinking.provider || !payload.slow_thinking.model)
-    )
-      return "启用慢思考时需要选择供应商并填写模型 ID";
     return "";
   }
   async function saveProviders() {
@@ -5578,8 +5142,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         [
           "proxy_openai",
           "proxy_tavily",
-          "smtp_password",
-          "imap_password",
         ].forEach((id) => setValue(id, ""));
         const preserveGuardianDraft = guardianHasUnsavedChanges();
         const guardianDraft = rawValue("guardian_info");
@@ -5641,27 +5203,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     } finally {
       state.guardianSaving = false;
       updateGuardianSaveButton();
-    }
-  }
-  async function sendAlertingTest() {
-    const btn = $("alerting_test_btn");
-    const original = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "发送中...";
-    try {
-      const res = await fetch("/settings/alerting/test", { method: "POST" });
-      const data = await res.json();
-      if (data.success)
-        showToast(
-          data.message || "已尝试发送测试邮件，请到收件箱确认",
-          "success",
-        );
-      else showToast("测试发送失败: " + (data.error || "未知错误"), "error");
-    } catch (error) {
-      showToast("请求失败: " + error.message, "error");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = original;
     }
   }
     async function launchBrowserLogin() {
@@ -6099,7 +5640,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       el.className = "toast";
     }, 5000);
   }
+  function syncCognitionThinkingMode() {
+    const thinking = $("enable_thinking");
+    const native = checked("native_reasoning_as_cognition");
+    if (native) thinking.checked = true;
+    thinking.disabled = native;
+  }
+
   function initEvents() {
+    $("native_reasoning_as_cognition").addEventListener("change", syncCognitionThinkingMode);
     initSections();
     initModelPickers();
     bindRange("temperature", "temperatureVal");
@@ -6108,15 +5657,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     bindRange("compression_temperature", "compressionTempVal");
     bindRange("event_extraction_temperature", "eventExtractionTempVal");
     bindRange("memory_processing_temperature", "memoryProcessingTempVal");
-    bindRange("st_temperature", "stTempVal");
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
     $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("qq_adapter_port")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("guardian_info")?.addEventListener("input", updateGuardianSaveButton);
     [
-      "agent-prompt-drive",
-      "agent-prompt-cognition-content",
-      "agent-prompt-cognition-prompt",
+      "agent-prompt-instruction",
     ].forEach((id) =>
       $(id)?.addEventListener("input", updateAgentPromptSaveButton),
     );
@@ -6144,4 +5690,3 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   loadSettings();
 </script>
 {% endblock %}
-

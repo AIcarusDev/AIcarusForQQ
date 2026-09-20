@@ -91,6 +91,7 @@ class QQAdapterClient:
         self._on_recall: Callable[[dict], Coroutine] | None = None
         self._on_poke: Callable[[dict], Coroutine] | None = None
         self._on_group_notice: Callable[[dict], Coroutine] | None = None
+        self._on_request: Callable[[dict], Coroutine] | None = None
         self._on_status_change: Callable[[], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
@@ -107,14 +108,12 @@ class QQAdapterClient:
             str,
             tuple[Callable[[dict[str, Any]], bool], asyncio.Future],
         ] = {}
-        # ── 掉线告警相关 ─────────────────────────────────────
+        # ── 连接健康检测 ─────────────────────────────────────
         # 最近一次收到 QQ adapter 心跳的事件循环时间（loop.time()）
         self._last_heartbeat_at: float = 0.0
-        # 心跳超时阈值（秒），由 lifecycle 注入；默认 120s，容忍 ~3 个 30s 心跳丢失
+        # 心跳超时阈值（秒），默认 120s，容忍 ~3 个 30s 心跳丢失
         self._heartbeat_timeout: float = 120.0
-        # 告警管理器，由 lifecycle 注入；None 时不发告警
-        self._alert: Any = None
-        # QQ adapter 监管器（可选），由 main 注入；负责自动重启 + 二维码邮件
+        # QQ adapter 监管器（可选），由 main 注入；负责自动重启
         self._supervisor: Any = None
         # watchdog 后台任务
         self._watchdog_task: asyncio.Task | None = None
@@ -215,6 +214,9 @@ class QQAdapterClient:
         """注册群系统通知回调: async def handler(event: dict)"""
         self._on_group_notice = handler
 
+    def set_request_handler(self, handler: Callable[[dict], Coroutine]) -> None:
+        self._on_request = handler
+
     def set_connect_handler(
         self,
         handler: Callable[[], Coroutine],
@@ -229,16 +231,8 @@ class QQAdapterClient:
         """注册连接状态变化回调: async def handler()"""
         self._on_status_change = handler
 
-    def set_alert_manager(self, alert: Any, heartbeat_timeout: float = 120.0) -> None:
-        """注入告警管理器与心跳超时阈值。
-
-        在 start() 之前调用。alert 需提供 notify_disconnect / notify_recover 协程方法。
-        """
-        self._alert = alert
-        self._heartbeat_timeout = max(30.0, float(heartbeat_timeout))
-
     def set_supervisor(self, supervisor: Any) -> None:
-        """注入 QQ adapter 监管器（用于自动重启 + 二维码邮件）。
+        """注入 QQ adapter 监管器（用于自动重启）。
 
         supervisor 需提供 request_restart(reason: str) 方法；传 None 解绑。
         """
@@ -798,14 +792,14 @@ class QQAdapterClient:
                         if reason_parts:
                             reason += f": {' / '.join(reason_parts)}"
                         logger.warning("%s", reason)
-                        if self._alert and not self._heartbeat_stale:
-                            self._heartbeat_stale = True
-                            asyncio.create_task(self._alert.notify_disconnect(reason))
+                        self._heartbeat_stale = True
                         if self._supervisor is not None:
                             try:
                                 self._supervisor.request_restart(reason)
                             except Exception:
                                 logger.exception("supervisor.request_restart 调用异常")
+                elif post_type == "request" and self._on_request:
+                    asyncio.create_task(self._on_request(data))
                 elif post_type == "message_sent":
                     # QQ adapter 在消息真正投递到 QQ 后推送此事件
                     self._dispatch_sent_event_waiters(data)
@@ -814,7 +808,6 @@ class QQAdapterClient:
                         fut = self._pending_sent.pop(sent_msg_id, None)
                         if fut and not fut.done():
                             fut.set_result(True)
-                # request 等直接忽略
 
         except websockets.ConnectionClosed:
             logger.info("QQ adapter 连接已断开")
@@ -825,13 +818,6 @@ class QQAdapterClient:
             had_connection = self._clear_connection_if_current(ws)
             if had_connection:
                 self._schedule_status_change()
-            # 仅当确实经历过一个活跃连接时才发掉线告警，
-            # 避免服务器启动后无人连接时误报
-            if had_connection and self._alert and not self._heartbeat_stale:
-                self._heartbeat_stale = True
-                asyncio.create_task(
-                    self._alert.notify_disconnect("WebSocket 连接断开")
-                )
             if had_connection and self._supervisor is not None:
                 try:
                     self._supervisor.request_restart("WebSocket 连接断开")
@@ -886,12 +872,10 @@ class QQAdapterClient:
         if meta_type == "heartbeat":
             # 心跳走独立 logger（AICQ.qq_adapter.heartbeat），默认 INFO 级别屏蔽
             logging.getLogger("AICQ.qq_adapter.heartbeat").debug("QQ adapter 心跳 ♥")
-            # 刷新心跳时间戳；若曾被判定为超时，触发恢复告警
+            # 刷新心跳时间戳并清除超时状态
             self._last_heartbeat_at = asyncio.get_event_loop().time()
             if self._heartbeat_stale:
                 self._heartbeat_stale = False
-                if self._alert:
-                    asyncio.create_task(self._alert.notify_recover())
         elif meta_type == "lifecycle":
             sub = data.get("sub_type", "")
             logger.info("QQ adapter 生命周期: %s", sub)
@@ -904,7 +888,7 @@ class QQAdapterClient:
                 asyncio.create_task(_run_connect())
 
     async def _heartbeat_watchdog(self) -> None:
-        """心跳看门狗：定期检查最近一次心跳到达时间，超时则触发掉线告警。
+        """心跳看门狗：定期检查最近一次心跳到达时间，超时则记录掉线状态并请求重启。
 
         典型场景：QQ 风控/账号被踢时，QQ adapter 进程仍在 → WebSocket 不会断，
         但不会再上报 heartbeat 元事件。watchdog 是这种"沉默掉线"的唯一感知途径。
@@ -924,12 +908,6 @@ class QQAdapterClient:
                         "QQ adapter 心跳已 %ds 未到达（阈值 %ds），疑似 QQ 风控/掉线",
                         int(idle), int(self._heartbeat_timeout),
                     )
-                    if self._alert:
-                        asyncio.create_task(
-                            self._alert.notify_disconnect(
-                                f"心跳已 {int(idle)}s 未到达（疑似 QQ 风控/掉线）"
-                            )
-                        )
                     if self._supervisor is not None:
                         try:
                             self._supervisor.request_restart(

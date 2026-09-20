@@ -38,6 +38,8 @@ def normalize_generation_config(gen: dict | None) -> dict:
     normalized["native_reasoning_as_cognition"] = bool(
         normalized.get("native_reasoning_as_cognition", False)
     )
+    if normalized["native_reasoning_as_cognition"]:
+        normalized["enable_thinking"] = True
     max_rounds = max(
         MIN_LLM_CONTENTS_MAX_ROUNDS,
         _to_int(

@@ -390,14 +390,14 @@ async def browser_image(image_ref: str):
     return Response(data, content_type=mime, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
-@dashboard_bp.route("/api/sticker/<sticker_id>")
-async def sticker_serve(sticker_id: str):
+@dashboard_bp.route("/api/sticker/<image_ref>")
+async def sticker_serve(image_ref: str):
     """Serve sticker image bytes for inline rendering in the focus view."""
-    if not sticker_id.isalnum():
-        return jsonify({"error": "invalid id"}), 400
+    from llm.media.sticker_collection import load_sticker_bytes, valid_image_ref
+    if not valid_image_ref(image_ref):
+        return jsonify({"error": "invalid image_ref"}), 400
     try:
-        from llm.media.sticker_collection import load_sticker_bytes
-        result = await asyncio.to_thread(load_sticker_bytes, sticker_id)
+        result = await asyncio.to_thread(load_sticker_bytes, image_ref)
     except Exception:
         return jsonify({"error": "load failed"}), 500
     if result is None:

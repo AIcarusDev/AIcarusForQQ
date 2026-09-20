@@ -498,6 +498,13 @@ class MaintenanceService:
         except Exception:
             logger.debug("[maintenance] failed to clear in-memory goals", exc_info=True)
 
+        try:
+            from llm.prompt import container as _container
+
+            _container.restore([])
+        except Exception:
+            logger.debug("[maintenance] failed to clear in-memory container", exc_info=True)
+
         app_state.current_focus = None
         app_state.last_active_session = None
         app_state.first_input_event.clear()

@@ -12,6 +12,7 @@ from .adapter import QQAdapterClient
 from .adapter.config import runtime_adapter_config
 from .prompt import render_platform_content
 from .session_context import HOME_FOCUS
+from .friends import FriendService
 
 
 @dataclass
@@ -19,6 +20,7 @@ class QQRuntime:
     config: dict[str, Any]
     client: QQAdapterClient | None = None
     supervisor: Any = None
+    friends: FriendService | None = None
     _account_id: str = ""
     _account_name: str = ""
 
@@ -82,6 +84,8 @@ class QQRuntime:
                 adapter_cfg.get("name", ""),
                 file_transfer=adapter_cfg.get("file_transfer"),
             )
+        if self.friends is None or self.friends.client is not self.client:
+            self.friends = FriendService(self.client)
         return self.client
 
     def tool_context(self, session: Any, app_config: dict[str, Any]) -> PlatformToolContext:
@@ -130,6 +134,8 @@ class QQRuntime:
         await prefetch_quoted_messages(session, self._fetch_quoted_message)
 
     def attention_events(self, *, now: Any = None) -> list[AttentionEvent]:
+        if self.friends and self.friends.pending:
+            return [AttentionEvent(name=f"QQ 有 {len(self.friends.pending)} 条待处理好友申请", level="mention")]
         return []
 
     def world_block(
@@ -152,6 +158,12 @@ class QQRuntime:
             chat_log=chat_log,
             forward_content=forward_content,
         )
+        requests = self.friends.render_pending() if self.friends else ""
+        if requests:
+            if isinstance(content, str):
+                content = requests + "\n" + content
+            else:
+                content = [{"type": "text", "text": requests + "\n"}, *content]
         if state != "online":
             state_description = "<des>The platform is currently not connected, possibly due to a recent restart or other unexpected disconnection. The system will continue to attempt to reconnect.</des>\n"
             if isinstance(content, str):

@@ -26,7 +26,7 @@ def test_guard_current_world_uses_session_from_current_focus(monkeypatch):
         )
         monkeypatch.setattr(
             main_loop,
-            "build_main_user_prompt",
+            "build_world_prompt",
             lambda session, *, consume_unread=True: {
                 "session_key": session.key,
                 "consume_unread": consume_unread,

@@ -45,11 +45,6 @@ def build_tool_execution_guard_adapter_cfg(main_cfg: dict, guard_cfg: dict) -> d
     return _build_explicit_adapter_cfg(main_cfg, guard_cfg, "工具执行前守门模型")
 
 
-def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
-    """构建 slow_thinking 专用的 adapter 配置。"""
-    return _build_explicit_adapter_cfg(main_cfg, st_cfg, "慢思考模型")
-
-
 def build_event_extraction_adapter_cfg(main_cfg: dict, extraction_cfg: dict) -> dict:
     """构建记忆事件提取专用的 adapter 配置。"""
     return _build_explicit_adapter_cfg(main_cfg, extraction_cfg, "记忆事件提取模型")
@@ -71,7 +66,6 @@ __all__ = [
     "build_event_extraction_adapter_cfg",
     "build_compression_adapter_cfg",
     "build_memory_processing_adapter_cfg",
-    "build_slow_thinking_adapter_cfg",
     "build_tool_execution_guard_adapter_cfg",
     "create_adapter",
 ]

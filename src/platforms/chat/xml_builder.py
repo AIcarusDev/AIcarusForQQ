@@ -1,4 +1,4 @@
-﻿"""xml_builder.py — 聊天记录 → XML 转化
+"""xml_builder.py — 聊天记录 → XML 转化
 
 将内部上下文消息列表转为结构化 XML，供 LLM 上下文使用。
 
@@ -55,7 +55,7 @@ def _format_relative_time(iso_timestamp: str) -> str:
     return f"{int(months)}个月前" if months < 12 else f"{int(days / 365)}年前"
 
 # 图片位置哨兵：格式 \x00{12位image_ref}:{label}\x00，用户输入不含 \x00，天然防注入
-_IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
+_IMG_SENTINEL_RE = re.compile(r'\x00([A-Za-z0-9_-]{4,128}):([^\x00]+)\x00')
 _CARD_RAW_RENDER_LIMIT = 2000
 _INTERNAL_BOT_MESSAGE_ID_PREFIXES = ("pending_", "failed_", "offline_")
 _MODEL_VISIBLE_DELIVERY_STATES = {"pending", "failed"}
@@ -370,13 +370,10 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
         elif seg_type == "sticker":
             _flush_text()
             image_ref = _segment_image_ref(seg)
-            sticker_id = seg.get("sticker_id", "")
             if image_ref:
                 chunks.append(("sticker", f"\x00{image_ref}:动画表情\x00", ""))
-            elif sticker_id:
-                chunks.append(("sticker", f'[动画表情 id="{html.escape(sticker_id)}"]', ""))
             else:
-                chunks.append(("sticker", "[动画表情]", ""))
+                chunks.append(("sticker", "[历史表情包]", ""))
         elif seg_type == "file":
             _flush_text()
             fn = html.escape(seg.get("filename", "未知"))
@@ -407,6 +404,22 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
                 )
             sub.append(f'</preview><footer total="{total}"/>')
             chunks.append(("forward", "".join(sub), ""))
+        elif seg_type == "video":
+            _flush_text()
+            video_ref = str(seg.get("video_ref") or "").strip()
+            duration_label = _voice_label(seg).replace("[语音", "").replace("]", "").strip() if seg.get("duration") else ""
+            label_parts = ["视频"]
+            if duration_label:
+                label_parts.append(duration_label)
+            label = " ".join(label_parts)
+            if video_ref:
+                text_repr = f'[{html.escape(label)} video_ref="{html.escape(video_ref)}"]'
+            else:
+                text_repr = f'[{html.escape(label)}]'
+            attrs = []
+            if seg.get("file_size"):
+                attrs.append(f'size="{html.escape(_format_file_size(seg.get("file_size")))}"')
+            chunks.append(("video", text_repr, " ".join(attrs)))
         elif seg_type == "card":
             _flush_text()
             kind = html.escape(str(seg.get("kind", "unknown") or "unknown"))
@@ -526,6 +539,11 @@ def _resolve_sentinels(
         image_ref = m.group(1)
         label = m.group(2)
         img = images.get(image_ref)
+        if img and not any(img.get(k) for k in ("pending", "failed", "expired")):
+            from llm.media.image_store import lookup_image
+            shared = lookup_image(image_ref)
+            if shared:
+                img = {**img, **shared}
         if not img:
             return f'[{html.escape(label)} image_ref="{image_ref}"]'
         if img.get("expired"):
@@ -555,25 +573,27 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
     确保 caller 传入的 images dict 不完整时，残留哨兵不会原样泄漏到
     下游请求体（\x00 进 OpenAI JSON 会触发部分服务端解析器崩溃）。
     """
+    import base64
+    from llm.media.image_resolver import image_bytes
+
     parts: list[dict] = []
     last_end = 0
     for m in _IMG_SENTINEL_RE.finditer(text):
         image_ref = m.group(1)
         label = m.group(2)
         img = images.get(image_ref)
+        if img and not any(img.get(k) for k in ("pending", "failed", "expired")):
+            from llm.media.image_store import lookup_image
+            shared = lookup_image(image_ref)
+            if shared:
+                img = {**img, **shared}
         before = _resolve_sentinels(text[last_end:m.start()], images)
         data_url = None
-        if img and not img.get("failed") and not img.get("pending") and img.get("base64"):
-            data_url = img.get("_llm_data_url")
-            if data_url is None and not img.get("_llm_image_failed"):
-                data_url = make_data_url(
-                    str(img.get("base64") or ""),
-                    str(img.get("mime") or "image/jpeg"),
-                )
-                if data_url:
-                    img["_llm_data_url"] = data_url
-                else:
-                    img["_llm_image_failed"] = True
+        if img and not img.get("failed") and not img.get("pending"):
+            payload = image_bytes(img)
+            if payload is not None:
+                raw, mime = payload
+                data_url = make_data_url(base64.b64encode(raw).decode("ascii"), mime)
         if data_url and img:
             # 描述块追加在闭合括号后：vision=false 时 _strip_images 移除 image_url
             # 但保留文本 parts，模型仍能读到描述

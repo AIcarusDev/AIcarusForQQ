@@ -14,8 +14,6 @@ def test_runtime_manage_contract_is_single_discriminated_tool():
     declaration = runtime_manage.TOOL_CONTRACT.declaration()
 
     assert declaration["name"] == "runtime_manage"
-    assert "wait_qq_event" not in repr(declaration)
-    assert "wait_browser_event" not in repr(declaration)
     assert "oneOf" in declaration["parameters"]
     assert "action" in repr(declaration["parameters"])
     assert "minimum" in repr(declaration["parameters"])

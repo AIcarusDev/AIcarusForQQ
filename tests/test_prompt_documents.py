@@ -6,8 +6,6 @@ import pytest
 
 import config_loader
 from config_loader import (
-    AGENT_PROMPT_KEYS,
-    PromptDocumentError,
     load_agent_prompt_docs,
     save_agent_prompt_docs,
 )
@@ -15,19 +13,7 @@ from llm import session as session_module
 
 
 def _prepare_prompt_root(root: Path) -> None:
-    templates = {
-        "drive": "drive-template\n",
-        "cognition_content": "content-template\n",
-        "cognition_prompt": "prompt-template\n",
-    }
-    for key, text in templates.items():
-        directory = root / "config" / key
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{key}.md.template").write_text(
-            text,
-            encoding="utf-8",
-            newline="",
-        )
+    (root / "config").mkdir(parents=True, exist_ok=True)
 
 
 def _use_prompt_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
@@ -40,20 +26,15 @@ def test_missing_agent_prompt_files_are_seeded_without_overwriting_existing_or_e
 ) -> None:
     _prepare_prompt_root(tmp_path)
     _use_prompt_root(monkeypatch, tmp_path)
-    drive_path = tmp_path / "config" / "drive" / "drive.md"
-    content_path = tmp_path / "config" / "cognition_content" / "cognition_content.md"
-    drive_path.write_text("custom-drive", encoding="utf-8", newline="")
-    content_path.write_text("", encoding="utf-8", newline="")
+    instruction_path = tmp_path / "config" / "instruction.md"
+    instruction_path.write_text("", encoding="utf-8", newline="")
 
     loaded = load_agent_prompt_docs({})
 
     assert loaded == {
-        "drive": "custom-drive",
-        "cognition_content": "",
-        "cognition_prompt": "prompt-template\n",
+        "instruction": "",
     }
-    assert drive_path.read_text(encoding="utf-8") == "custom-drive"
-    assert content_path.read_text(encoding="utf-8") == ""
+    assert instruction_path.read_text(encoding="utf-8") == ""
 
 
 def test_agent_prompt_paths_support_relative_and_absolute_overrides(
@@ -62,24 +43,18 @@ def test_agent_prompt_paths_support_relative_and_absolute_overrides(
 ) -> None:
     _prepare_prompt_root(tmp_path)
     _use_prompt_root(monkeypatch, tmp_path)
-    absolute_content = tmp_path / "outside" / "content.md"
-    absolute_content.parent.mkdir()
-    absolute_content.write_text("absolute-content", encoding="utf-8")
+    absolute_instruction = tmp_path / "outside" / "instruction.md"
+    absolute_instruction.parent.mkdir()
+    absolute_instruction.write_text("absolute-instruction", encoding="utf-8")
     config = {
         "prompt_files": {
-            "drive": "custom/drive.md",
-            "cognition_content": str(absolute_content),
-            "cognition_prompt": "custom/cognition-prompt.md",
+            "instruction": str(absolute_instruction),
         }
     }
 
     loaded = load_agent_prompt_docs(config)
 
-    assert loaded["drive"] == "drive-template\n"
-    assert loaded["cognition_content"] == "absolute-content"
-    assert loaded["cognition_prompt"] == "prompt-template\n"
-    assert (tmp_path / "custom" / "drive.md").is_file()
-    assert (tmp_path / "custom" / "cognition-prompt.md").is_file()
+    assert loaded["instruction"] == "absolute-instruction"
 
 
 def test_agent_prompt_save_preserves_exact_text_and_replaces_files_atomically(
@@ -90,9 +65,7 @@ def test_agent_prompt_save_preserves_exact_text_and_replaces_files_atomically(
     _use_prompt_root(monkeypatch, tmp_path)
     load_agent_prompt_docs({})
     values = {
-        "drive": "  drive\n",
-        "cognition_content": "",
-        "cognition_prompt": "prompt\n\n",
+        "instruction": "custom instruction\r\n\r\n",
     }
 
     save_agent_prompt_docs({}, values)
@@ -101,14 +74,30 @@ def test_agent_prompt_save_preserves_exact_text_and_replaces_files_atomically(
     assert list((tmp_path / "config").rglob("*.tmp")) == []
 
 
-def test_agent_prompt_requires_a_template_for_first_initialization(
+def test_agent_prompt_initializes_missing_instruction_as_empty_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _use_prompt_root(monkeypatch, tmp_path)
 
-    with pytest.raises(PromptDocumentError):
-        load_agent_prompt_docs({})
+    assert load_agent_prompt_docs({}) == {"instruction": ""}
+    assert (tmp_path / "config" / "instruction.md").read_bytes() == b""
+
+
+def test_legacy_prompt_file_keys_do_not_break_instruction_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_prompt_root(monkeypatch, tmp_path)
+    config = {
+        "prompt_files": {
+            "drive": "missing/drive.md",
+            "cognition_content": "missing/content.md",
+            "cognition_prompt": "missing/prompt.md",
+        }
+    }
+
+    assert load_agent_prompt_docs(config) == {"instruction": ""}
 
 
 def test_session_reloads_complete_agent_prompt_snapshot_and_uses_last_good_on_error(
@@ -118,11 +107,6 @@ def test_session_reloads_complete_agent_prompt_snapshot_and_uses_last_good_on_er
     _prepare_prompt_root(tmp_path)
     _use_prompt_root(monkeypatch, tmp_path)
     initial = load_agent_prompt_docs({})
-    synthetic_template = "|".join(
-        "{" + key + "}"
-        for key in (*AGENT_PROMPT_KEYS, "persona", "self_name", "model_name", "guardian_info")
-    )
-    monkeypatch.setattr(session_module, "SYSTEM_PROMPT", synthetic_template)
     conversation = session_module.ConversationSession(
         _persona="persona-fixture",
         _self_name="self-fixture",
@@ -130,72 +114,53 @@ def test_session_reloads_complete_agent_prompt_snapshot_and_uses_last_good_on_er
         _agent_prompt_docs=dict(initial),
     )
 
-    first = conversation.build_system_prompt()
-    (tmp_path / "config" / "drive" / "drive.md").write_text(
-        "drive-updated",
+    first = conversation.build_prompt_prelude()
+    (tmp_path / "config" / "instruction.md").write_text(
+        "instruction <updated>",
         encoding="utf-8",
         newline="",
     )
-    second = conversation.build_system_prompt()
+    second = conversation.build_prompt_prelude()
 
-    assert first.split("|")[:3] == [
-        initial["drive"],
-        initial["cognition_content"],
-        initial["cognition_prompt"],
-    ]
-    assert second.split("|")[:3] == [
-        "drive-updated",
-        initial["cognition_content"],
-        initial["cognition_prompt"],
-    ]
+    assert first.instruction == ""
+    assert "`<instruction>`" not in first.system_prompt
+    assert "instruction &lt;updated&gt;" in second.instruction
+    assert "`<instruction>`" in second.system_prompt
 
-    (tmp_path / "config" / "drive" / "drive.md").write_bytes(b"\xff")
-    assert conversation.build_system_prompt() == second
+    (tmp_path / "config" / "instruction.md").write_bytes(b"\xff")
+    assert conversation.build_prompt_prelude() == second
 
 
-def test_system_prompt_selects_native_reasoning_contract_from_route(
+def test_system_prompt_ignores_native_reasoning_when_temporarily_disabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _prepare_prompt_root(tmp_path)
     _use_prompt_root(monkeypatch, tmp_path)
     initial = load_agent_prompt_docs({})
-    prompt_template = "|".join(
-        (
-            "{response_sequence}",
-            "{cognition_intro}",
-            "{motive_intro}",
-            "{cognition_output_block}",
-        )
-    )
-    explicit_parts = {
-        "response_sequence": "explicit-sequence",
-        "cognition_intro": "explicit-cognition",
-        "motive_intro": "explicit-motive",
-        "cognition_output_block": "explicit-output",
-    }
-    native_parts = {
-        "response_sequence": "native-sequence",
-        "cognition_intro": "native-cognition",
-        "motive_intro": "native-motive",
-        "cognition_output_block": "",
-    }
-    monkeypatch.setattr(session_module, "SYSTEM_PROMPT", prompt_template)
-    monkeypatch.setattr(
-        session_module,
-        "EXPLICIT_COGNITION_PROMPT_PARTS",
-        explicit_parts,
-    )
-    monkeypatch.setattr(
-        session_module,
-        "NATIVE_REASONING_PROMPT_PARTS",
-        native_parts,
-    )
     conversation = session_module.ConversationSession(
         _agent_prompt_docs=dict(initial),
     )
 
-    assert conversation.build_system_prompt() == "|".join(explicit_parts.values())
-    assert conversation.build_system_prompt(
-        native_reasoning_as_cognition=True
-    ) == "|".join(native_parts.values())
+    default_prompt = conversation.build_system_prompt(native_reasoning_as_cognition=False)
+    native_prompt = conversation.build_system_prompt(native_reasoning_as_cognition=True)
+
+    assert default_prompt == native_prompt
+
+
+def test_guardian_card_and_notice_are_gated_and_escaped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_prompt_root(tmp_path)
+    _use_prompt_root(monkeypatch, tmp_path)
+
+    without_guardian = session_module.ConversationSession().build_prompt_prelude()
+    with_guardian = session_module.ConversationSession(
+        _guardian_info="guardian <&>",
+    ).build_prompt_prelude()
+
+    assert without_guardian.guardian_card == ""
+    assert "`<guardian_card>`" not in without_guardian.system_prompt
+    assert "guardian &lt;&amp;&gt;" in with_guardian.guardian_card
+    assert "`<guardian_card>`" in with_guardian.system_prompt
