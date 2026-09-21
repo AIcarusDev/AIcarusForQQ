@@ -6,7 +6,7 @@
 
 MVP 只做一件事：
 
-> 某个 namespace 打开时，系统顺带把它绑定的主 skill 正文渲染给模型；namespace 关闭或过期时，对应 skill 正文一起消失。
+> 某个 namespace 打开时，系统顺带把它绑定的所有 skill 正文渲染给模型；namespace 关闭或过期时，对应 skill 正文一起消失。
 
 不做：
 
@@ -41,7 +41,9 @@ qq_social:
     - recall_message
     - poke
     - plus_one
-  skill: "qq-social-style"
+  skills:
+    - qq-social-tools
+    - qq-social-style
 ```
 
 这只是本地元数据。
@@ -108,8 +110,11 @@ qq_social:
 
 ```xml
 <skills>
-<skill name="qq-social-style">
-...qq-social-style 正文...
+<skill name="qq-social-tools" from="namespace.qq_social">
+...QQ 操作方法...
+</skill>
+<skill name="qq-social-style" from="namespace.qq_social">
+...用户社交偏好...
 </skill>
 </skills>
 ```
@@ -126,8 +131,11 @@ qq_social:
 </goals>
 
 <skills>
-<skill name="qq-social-style">
-...当前 active namespace 绑定的主 skill 正文...
+<skill name="qq-social-tools" from="namespace.qq_social">
+...QQ 操作方法...
+</skill>
+<skill name="qq-social-style" from="namespace.qq_social">
+...用户社交偏好...
 </skill>
 </skills>
 
@@ -136,7 +144,7 @@ qq_social:
 </world>
 ```
 
-每个 `<skill name="...">` 子块只放正文，不放 frontmatter、namespace、opened_by、ttl 等运行元数据。`name` 只用于让模型区分多个 skill。资源正文不放进 `<skill>`，只能通过工具按需读取。
+每个 `<skill name="...">` 子块只放正文，不放 frontmatter、opened_by、ttl 等运行元数据；`from` 属性标明首个激活来源。`name` 只用于让模型区分多个 skill。资源正文不放进 `<skill>`，只能通过工具按需读取。
 
 模型视角就是：相关工具可用了，同时它想起了相关使用技巧。
 
@@ -219,8 +227,11 @@ resource 不进入 prompt 固定前缀。
 
 ```xml
 <skills>
-<skill name="qq-social-style">
-...qq-social-style 正文...
+<skill name="qq-social-tools" from="namespace.qq_social">
+...QQ 操作方法...
+</skill>
+<skill name="qq-social-style" from="namespace.qq_social">
+...用户社交偏好...
 </skill>
 </skills>
 ```

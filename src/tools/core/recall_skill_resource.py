@@ -58,9 +58,7 @@ def _active_skill_ids() -> set[str]:
         skills: set[str] = set()
         for namespace in state.active_namespaces(registry):
             spec = registry.get(namespace)
-            skill = str(getattr(spec, "skill", "") or "").strip()
-            if skill:
-                skills.add(skill)
+            skills.update(getattr(spec, "skill_ids", ()))
         return skills
     except Exception:
         return set()

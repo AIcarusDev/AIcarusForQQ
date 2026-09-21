@@ -30,7 +30,9 @@ namespaces:
     activation:
       platform: qq
       surface: session
-    skill: qq-social-style
+    skills:
+      - qq-social-tools
+      - qq-social-style
     ttl_rounds: null
     tools:
       - send_message

@@ -71,6 +71,13 @@ class NamespaceSpec:
     activation: NamespaceActivationSpec = field(default_factory=NamespaceActivationSpec)
     lifecycle: NamespaceLifecycleSpec = field(default_factory=NamespaceLifecycleSpec)
 
+    skills: tuple[str, ...] = ()
+
+    @property
+    def skill_ids(self) -> tuple[str, ...]:
+        """Ordered unique bindings, including the legacy single-skill field."""
+        return tuple(dict.fromkeys(item.strip() for item in (self.skill, *self.skills) if item.strip()))
+
 
 @dataclass(frozen=True)
 class NamespaceRegistry:
@@ -347,6 +354,9 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             ttl_raw = raw_spec.get("ttl_rounds")
             ttl_rounds = int(ttl_raw) if ttl_raw is not None else None
             tools = tuple(str(tool or "").strip() for tool in raw_spec.get("tools") or [] if str(tool or "").strip())
+            skills_raw = raw_spec.get("skills") or []
+            if not isinstance(skills_raw, list) or any(not isinstance(item, str) for item in skills_raw):
+                raise ValueError(f"Namespace {name!r} skills must be a list of skill ids")
             spec = NamespaceSpec(
                 name=name,
                 description=str(raw_spec.get("description") or ""),
@@ -359,6 +369,7 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
                 import_path=str(raw_spec.get("import_path") or "").strip(),
                 ttl_rounds=ttl_rounds,
                 skill=str(raw_spec.get("skill") or "").strip(),
+                skills=tuple(skills_raw),
                 tools=tools,
                 attach=attach_specs,
                 activation=activation,

@@ -34,11 +34,8 @@ TOOL_CONTRACT = ToolContract(
     name="recall_message",
     description=(
         "撤回你之前已经发送的某条消息。"
-        "需要提供消息 ID（message_id）。"
         "通常只能撤回自己发的消息，且只能撤回 2 分钟内发送的消息。"
-        "在察觉到发错、发重复、思考过后感觉发送的消息不合适时可以使用。"
         "如果当前会话是群聊，且你是管理员，则可以撤回其它普通成员发送的群消息，并且没有时间限制。"
-        "若要撤回后补发纯文本，填写 edited_text 即可。"
     ),
     args_model=RecallMessageArgs,
 )

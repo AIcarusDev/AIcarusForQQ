@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import app_state
 import llm.prompt.user_prompt_builder as prompt_builder
 import skills.registry as skill_registry
@@ -16,11 +18,11 @@ from tools.namespaces import (
 def test_namespace_registry_records_bound_skill():
     registry = load_namespace_registry()
 
-    assert registry.get("qq_social").skill == "qq-social-style"
+    assert registry.get("qq_social").skill_ids == ("qq-social-tools", "qq-social-style")
     assert registry.get("core_chat").skill == "core-chat"
     assert registry.get("computer").skill == "computer"
     assert registry.get("core").skill == ""
-    bound_skills = {spec.skill for spec in registry.namespaces.values() if spec.skill}
+    bound_skills = {skill for spec in registry.namespaces.values() for skill in spec.skill_ids}
     assert bound_skills <= skill_registry.SKILL_KINDS.keys()
     assert {name for name, kind in skill_registry.SKILL_KINDS.items() if kind == "user"} == {
         "qq-social-style"
@@ -196,6 +198,12 @@ def test_recall_skill_resource_tool_requires_active_skill(monkeypatch):
     result = recall_skill_resource.execute("qq-social-style", "test")
     assert result["ok"] is True
     assert calls == [("qq-social-style", "test")]
+    assert recall_skill_resource.execute("qq-social-tools", "test")["ok"] is True
+    assert calls[-1] == ("qq-social-tools", "test")
+    state.close("qq_social", registry)
+    for skill in ("qq-social-tools", "qq-social-style"):
+        assert recall_skill_resource.execute(skill, "test")["ok"] is False
+    assert len(calls) == 2
 
 
 def test_skill_block_follows_active_namespace_lifecycle(monkeypatch):
@@ -213,11 +221,11 @@ def test_skill_block_follows_active_namespace_lifecycle(monkeypatch):
 
     state.open("qq_social", registry, 1)
     build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert loaded == ["qq-social-style"]
+    assert loaded == ["qq-social-tools", "qq-social-style"]
 
     state.close("qq_social", registry)
     build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert loaded == ["qq-social-style"]
+    assert loaded == ["qq-social-tools", "qq-social-style"]
 
 
 def test_core_chat_skill_block_follows_namespace_lifecycle(monkeypatch):
@@ -239,7 +247,7 @@ def test_core_chat_skill_block_follows_namespace_lifecycle(monkeypatch):
 def test_skill_block_renders_multiple_unique_skills(monkeypatch):
     registry = NamespaceRegistry(
         namespaces={
-            "alpha": NamespaceSpec(name="alpha", skill="skill-a"),
+            "alpha": NamespaceSpec(name="alpha", skill="skill-a", skills=("skill-b", "skill-a")),
             "beta": NamespaceSpec(name="beta", skill="skill-b"),
             "gamma": NamespaceSpec(name="gamma", skill="skill-a"),
         },
@@ -257,7 +265,7 @@ def test_skill_block_renders_multiple_unique_skills(monkeypatch):
 
     assert loaded == ["skill-a", "skill-b"]
     assert '<skill name="skill-a" from="namespace.alpha">' in skill_block
-    assert '<skill name="skill-b" from="namespace.beta">' in skill_block
+    assert '<skill name="skill-b" from="namespace.alpha">' in skill_block
     assert "namespace.gamma" not in skill_block
 
 
@@ -278,3 +286,45 @@ def test_active_skill_helper_delegates_using_namespace_state(monkeypatch):
     state.open("qq_social", registry, 1)
     prompt_builder._build_active_skill_prompt_block()
     assert calls[-1] == (tuple(state.active_namespaces(registry)), registry)
+
+
+@pytest.mark.parametrize("skill_id", ["qq-social-tools", "core-chat"])
+def test_project_skill_save_cannot_change_loaded_body(monkeypatch, tmp_path, skill_id):
+    directory = tmp_path / skill_id
+    directory.mkdir()
+    body_file = directory / "SKILL.md"
+    body_file.write_text("Project sentinel.", encoding="utf-8")
+    monkeypatch.setattr(skill_registry, "_SKILLS_DIR", tmp_path)
+    assert not skill_registry.save_skill_user_body(skill_id, "User replacement")
+    assert skill_registry.load_skill_body.__wrapped__(skill_id) == "Project sentinel."
+
+
+def test_multiple_bindings_parse_and_shared_skill_survives_one_namespace_close(monkeypatch, tmp_path):
+    manifest = tmp_path / "namespaces.yaml"
+    manifest.write_text(
+        "namespaces:\n"
+        "  alpha:\n    skill: legacy\n    skills: [shared, extra, shared]\n"
+        "  beta:\n    skills: [shared]\n",
+        encoding="utf-8",
+    )
+    registry = load_namespace_registry(manifest)
+    assert registry.get("alpha").skill_ids == ("legacy", "shared", "extra")
+    state = NamespaceRuntimeState()
+    monkeypatch.setattr(skill_registry, "load_skill_body", lambda skill: f"body-{skill}")
+    state.open("alpha", registry, 1)
+    state.open("beta", registry, 1)
+    block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
+    assert block.count("body-shared") == 1
+    assert "body-legacy" in block and "body-extra" in block
+    state.close("alpha", registry)
+    block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
+    assert "body-shared" in block
+    assert "body-legacy" not in block and "body-extra" not in block
+
+
+@pytest.mark.parametrize("value", ["one-skill", "[one-skill, 12]"])
+def test_namespace_rejects_malformed_skill_list(tmp_path, value):
+    manifest = tmp_path / "namespaces.yaml"
+    manifest.write_text(f"namespaces:\n  alpha:\n    skills: {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="skills must be a list"):
+        load_namespace_registry(manifest)

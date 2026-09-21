@@ -1,7 +1,7 @@
 """Namespace-bound skill body/resource loading.
 
 MVP rules:
-- namespace metadata may bind one main skill by id;
+- namespace metadata may bind multiple skills by id;
 - active namespaces decide whether the skill is visible;
 - rendering exposes active skills inside one <skills> container;
 - resources are loaded only by explicit tool calls, not by prompt rendering;
@@ -31,6 +31,7 @@ SkillKind = Literal["user", "project"]
 # changed through the user-skill save API.
 SKILL_KINDS: dict[str, SkillKind] = {
     "qq-social-style": "user",
+    "qq-social-tools": "project",
     "core-chat": "project",
     "project-source": "project",
     "computer": "project",
@@ -252,17 +253,17 @@ def build_skill_block_for_namespaces(
     skill_blocks: list[str] = []
     for namespace in active_namespaces:
         spec = namespace_registry.get(namespace) if namespace_registry is not None else None
-        skill_id = str(getattr(spec, "skill", "") or "").strip()
-        if not skill_id or skill_id in seen_skill_ids:
-            continue
-        seen_skill_ids.add(skill_id)
-        body = load_skill_body(skill_id).strip()
-        if body:
-            skill_name = escape(skill_id, quote=True)
-            skill_source = escape(f"namespace.{namespace}", quote=True)
-            skill_blocks.append(
-                f'<skill name="{skill_name}" from="{skill_source}">\n{body}\n</skill>'
-            )
+        for skill_id in getattr(spec, "skill_ids", ()):
+            if skill_id in seen_skill_ids:
+                continue
+            seen_skill_ids.add(skill_id)
+            body = load_skill_body(skill_id).strip()
+            if body:
+                skill_name = escape(skill_id, quote=True)
+                skill_source = escape(f"namespace.{namespace}", quote=True)
+                skill_blocks.append(
+                    f'<skill name="{skill_name}" from="{skill_source}">\n{body}\n</skill>'
+                )
     if not skill_blocks:
         return ""
     description = (

@@ -273,11 +273,11 @@ def _loaded_skills_for_namespaces(namespaces: list[str], registry) -> list[dict[
     seen: set[str] = set()
     for namespace in namespaces:
         spec = registry.get(namespace) if registry is not None else None
-        skill = str(getattr(spec, "skill", "") or "").strip()
-        if not skill or skill in seen:
-            continue
-        if load_skill_body is not None and not load_skill_body(skill).strip():
-            continue
-        seen.add(skill)
-        loaded.append({"namespace": namespace, "skill": skill})
+        for skill in getattr(spec, "skill_ids", ()):
+            if skill in seen:
+                continue
+            if load_skill_body is not None and not load_skill_body(skill).strip():
+                continue
+            seen.add(skill)
+            loaded.append({"namespace": namespace, "skill": skill})
     return loaded

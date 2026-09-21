@@ -833,6 +833,7 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
         },
     ]
     assert result["skills"] == [
+        {"namespace": "qq_social", "skill": "qq-social-tools"},
         {"namespace": "qq_social", "skill": "qq-social-style"}
     ]
     assert "active_namespaces" not in result
