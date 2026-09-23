@@ -5,6 +5,7 @@ import base64
 import io
 import json
 import threading
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from platforms.qq.adapter.conversation import format_adapter_error
+from platforms.qq.adapter.segments import llm_segments_to_qq_adapter
 from platforms.qq.tools.qq_social.send_message import send_message as send_mod
 
 
@@ -61,6 +63,93 @@ def test_image_segment_rejects_host_and_outside_agent_paths():
             tool_declaration=declaration,
         )
         assert result.ok is False
+
+
+def test_face_segment_schema_conversion_and_local_history():
+    declaration = send_mod.get_declaration()
+    result = process_tool_arguments(
+        json.dumps({"messages": [{"segments": [
+            {"command": "text", "content": "你好"},
+            {"command": "face", "id": 14},
+        ]}]}),
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+    )
+    assert result.ok is True
+    segments = result.args["messages"][0]["segments"]
+    prepared, error, _ = send_mod._prepare_sendable_segments(segments, SimpleNamespace())
+    assert error is None
+    assert llm_segments_to_qq_adapter(prepared) == [
+        {"type": "text", "data": {"text": "你好"}},
+        {"type": "face", "data": {"id": "14"}},
+    ]
+    assert llm_segments_to_qq_adapter([
+        {"command": "face", "id": 14},
+        {"command": "image", "_local_image_base64": "cG5nLWJ5dGVz"},
+    ]) == [
+        {"type": "face", "data": {"id": "14"}},
+        {"type": "image", "data": {"file": "base64://cG5nLWJ5dGVz"}},
+    ]
+    text, content_segments, content_type = send_mod._extract_message_text(prepared)
+    assert text == "你好[微笑]"
+    assert content_segments == [
+        {"type": "text", "text": "你好"},
+        {"type": "face", "id": "14", "des": "/微笑"},
+    ]
+    assert content_type == "text"
+    assert send_mod._extract_message_text([{"command": "face", "id": 364}])[2] == "face"
+    super_text, super_segments, _ = send_mod._extract_message_text(
+        [{"command": "face", "id": 364}], {364: "/超级赞"},
+    )
+    assert super_text == "[超级赞]"
+    assert super_segments == [{"type": "face", "id": "364", "des": "/超级赞"}]
+
+    rejected = process_tool_arguments(
+        json.dumps({"messages": [{"segments": [{"command": "face", "id": "not-an-id"}]}]}),
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+    )
+    assert rejected.ok is False
+    assert send_mod._prepare_sendable_segments(
+        [{"command": "face", "id": -1}], SimpleNamespace(),
+    )[1] == "face segment 需要非负整数 id。"
+    assert send_mod._prepare_sendable_segments(
+        [{"command": "face", "id": "bad"}], SimpleNamespace(),
+    )[1] == "face segment 需要非负整数 id。"
+
+
+def test_pending_face_send_matches_echo_by_id_even_if_name_changes():
+    sent = [{"type": "face", "data": {"id": "364"}}]
+    expected = send_mod._delivery_match_text(sent)
+    echo = {
+        "message_id": "qq-echo-1",
+        "user_id": "bot-1",
+        "time": time.time(),
+        "message": [{"type": "face", "data": {
+            "id": "364", "raw": {"faceText": "/超级赞"},
+        }}],
+    }
+    assert send_mod._history_message_matches_pending_send(
+        echo,
+        bot_sender_id="bot-1",
+        bot_sender_name="Bot",
+        expected_text=expected,
+        reply_id=None,
+        sent_started_at=time.time() - 1,
+        known_bot_message_ids=set(),
+    )
+    echo["message"][0]["data"]["id"] = "365"
+    assert not send_mod._history_message_matches_pending_send(
+        echo,
+        bot_sender_id="bot-1",
+        bot_sender_name="Bot",
+        expected_text=expected,
+        reply_id=None,
+        sent_started_at=time.time() - 1,
+        known_bot_message_ids=set(),
+    )
 
 
 def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch, tmp_path):
@@ -345,6 +434,80 @@ def test_adapter_failed_send_returns_error_without_local_chat_entry(fake_session
     assert "retcode=1200" in result["error"]
     assert "no such column" not in repr(result)
     assert fake_session.context_messages == []
+
+
+def test_face_send_persists_a_typed_history_entry_without_real_qq(fake_session, monkeypatch, tmp_path):
+    import app_state
+    import database
+    from platforms.chat.xml_builder import _render_content_xml
+    from web import debug_server
+
+    catalog = tmp_path / "face_config.json"
+    catalog.write_text(
+        json.dumps({"sysface": [{"QSid": "364", "QDes": "/超级赞", "AniStickerType": 1}]}),
+        encoding="utf-8",
+    )
+    fake_session.key = "qq:group:1234"
+    sent_messages = []
+
+    class FakeClient:
+        connected = True
+        adapter = "napcat"
+
+        async def send_message(self, **kwargs):
+            sent_messages.append(kwargs["message"])
+            return {"message_id": 12345}
+
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(database, "save_chat_message", no_op)
+    monkeypatch.setattr(debug_server, "broadcast_chat_event", no_op)
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(app_state, "main_loop", loop)
+    try:
+        handler = send_mod.make_handler(
+            lambda: fake_session,
+            FakeClient(),
+            {"platforms": {"qq": {"adapter": {"face_config_path": str(catalog)}}}},
+        )
+        result = handler(messages=[{"segments": [{"command": "face", "id": 364}]}])
+        rejected = handler(messages=[{"segments": [
+            {"command": "text", "content": "一起发送"},
+            {"command": "face", "id": 364},
+        ]}])
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=2)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert result["sent_count"] == 1
+    assert rejected["sent_count"] == 0
+    assert rejected["failed_count"] == 1
+    assert "超级表情只能单独" in rejected["error"]
+    assert sent_messages == [[{"type": "face", "data": {"id": "364"}}]]
+    entry = fake_session.context_messages[0]
+    assert entry["content"] == "[超级赞]"
+    assert entry["content_type"] == "face"
+    assert entry["content_segments"] == [{"type": "face", "id": "364", "des": "/超级赞"}]
+    assert _render_content_xml(entry) == '    <content type="face" id="364">/超级赞</content>'
+
+
+def test_dual_use_face_can_be_mixed_while_super_only_face_cannot():
+    assert send_mod._validate_face_composition(
+        [{"command": "text", "content": "哭"}, {"command": "face", "id": 5}],
+        {364},
+    ) is None
+    assert send_mod._validate_face_composition(
+        [{"command": "face", "id": 364}], {364},
+    ) is None
+    assert send_mod._validate_face_composition(
+        [{"command": "text", "content": "赞"}, {"command": "face", "id": 364}],
+        {364},
+    ) is not None
 
 
 def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session):

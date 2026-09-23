@@ -116,6 +116,25 @@ QQ_FACE: dict[str, str] = {
     "323": "[嫌弃]", "324": "[吃糖]", "326": "[生气]",
 }
 
+
+def face_content_segment(data: dict) -> dict[str, str]:
+    """Keep a native QQ face ID and its available description in chat history."""
+    raw_id = data.get("id")
+    face_id = str(raw_id).strip() if raw_id is not None else ""
+    raw = data.get("raw")
+    raw_text = raw.get("faceText") if isinstance(raw, dict) else None
+    name = str(raw_text or QQ_FACE.get(face_id) or "").strip().strip("[]")
+    segment = {"type": "face", "id": face_id}
+    if name:
+        segment["des"] = name if name.startswith("/") else f"/{name}"
+    return segment
+
+
+def _face_plain_text(face: dict) -> str:
+    des = str(face.get("des") or "")
+    face_id = str(face.get("id", ""))
+    return f"[{des.lstrip('/')}]" if des else f"[表情:{face_id}]"
+
 _SEG_LABEL: dict[str, str] = {
     "record": "[语音]",
     "video": "[视频]",
@@ -373,8 +392,7 @@ def qq_adapter_segments_to_text(
         if seg_type == "text":
             parts.append(get_text_segment_text(data))
         elif seg_type == "face":
-            face_id = str(data.get("id", ""))
-            parts.append(QQ_FACE.get(face_id, f"[表情:{face_id}]"))
+            parts.append(_face_plain_text(face_content_segment(data if isinstance(data, dict) else {})))
         elif seg_type == "at":
             qq = str(data.get("qq", ""))
             if qq == "all":
@@ -417,7 +435,7 @@ def build_content_segments(
     返回列表元素格式:
       {"type": "text",    "text": "..."}
       {"type": "mention", "uid": "...", "display": "@..."}
-      {"type": "emoji",   "id": "...", "name": "..."}
+      {"type": "face",    "id": "...", "des": "/..."}
       {"type": "image",   "image_ref": "..."}
       {"type": "file",    "filename": "...", "size_bytes": 123, "is_downloaded": False}
       其他: {"type": "..."}
@@ -446,10 +464,7 @@ def build_message_content(
             if text:
                 parts.append({"type": "text", "text": text})
         elif seg_type == "face":
-            face_id = str(data.get("id", ""))
-            name = QQ_FACE.get(face_id, f"表情{face_id}")
-            clean_name = name.strip("[]")
-            parts.append({"type": "emoji", "id": face_id, "name": clean_name})
+            parts.append(face_content_segment(data if isinstance(data, dict) else {}))
         elif seg_type == "at":
             qq = str(data.get("qq", ""))
             if qq == "all":
@@ -558,6 +573,8 @@ def _determine_content_type(message_segs: list[dict]) -> str:
             for seg in message_segs
         )
         return "image" if has_real_image else "sticker"
+    if "face" in types and not has_text:
+        return "face"
     return "text"
 
 
@@ -599,6 +616,11 @@ def llm_segments_to_qq_adapter(
             user_id = seg.get("user_id", "")
             if user_id:
                 qq_adapter_segs.append({"type": "at", "data": {"qq": str(user_id)}})
+        elif cmd == "face":
+            face_id = seg.get("id")
+            if isinstance(face_id, bool) or not isinstance(face_id, int) or face_id < 0:
+                raise ValueError("face segment requires a non-negative integer id")
+            qq_adapter_segs.append({"type": "face", "data": {"id": str(face_id)}})
         elif cmd == "sticker":
             image_ref = str(seg.get("image_ref") or "")
             raw = seg.get("_image_bytes")

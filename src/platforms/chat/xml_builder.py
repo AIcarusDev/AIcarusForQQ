@@ -283,8 +283,8 @@ def _hydrate_dynamic_group_display_names(
 def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
     """将结构化 content_segments 渲染为 (content_type, inner_xml, attrs) 列表。
 
-    text / at / emoji 视为内联文本，合并为同一个 "text" 块；
-    image / sticker / file / forward 各自独立为单独块。
+    text / at 视为内联文本，合并为同一个 "text" 块；
+    face / image / sticker / file / forward 各自独立为单独块。
     这样调用方可以为每块生成独立的 <content type="..."> 标签，彻底消除歧义。
     """
     chunks: list[tuple[str, str, str]] = []
@@ -359,10 +359,16 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
             uid = html.escape(str(seg.get("uid", "")))
             display = html.escape(seg.get("display", ""))
             text_buf.append(f'<at uid="{uid}">{display}</at>')
-        elif seg_type == "emoji":
-            eid = html.escape(str(seg.get("id", "")))
-            name = html.escape(seg.get("name", ""))
-            text_buf.append(f'<emoji id="{eid}" name="{name}"/>')
+        elif seg_type in ("face", "emoji"):
+            _flush_text()
+            raw_face_id = str(seg.get("id", ""))
+            face_id = html.escape(raw_face_id, quote=True)
+            des = str(seg.get("des") or seg.get("name") or "").strip().strip("[]")
+            if des and not des.startswith("/"):
+                des = f"/{des}"
+            label = html.escape(des or f"[表情:{raw_face_id}]", quote=False)
+            attrs = f'id="{face_id}"' if face_id else ""
+            chunks.append(("face", label, attrs))
         elif seg_type == "image":
             _flush_text()
             image_ref = _segment_image_ref(seg)

@@ -164,7 +164,7 @@ async def qq_adapter_event_to_context(
       sender_role   — 群聊: "owner"/"admin"/"member"；私聊: ""
       sender_title  — 群聊专属头衔；私聊: ""
       sender_level  — 群等级；私聊: ""
-      content_type  — "text"/"image"/"file"
+      content_type  — "text"/"face"/"image"/"file"/...
       content_segments — 结构化内容段列表（供 xml_builder 渲染富文本）
       reply_to      — 被回复消息的 ID（可选）
       images        — {image_ref: {"base64": str, "mime": str, "label": str}, ...}（可选）

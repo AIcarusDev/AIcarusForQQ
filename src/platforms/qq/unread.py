@@ -52,8 +52,8 @@ def _render_preview_segments(segments: list[dict]) -> str:
             display = str(seg.get("display", "") or "").strip()
             uid = str(seg.get("uid", "") or "").strip()
             parts.append(display or (f"@{uid}" if uid else "@"))
-        elif seg_type == "emoji":
-            name = str(seg.get("name", "") or "").strip()
+        elif seg_type in ("face", "emoji"):
+            name = str(seg.get("des") or seg.get("name") or "").strip().strip("[]/")
             eid = str(seg.get("id", "") or "").strip()
             if name:
                 parts.append(f"[{name}]")
@@ -85,6 +85,8 @@ def _render_preview_text(msg: dict, max_len: int = 30) -> str:
             text = "[图片]"
         elif content_type == "sticker":
             text = "[动画表情]"
+        elif content_type == "face":
+            text = str(msg.get("content") or "[表情]")
         elif content_type == "file":
             text = "[文件]"
         elif content_type == "voice":

@@ -817,7 +817,7 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
     assert result["tools"] == [
         {
             "namespace": "qq_social",
-            "tools": ["send_message", "send_voice", "recall_message", "poke", "plus_one"],
+            "tools": ["send_message", "list_faces", "send_voice", "recall_message", "poke", "plus_one"],
         }
     ]
     assert result["attached_tools"] == [

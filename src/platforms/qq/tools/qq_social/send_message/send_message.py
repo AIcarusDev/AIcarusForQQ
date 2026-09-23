@@ -92,7 +92,12 @@ class StickerSegment(ToolArgsModel):
     image_ref: str = Field(min_length=4, description="已收藏或可见聊天图片的 image_ref。")
 
 
-class SendMessageSegment(RootModel[TextSegment | AtSegment | ImageSegment | StickerSegment]):
+class FaceSegment(ToolArgsModel):
+    command: Literal["face"]
+    id: int = Field(description="QQ 原生表情 ID；需先用 qq_social.list_faces 查询。")
+
+
+class SendMessageSegment(RootModel[TextSegment | AtSegment | ImageSegment | StickerSegment | FaceSegment]):
     pass
 
 
@@ -243,8 +248,13 @@ def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[s
     return repaired_args, changes, None
 
 
-def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
+def _extract_message_text(
+    segments: list[dict],
+    face_descriptions: dict[int, str] | None = None,
+) -> tuple[str, list[dict], str]:
     """从 segments 提取纯文本和结构化 content_segments。"""
+    from platforms.qq.adapter.segments import _face_plain_text, face_content_segment
+
     text_parts: list[str] = []
     content_segments: list[dict] = []
     for seg in segments:
@@ -258,6 +268,15 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
             uid = str(seg.get("user_id", ""))
             text_parts.append(f"@{uid}")
             content_segments.append({"type": "mention", "uid": uid, "display": f"@{uid}"})
+        elif cmd == "face":
+            face_id = seg.get("id")
+            des = (face_descriptions or {}).get(face_id)
+            face_data = {"id": face_id}
+            if des:
+                face_data["raw"] = {"faceText": des}
+            face = face_content_segment(face_data)
+            text_parts.append(_face_plain_text(face))
+            content_segments.append(face)
         elif cmd == "sticker":
             image_ref = seg.get("image_ref", "")
             text_parts.append("[动画表情]")
@@ -270,12 +289,39 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
     has_sticker = any(s.get("type") == "sticker" for s in content_segments)
     has_image = any(s.get("type") == "image" for s in content_segments)
     has_text = any(s.get("type") == "text" for s in content_segments)
-    content_type = "sticker" if has_sticker and not has_text else "image" if has_image and not has_text else "text"
+    has_face = any(s.get("type") == "face" for s in content_segments)
+    content_type = (
+        "sticker" if has_sticker and not has_text
+        else "image" if has_image and not has_text
+        else "face" if has_face and not has_text
+        else "text"
+    )
     return text, content_segments, content_type
 
 
 def _normalize_delivery_match_text(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _delivery_match_text(
+    message: list[dict],
+    *,
+    bot_sender_id: str = "",
+    bot_sender_name: str = "",
+) -> str:
+    """Compare face IDs instead of display names that can vary in QQ echoes."""
+    from platforms.qq.adapter import segments as qq_segments
+
+    comparable = [
+        {"type": "text", "data": {"text": f"[QQ-face:{(seg.get('data') or {}).get('id', '')}]"}}
+        if seg.get("type") == "face" else seg
+        for seg in message
+    ]
+    return qq_segments.qq_adapter_segments_to_text(
+        comparable,
+        bot_id=bot_sender_id,
+        bot_display_name=bot_sender_name,
+    )
 
 
 def _patch_session_message(session: Any, message_id: str, updates: dict[str, Any]) -> dict | None:
@@ -329,10 +375,10 @@ def _history_message_matches_pending_send(
         return False
     if str(qq_segments.get_reply_message_id(message) or "") != str(reply_id or ""):
         return False
-    actual_text = qq_segments.qq_adapter_segments_to_text(
+    actual_text = _delivery_match_text(
         message,
-        bot_id=str(bot_sender_id),
-        bot_display_name=str(bot_sender_name or bot_sender_id),
+        bot_sender_id=str(bot_sender_id),
+        bot_sender_name=str(bot_sender_name or bot_sender_id),
     )
     return _normalize_delivery_match_text(actual_text) == _normalize_delivery_match_text(expected_text)
 
@@ -465,6 +511,21 @@ def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
 
+def _validate_face_composition(segments: list[dict], super_only_face_ids: set[int]) -> str | None:
+    if len(segments) == 1:
+        return None
+    if any(
+        isinstance(seg, dict)
+        and seg.get("command") == "face"
+        and isinstance(seg.get("id"), int)
+        and not isinstance(seg.get("id"), bool)
+        and seg.get("id") in super_only_face_ids
+        for seg in segments
+    ):
+        return "超级表情只能单独作为一条消息发送；请把 face 放在独立的 messages 项中。"
+    return None
+
+
 def _format_result_target(session: Any, temp_source_group_id: int | None = None) -> str:
     conv_type = str(getattr(session, "conv_type", "") or "")
     conv_id = str(getattr(session, "conv_id", "") or "")
@@ -513,6 +574,11 @@ def _prepare_sendable_segments(
         if cmd == "text" and str(seg.get("content", "") or ""):
             has_sendable = True
         elif cmd == "at" and str(seg.get("user_id", "") or ""):
+            has_sendable = True
+        elif cmd == "face":
+            face_id = seg.get("id")
+            if isinstance(face_id, bool) or not isinstance(face_id, int) or face_id < 0:
+                return None, "face segment 需要非负整数 id。", warnings
             has_sendable = True
         elif cmd == "sticker":
             image_ref = normalize_image_ref(seg.get("image_ref"))
@@ -1032,6 +1098,22 @@ def make_handler(
         failed_count: int = 0
         failed_messages: list[dict] = []
         warnings: list[str] = []
+        has_face = any(
+            isinstance(msg, dict)
+            and isinstance(msg.get("segments"), list)
+            and any(isinstance(seg, dict) and seg.get("command") == "face" for seg in msg["segments"])
+            for msg in send_messages
+        )
+        face_descriptions: dict[int, str] = {}
+        super_only_face_ids: set[int] = set()
+        if has_face:
+            from platforms.qq.tools.qq_social.list_faces import load_face_entries
+
+            face_entries = load_face_entries(config or {})
+            face_descriptions = {face_id: face.des for face_id, face in face_entries.items()}
+            super_only_face_ids = {
+                face_id for face_id, face in face_entries.items() if face.super and not face.normal
+            }
 
         for i, msg in enumerate(send_messages):
             if not isinstance(msg, dict):
@@ -1056,7 +1138,13 @@ def make_handler(
                     i,
                 )
                 continue
-            prepared_segments, validation_error, segment_warnings = _prepare_sendable_segments(segments, image_session)
+            validation_error = _validate_face_composition(segments, super_only_face_ids)
+            if validation_error:
+                prepared_segments, segment_warnings = None, []
+            else:
+                prepared_segments, validation_error, segment_warnings = _prepare_sendable_segments(
+                    segments, image_session,
+                )
             if validation_error:
                 failed_count += 1
                 failed_messages.append({
@@ -1107,7 +1195,7 @@ def make_handler(
                 )
                 continue
 
-            text, content_segments, content_type = _extract_message_text(segments)
+            text, content_segments, content_type = _extract_message_text(segments, face_descriptions)
             send_started_at = time.time()
 
             # 发送消息（异步→同步）
@@ -1227,7 +1315,11 @@ def make_handler(
                         temp_source_group_id=temp_source_group_id,
                         bot_sender_id=str(bot_sender_id),
                         bot_sender_name=str(bot_sender_name),
-                        expected_text=text,
+                        expected_text=_delivery_match_text(
+                            qq_adapter_segs,
+                            bot_sender_id=str(bot_sender_id),
+                            bot_sender_name=str(bot_sender_name),
+                        ),
                         reply_id=str(reply_id) if reply_id else None,
                         sent_started_at=send_started_at,
                         known_bot_message_ids=set(known_bot_message_ids),

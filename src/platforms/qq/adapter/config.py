@@ -27,6 +27,7 @@ DEFAULT_QQ_PLATFORM_CONFIG: dict[str, Any] = {
             "host_directory": "",
             "adapter_directory": "",
         },
+        "face_config_path": "",
     },
     "access": {
         "whitelist": {
@@ -159,6 +160,7 @@ def normalize_qq_platform_config(config: dict[str, Any], *, remove_legacy: bool 
     file_transfer["host_directory"] = str(file_transfer.get("host_directory") or "").strip()
     file_transfer["adapter_directory"] = str(file_transfer.get("adapter_directory") or "").strip()
     adapter["file_transfer"] = file_transfer
+    adapter["face_config_path"] = str(adapter.get("face_config_path") or "").strip()
     cfg["adapter"] = adapter
 
     access_raw = raw_cfg.get("access") if isinstance(raw_cfg.get("access"), dict) else {}

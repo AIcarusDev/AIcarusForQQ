@@ -95,6 +95,14 @@
       "zh_name": "查看表情包",
       "zh_definition": "查看已收藏表情包的编号和使用场景。"
     },
+    "list_faces": {
+      "zh_name": "查看内置表情",
+      "zh_definition": "分页查询 QQ 内置表情和超级表情的 ID 与名称。"
+    },
+    "qq_social.list_faces": {
+      "zh_name": "QQ·查看内置表情",
+      "zh_definition": "分页查询 QQ 内置表情和超级表情的 ID 与名称。"
+    },
     "qq_social.list_stickers": {
       "zh_name": "QQ·查看表情包",
       "zh_definition": "查看已收藏表情包的编号和使用场景。"

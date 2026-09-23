@@ -528,7 +528,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     border-radius: 3px;
     font-size: 12px;
   }
-  .seg-emoji {
+  .seg-face {
     display: inline;
     color: var(--orange);
     font-size: 12px;
@@ -1206,10 +1206,11 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
         tag.className = "seg-mention";
         tag.textContent = seg.display || `@${seg.uid}`;
         container.append(tag);
-      } else if (t === "emoji") {
+      } else if (t === "face" || t === "emoji") {
         const tag = document.createElement("span");
-        tag.className = "seg-emoji";
-        tag.textContent = `[${seg.name || seg.id}]`;
+        tag.className = "seg-face";
+        const faceName = String(seg.des || seg.name || "").replace(/^\//, "");
+        tag.textContent = faceName ? `[${faceName}]` : `[表情:${seg.id}]`;
         tag.title = `QQ 表情 id=${seg.id}`;
         container.append(tag);
       } else if (t === "image" || t === "sticker") {

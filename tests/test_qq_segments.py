@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import io
 
 import pytest
 from PIL import Image
 
 from platforms.qq.adapter import segments as segments_mod
+from platforms.qq.adapter import events as qq_events
 from platforms.qq.adapter.segments import (
     ImageLoadError,
     build_content_segments,
@@ -14,6 +16,9 @@ from platforms.qq.adapter.segments import (
     llm_segments_to_qq_adapter,
     qq_adapter_segments_to_text,
 )
+from platforms.chat.xml_builder import _render_content_xml
+from platforms.qq.adapter.segments import _determine_content_type
+from platforms.qq.unread import _render_preview_text
 
 
 def test_qq_adapter_segments_to_text_preserves_fixture_content():
@@ -28,6 +33,55 @@ def test_qq_adapter_segments_to_text_preserves_fixture_content():
     assert "hello" in text
     assert "@AICQ" in text
     assert "notes.txt" in text
+
+
+def test_native_face_keeps_own_type_in_chat_history_and_legacy_emoji_renders_as_face():
+    message = [
+        {"type": "text", "data": {"text": "你好"}},
+        {"type": "face", "data": {"id": "364", "raw": {"faceText": "/超级赞"}}},
+        {"type": "text", "data": {"text": "！"}},
+    ]
+    parts = build_content_segments(message)
+    assert parts == [
+        {"type": "text", "text": "你好"},
+        {"type": "face", "id": "364", "des": "/超级赞"},
+        {"type": "text", "text": "！"},
+    ]
+    assert qq_adapter_segments_to_text(message) == "你好[超级赞]！"
+    assert _render_content_xml({"content_segments": parts}) == (
+        '    <content type="text">你好</content>'
+        '<content type="face" id="364">/超级赞</content>'
+        '<content type="text">！</content>'
+    )
+    assert _render_preview_text({"content_segments": parts}) == "你好[超级赞]！"
+    assert _determine_content_type([message[1]]) == "face"
+
+    legacy = {"content_segments": [{"type": "emoji", "id": "5", "name": "流泪"}]}
+    assert _render_content_xml(legacy) == '    <content type="face" id="5">/流泪</content>'
+    assert _render_preview_text(legacy) == "[流泪]"
+
+
+def test_native_face_without_description_still_keeps_id():
+    parts = build_content_segments([{"type": "face", "data": {"id": 469}}])
+    assert parts == [{"type": "face", "id": "469"}]
+    assert _render_content_xml({"content_segments": parts}) == (
+        '    <content type="face" id="469">[表情:469]</content>'
+    )
+
+    entry = asyncio.run(qq_events.qq_adapter_event_to_context({
+        "post_type": "message",
+        "message_type": "private",
+        "message_id": "face-469",
+        "time": 1760000,
+        "sender": {"user_id": "sender", "nickname": "Sender"},
+        "message": [{"type": "face", "data": {"id": 469}}],
+    }))
+    assert entry is not None
+    assert entry["content_type"] == "face"
+    assert entry["content_segments"] == parts
+    assert _render_content_xml(entry) == (
+        '    <content type="face" id="469">[表情:469]</content>'
+    )
 
 
 def test_build_content_segments_keeps_structured_cards_and_media_refs():

@@ -982,6 +982,10 @@ block head_extra %}
     if (seg.type === "text") return String(seg.text || "");
     if (seg.type === "image") return "[图片]";
     if (seg.type === "sticker") return "[表情]";
+    if (seg.type === "face" || seg.type === "emoji") {
+      const name = String(seg.des || seg.name || "").replace(/^\//, "");
+      return name ? `[${name}]` : `[表情:${seg.id}]`;
+    }
     return String(seg.text || seg.label || "");
   }
 
