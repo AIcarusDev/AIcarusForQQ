@@ -98,6 +98,36 @@ async def recall_events_from_facets(
     facets: list[RecallQueryFacet],
     recall_fn: RecallFn | None = None,
 ) -> list[dict[str, Any]]:
+    """Shared recall facade for both automatic and explicit recall."""
+    if recall_fn is not None:
+        return await _recall_event_facets(sender_entity=sender_entity, context_scope=context_scope,
+                                         limit=limit, facets=facets, recall_fn=recall_fn)
+    limit = max(1, int(limit or 1))
+    active = []
+    try:
+        from memory.active.workflow import recall
+        active = await recall("\n".join(facet.query for facet in facets), min(3, limit))
+    except Exception:
+        logger.warning("[recall] active memory unavailable", exc_info=True)
+    try:
+        events = await _recall_event_facets(sender_entity=sender_entity, context_scope=context_scope,
+                                           limit=limit, facets=facets)
+    except Exception:
+        if not active:
+            raise
+        logger.warning("[recall] event memory unavailable; preserving active memories", exc_info=True)
+        events = []
+    return [*active, *events][:limit]
+
+
+async def _recall_event_facets(
+    *,
+    sender_entity: str,
+    context_scope: str,
+    limit: int,
+    facets: list[RecallQueryFacet],
+    recall_fn: RecallFn | None = None,
+) -> list[dict[str, Any]]:
     """Run bounded recall for each facet and fuse candidates by weighted average."""
 
     uses_default_recall = recall_fn is None

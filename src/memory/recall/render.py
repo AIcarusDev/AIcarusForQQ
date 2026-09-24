@@ -1,8 +1,8 @@
 """Memory XML rendering helpers.
 
-Normal render output is intentionally minimal: summary, relative time, and
-confidence are visible to the model.  Scores, ids, predicates, participants,
-and paths are debug-only data and must not be injected here.
+Event render output is intentionally minimal: summary, relative time, and
+confidence. Active memories expose their internal memory ID for correction;
+scores, external source IDs, predicates and participants stay internal.
 """
 
 from __future__ import annotations
@@ -69,6 +69,10 @@ def _render_memory_items(
     lines = []
     for event in events:
         summary = html.escape(str(event.get("summary", "")))
+        if event.get("memory_kind") == "active":
+            memory_id = html.escape(str(event.get("memory_id", "")))
+            lines.append(f'  <mem kind="active" id="{memory_id}">{summary}</mem>')
+            continue
         occurred_at = int(event.get("occurred_at") or event.get("created_at") or 0)
         when = html.escape(_format_relative_event_time(occurred_at, now))
         confidence = html.escape(_format_confidence(event.get("confidence")))

@@ -16,6 +16,9 @@ namespaces:
       - container_manage
       - update_plan
       - recall_memory
+      - memory_write
+      - memory_search
+      - memory_read
       - recall_skill_resource
       - restart
       - view_image

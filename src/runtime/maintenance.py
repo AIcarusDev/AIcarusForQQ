@@ -71,6 +71,9 @@ class MaintenanceService:
     """Central owner for dangerous runtime/data reset operations."""
 
     _LONG_TERM_DELETE_ORDER: tuple[str, ...] = (
+        "ActiveMemoryRevisions",
+        "ActiveMemoryEntries",
+        "ActiveMemoryBatches",
         "pending_archive_jobs",
         "MemoryStorylineSummaryTaskEvents",
         "MemorySummaryCache",
@@ -118,6 +121,8 @@ class MaintenanceService:
         "MemoryEvents",
     )
     _OVERVIEW_TABLES: tuple[str, ...] = (
+        "ActiveMemoryEntries",
+        "ActiveMemoryBatches",
         "MemoryEvents",
         "MemoryEventSources",
         "MemoryParticipants",
@@ -284,6 +289,9 @@ class MaintenanceService:
             cancelled_archive_tasks = await self._cancel_archive_tasks()
             backup_path = await asyncio.to_thread(self._backup_database, DELETE_LONG_TERM_MEMORY)
             deleted_rows = await self._delete_long_term_memory_rows()
+            self._publish_active_memory_views()
+            from memory.active.workflow import start as start_active_memory
+            await start_active_memory()
             self._clear_recalled_memory_cache()
             if core_running:
                 self._start_main_loop()
@@ -317,6 +325,9 @@ class MaintenanceService:
             cancelled_archive_tasks = await self._cancel_archive_tasks()
             backup_path = await asyncio.to_thread(self._backup_database, CLEAR_ALL_DATA)
             await self._drop_and_reinitialize_db()
+            self._publish_active_memory_views()
+            from memory.active.workflow import start as start_active_memory
+            await start_active_memory()
             self._clear_process_data_caches()
 
             if core_running:
@@ -439,6 +450,8 @@ class MaintenanceService:
         return True
 
     async def _cancel_archive_tasks(self) -> int:
+        from memory.active.workflow import stop as stop_active_memory
+        await stop_active_memory()
         tasks = [task for task in list(getattr(app_state, "archive_tasks", set())) if not task.done()]
         if not tasks:
             return 0
@@ -488,6 +501,14 @@ class MaintenanceService:
                 session.recalled_events = []
             if hasattr(session, "_nick_cache"):
                 session._nick_cache = {}
+
+    def _publish_active_memory_views(self) -> None:
+        from memory.active.store import publish
+        try:
+            publish(DB_PATH, force=True)
+        except Exception:
+            # Database deletion is complete. The restarted worker repairs mirrors.
+            logger.warning("[maintenance] active memory mirror cleanup pending", exc_info=True)
 
     def _clear_process_data_caches(self) -> None:
         sessions.clear()

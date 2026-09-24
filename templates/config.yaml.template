@@ -236,6 +236,9 @@ tts:
 
 # --- 长期记忆 ---
 memory:
+  active:
+    enabled: true # 主动记忆：memory_write 批量提交、单队列整理、直接搜索与召回
+    # 整理共用下方 processing 模型；未启用/未配置时批次持久排队，可用 memory_read 查看。
   auto_archive:
     enabled: true # true = 自动触发记忆归档提取；false = 不触发、不续跑待归档任务
     raw_turn_archive_enabled: false # 是否保留旧的每轮原始聊天窗口归档；默认关闭，主路径使用干净的认知流区间
@@ -247,7 +250,7 @@ memory:
       max_output_tokens: 10000 # 归档提取最大输出 token 数
       enable_thinking: true
   processing:
-    enabled: false # true = 启用事件结构化与故事线合成共用模型
+    enabled: false # true = 启用主动记忆整理、事件结构化与故事线合成共用模型
     event_structuring_enabled: false # 建立新旧事件连接并标注 candidate storyline
     algorithmic_storyline_enabled: false # 维护时按确定性规则生成 storyline
     dry_run: true # true = 维护流程只输出决策/审计，不固化关系

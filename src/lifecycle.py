@@ -410,6 +410,10 @@ async def startup() -> None:
             logger.info("[startup] 未找到待补全的 restart 工具返回")
         core_restart.consume_pending_intent()
 
+    # 主动记忆始终只有一个 FIFO worker；在主循环前恢复持久队列。
+    from memory.active.workflow import start as start_active_memory
+    await start_active_memory()
+
     # ── 启动意识主循环（永动） ─────────────────────────────────
     # 启动时无焦点：等首条消息或 web 输入点燃 first_input_event。
     from consciousness import consciousness_main_loop
@@ -478,6 +482,9 @@ async def shutdown() -> None:
         else:
             logger.info("[shutdown] 意识主循环已优雅退出")
     app_state.runtime_event_hub = None
+
+    from memory.active.workflow import stop as stop_active_memory
+    await stop_active_memory()
 
     # ── 取消后台归档任务（不等 LLM 飞行结束） ────────────────
     # 归档 LLM 调用跑在 daemon 线程里，cancel 后 await 立即解锁；

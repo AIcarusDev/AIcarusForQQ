@@ -549,6 +549,8 @@ async def init_db() -> None:
         await _migrate_custom_container_items(db)
         from llm.media.image_store import SCHEMA as image_schema
         await db.executescript(image_schema)
+        from memory.active.store import SCHEMA as active_memory_schema
+        await db.executescript(active_memory_schema)
         await _migrate_legacy(db)
         await _migrate_rename_tables(db)
         await _backfill_llm_usage_from_bot_turns(db)

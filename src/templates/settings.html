@@ -2095,7 +2095,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="model-card-title">
                 <h3>记忆处理</h3>
                 <span class="card-badge">RNA</span>
-                <span class="card-desc">事件结构化与故事线合成共用模型</span>
+                <span class="card-desc">主动记忆整理、事件结构化与故事线合成共用模型</span>
               </div>
               <span class="model-card-chevron">&#9660;</span>
             </div>
@@ -2103,12 +2103,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>启用记忆处理模型</strong>
-                  <span>为事件结构化和故事线合成提供共用模型配置。</span>
+                  <span>为主动记忆整理、事件结构化和故事线合成提供共用模型配置。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="memory_processing_enabled" /><span
                     class="slider"
                   ></span
+                ></label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>主动记忆</strong>
+                  <span>允许主动批量写入并依次整理。未配置记忆处理模型时，已提交批次会持久排队。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="memory_active_enabled" /><span class="slider"></span
                 ></label>
               </div>
               <div class="toggle-row">
@@ -4338,6 +4347,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     hydrateSubModel("event_extraction", mem.auto_archive || {}, keys);
     const memoryProcessing = mem.processing || {};
     setChecked("memory_processing_enabled", !!memoryProcessing.enabled);
+    setChecked("memory_active_enabled", mem.active?.enabled !== false);
     setChecked(
       "memory_processing_event_structuring_enabled",
       !!memoryProcessing.event_structuring_enabled,
@@ -4963,6 +4973,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
       },
  memory: {
+ active: { enabled: checked("memory_active_enabled") },
  memory_predicate_similarity_threshold: floatValue("memory_predicate_similarity_threshold", 0.8),
  memory_recall_max_results: intValue("memory_recall_max_results", 8),
  memory_recall_recent_fallback: checked("memory_recall_recent_fallback"),

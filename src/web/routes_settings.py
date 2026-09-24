@@ -241,6 +241,8 @@ def _default_memory_cfg(cfg: dict) -> dict:
     memory_cfg = deepcopy(cfg.get("memory", {}) or {})
     memory_cfg.pop("max_active", None)
     memory_cfg.pop("max_passive", None)
+    active = memory_cfg.get("active")
+    memory_cfg["active"] = {"enabled": active.get("enabled", True) if isinstance(active, dict) else True}
     auto_archive = memory_cfg.get("auto_archive")
     if isinstance(auto_archive, dict):
         auto_archive = dict(auto_archive)

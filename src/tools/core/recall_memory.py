@@ -75,7 +75,7 @@ def make_handler(session: Any) -> Callable:
         memories = []
         for e in events:
             memories.append({
-                "id": e.get("event_id"),
+                "id": e.get("memory_id") or e.get("event_id") or e.get("summary_id"),
                 "kind": e.get("memory_kind", "event"),
                 "summary": e.get("summary", ""),
                 "event_type": e.get("event_type", ""),
