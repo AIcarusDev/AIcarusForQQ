@@ -148,7 +148,7 @@
     },
     "core.recall_memory": {
       "source": "src/tools/core/recall_memory.py#TOOL_CONTRACT",
-      "status": "active"
+      "status": "historical"
     },
     "goal_manage": {
       "source": "src/tools/core/goal_manage.py#TOOL_CONTRACT",
@@ -224,6 +224,18 @@
     },
     "core.list_platforms": {
       "source": "src/tools/core/list_platforms.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "memory_manage.memory_write": {
+      "source": "src/tools/memory_manage/memory_write.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "memory_manage.memory_search": {
+      "source": "src/tools/memory_manage/memory_search.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "memory_manage.memory_read": {
+      "source": "src/tools/memory_manage/memory_read.py#TOOL_CONTRACT",
       "status": "active"
     }
   }

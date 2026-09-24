@@ -217,15 +217,15 @@ def test_skill_block_follows_active_namespace_lifecycle(monkeypatch):
     )
 
     build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert loaded == []
+    assert loaded == ["memory-manage"]
 
     state.open("qq_social", registry, 1)
     build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert loaded == ["qq-social-tools", "qq-social-style"]
+    assert loaded == ["memory-manage", "memory-manage", "qq-social-tools", "qq-social-style"]
 
     state.close("qq_social", registry)
     build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert loaded == ["qq-social-tools", "qq-social-style"]
+    assert loaded == ["memory-manage", "memory-manage", "qq-social-tools", "qq-social-style", "memory-manage"]
 
 
 def test_core_chat_skill_block_follows_namespace_lifecycle(monkeypatch):
@@ -241,7 +241,7 @@ def test_core_chat_skill_block_follows_namespace_lifecycle(monkeypatch):
     state.open("core_chat", registry, 1)
     build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
 
-    assert loaded == ["core-chat"]
+    assert loaded == ["memory-manage", "core-chat"]
 
 
 def test_skill_block_renders_multiple_unique_skills(monkeypatch):

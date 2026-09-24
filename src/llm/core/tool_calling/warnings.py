@@ -138,7 +138,7 @@ DUPLICATE_WARNING_POLICIES: dict[str, DuplicateWarningPolicy] = {
         message="同一网页刚刚已经提取过，重复提取是否为预期行为。",
         strong_message="同一网页已连续多次提取；如果页面没有变化，请使用已有正文结果。",
     ),
-    "recall_memory": DuplicateWarningPolicy(
+    "memory_search": DuplicateWarningPolicy(
         code="DUPLICATE_MEMORY_RECALL",
         strong_code="REPEATED_MEMORY_RECALL",
         message="同一记忆检索刚刚已经执行过，重复回忆是否为预期行为。",

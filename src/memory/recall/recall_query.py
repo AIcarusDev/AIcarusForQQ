@@ -98,7 +98,7 @@ async def recall_events_from_facets(
     facets: list[RecallQueryFacet],
     recall_fn: RecallFn | None = None,
 ) -> list[dict[str, Any]]:
-    """Shared recall facade for both automatic and explicit recall."""
+    """Automatic contextual recall; explicit tools use memory.access instead."""
     if recall_fn is not None:
         return await _recall_event_facets(sender_entity=sender_entity, context_scope=context_scope,
                                          limit=limit, facets=facets, recall_fn=recall_fn)

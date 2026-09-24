@@ -242,6 +242,18 @@
     "core.list_platforms": {
       "zh_name": "核心·列出可用平台",
       "zh_definition": "列出当前所有可用平台。"
+    },
+    "memory_manage.memory_write": {
+      "zh_name": "保存记忆",
+      "zh_definition": "提交长期记忆的新增或修正，返回批次 ID。"
+    },
+    "memory_manage.memory_search": {
+      "zh_name": "搜索记忆",
+      "zh_definition": "搜索长期记忆，返回正文和 ID。"
+    },
+    "memory_manage.memory_read": {
+      "zh_name": "读取记忆",
+      "zh_definition": "按 ID 读取记忆，或查看写入批次的处理结果。"
     }
   }
 }

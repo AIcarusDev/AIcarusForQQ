@@ -1,4 +1,4 @@
-"""Search global active memories without accessing the Agent computer."""
+"""Explicit long-term memory search, independent of automatic recall."""
 from pydantic import Field
 from tools.contract import ToolArgsModel, tool
 
@@ -15,10 +15,11 @@ PARALLEL_KEY = "memory_read"
 RESULT_CDATA = True
 
 
-@tool(name="memory_search", args_model=MemorySearchArgs, description="直接搜索全局主动记忆，返回正文和稳定 ID，可用 memory_read 查看版本。无需 Computer 或宿主文件权限。")
+@tool(name="memory_search", args_model=MemorySearchArgs, description="搜索长期记忆，返回正文和 ID。")
 def execute(args: MemorySearchArgs) -> dict:
     from memory.active import store
-    items = store.search(store.default_path(), args.query, limit=args.limit + 1, offset=args.offset, literal=args.literal)
+    from memory.access import search
+    items = search(store.default_path(), args.query, limit=args.limit + 1, offset=args.offset, literal=args.literal)
     return {"items": items[:args.limit], "has_more": len(items) > args.limit, "offset": args.offset}
 
 

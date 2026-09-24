@@ -6,13 +6,13 @@
 
 ## 主模型工具
 
-三个工具常驻 `core`，不依赖 Computer：
+三个工具常驻 `memory_manage`（不可关闭），绑定项目 skill `memory-manage`，不依赖 Computer：
 
 ```javascript
-await tools.core.memory_write({memories: ["第一条值得记住的内容", "第二条内容"]});
-await tools.core.memory_search({query: "关键词"});
-await tools.core.memory_read({id: "M000001", history: true});
-await tools.core.memory_read({id: "B000001"});
+await tools.memory_manage.memory_write({memories: ["第一条值得记住的内容", "第二条内容"]});
+await tools.memory_manage.memory_search({query: "关键词"});
+await tools.memory_manage.memory_read({id: "M000001", history: true});
+await tools.memory_manage.memory_read({id: "B000001"});
 ```
 
 `memory_write` 从执行器的本轮上下文取得 cognition（包括原生思考模式投影后的认知）。
@@ -24,7 +24,10 @@ await tools.core.memory_read({id: "B000001"});
 工具返回 `saved=true`、`batch_id`、`status=pending`，表示事务已经提交，尚未完成整理。
 `processor_ready=false` 表示记忆处理模型尚未就绪；不应重复提交。
 `memory_read(B...)` 可查看原文、认知、状态、重试次数和最后错误类型，以及整理后的记忆 ID。
-`memory_search` 只搜正式活跃记忆，待整理材料用提交时返回的批次 ID 读取。
+`memory_search` 独立搜索全部长期记忆：正式活跃记忆、未删除事件、ready 故事线摘要。
+各来源使用同一文字匹配与分页规则，不调用综合召回，也不采用实体、向量、图扩展或近期兜底。
+结果 ID 分别为 M 开头、E 开头和 summary: 开头，均可通过 `memory_read` 读取。
+主动记忆支持修订历史，批次 B ID 用于读取待整理材料。
 `literal=true` 按完整文字匹配；默认中文分词，支持分页。没有命中就返回空，不使用近期兜底。
 
 ## 数据位置
@@ -80,7 +83,9 @@ data/memory/published/
 不用启用事件结构化或算法故事线。原有 `dry_run`、`solidify` 只属于事件/故事线维护，不控制主动提交。
 模型未配置时批次仍保存，并在队首等待重试；修改配置生效后无需重新提交。
 
-自动召回与 `recall_memory` 共用入口，在原有总数量预算内最多加入 3 条主动记忆。
+自动综合召回保持独立，在原有总数量预算内最多加入 3 条主动记忆；这不是主动搜索的限制。
+组装请求时，仅从 memory 块移除可见工具历史中已有相同 ID 和正文的条目。
+工具结果不被截断或改写；历史压缩移出后解除去重，新正文也不会被旧结果遮蔽。
 这一路径只做现有分词与 SQL 文字匹配，没有新增向量服务；无结果时不填充不相关内容。
 主动记忆在上下文中显示完整正文和内部 ID，条件和不确定性应保留在正文内。
 
@@ -92,5 +97,6 @@ data/memory/published/
 `python -B -m pytest -q tests/test_active_memory.py`
 
 覆盖批量及完整认知输入、FIFO/队首失败、整批回滚、旧版本拒绝、取消恢复、重复完成拒绝、
-无变化处理、镜像失败恢复、撤回与修订、工具执行器认知传递、无需 Computer 的搜索读取及共用召回。
+无变化处理、镜像失败恢复、撤回与修订、工具执行器认知传递及自动召回。
+`tests/test_memory_manage.py` 覆盖常开工具与 skill 注入、全库搜索分页、按 ID 读取，以及可见历史去重与压缩后恢复。
 这些是程序契约验证，不等同于真实整理模型的语义质量或实际 QQ 运行验收。

@@ -1043,7 +1043,7 @@ def test_storyline_cache_retires_removed_members_and_revises_same_size_storyline
         ) == {1: "active", 2: "inactive", 3: "active"}
 
 
-def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatch):
+def test_automatic_recall_uses_summary_replacement(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-active-summary-recall")
     import app_state
     from types import SimpleNamespace
@@ -1086,7 +1086,7 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
 
     from memory.maintenance.preprocessing import ensure_preprocessing_schema
     from memory.storyline_synthesis.workflow import summary_id_for_source
-    from tools.core import recall_memory
+    from memory.recall.recall_query import recall_events_from_facets, build_recall_query_facets
 
     storyline_id = "local:active-isaac"
     summary_id = summary_id_for_source("storyline", storyline_id)
@@ -1120,19 +1120,11 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         )
         con.commit()
 
-    monkeypatch.setattr(app_state, "main_loop", SimpleNamespace(is_running=lambda: True))
-    monkeypatch.setattr(recall_memory, "run_coroutine_sync", lambda coro, loop, timeout=None: asyncio.run(coro))
-    session = SimpleNamespace(
-        context_messages=[{"role": "user", "sender_id": "42"}],
-        conv_type="group",
-        conv_id="100",
-    )
-
-    result = recall_memory.make_handler(session)("以撒")
-
-    assert result["found"] >= 1
-    summaries = [item["summary"] for item in result["memories"]]
-    assert result["memories"][0]["summary"] == "小白完成了以撒挑战线。"
-    assert "小白完成了以撒挑战线。" in summaries
+    result = asyncio.run(recall_events_from_facets(
+        sender_entity="User:qq_42", context_scope="group:qq_100", limit=10,
+        facets=build_recall_query_facets(latest_user_text="以撒", min_query_chars=2),
+    ))
+    summaries = [item["summary"] for item in result]
+    assert result[0]["summary"] == "小白完成了以撒挑战线。"
     assert all("小白完成以撒挑战" not in item for item in summaries)
-    assert any(item["kind"] == "summary" for item in result["memories"])
+    assert any(item["memory_kind"] == "summary" for item in result)

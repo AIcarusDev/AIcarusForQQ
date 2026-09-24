@@ -106,7 +106,7 @@ runtime_manage(args:
 | ----------- | --------------------------------------------------------- |
 | `closed`    | namespace 可被发现，但内部工具 schema 不进入 prompt。     |
 | `open`      | namespace 已展开，内部工具 schema 进入 prompt，可被调用。 |
-| `permanent` | 永久打开且不可关闭。当前只有 `core`。                     |
+| `permanent` | 永久打开且不可关闭。当前为 `core` 和 `memory_manage`。     |
 | `attached`  | 某工具来自其它 namespace，但随当前 namespace 临时展示。   |
 | `expired`   | open namespace 超过寿命后自动折叠回 closed。              |
 
@@ -241,7 +241,6 @@ qq_social:
 - `calculator`
 - `runtime_manage`
 - `enter_qq_session`
-- `recall_memory`
 - `goal_manage`（合并当前 `create_goal` + `resolve_goal`，常驻）
 - `restart`（当前 `restart_self`，基础自我恢复能力，常驻 core）
 - `view_image` 或 `examine_image`（二选一）
@@ -261,7 +260,13 @@ qq_social:
 3. `get_self_image` 不进入任何 namespace，归入 `not_used` / 待清理工具，不作为 core 常驻候选。
 4. `restart` 是 core 常驻基础能力。它本身只是重启进程，不应在模型面对层被视为高风险工具；真正的安全边界在后端重启实现，必须保证状态落盘、重复触发处理和本轮剩余工具中断语义正确。
 5. `web_search`、`web_extract`、`get_weather` 属于轻量外界感知能力，固定放在 core 常驻，不拆成单独 `web_info` namespace。
-6. `recall_memory` 保持 core 常驻。长期记忆检索是基础认知能力，不拆入独立 memory namespace。
+6. `memory_manage` 与 core 一样常驻且不可关闭，绑定 `memory-manage` skill，提供 memory_write、memory_search、memory_read。
+
+### memory_manage
+
+与 core 一样永久打开且不可关闭，绑定项目 skill `memory-manage`。
+提供 `memory_write`、`memory_search`、`memory_read`，覆盖长期记忆的写入、搜索和读取。
+自动综合召回独立运行，仅在上下文展示时与可见工具结果去重。
 
 ### qq_social
 
@@ -424,7 +429,6 @@ namespaces:
       - calculator
       - runtime_manage
       - enter_qq_session
-      - recall_memory
       - goal_manage
       - restart
       - view_image
@@ -572,7 +576,7 @@ namespace 重构后：
 23. 新工具不默认加 `additionalProperties: false`。
 24. `send_voice` 常驻在 `qq_social`；TTS 不可用时由执行层返回错误，暂不按配置摘除。
 25. `web_search`、`web_extract`、`get_weather` 固定放在 core 常驻。
-26. `recall_memory` 固定放在 core 常驻。
+26. `memory_manage` 固定常驻，提供长期记忆的写入、搜索与读取。
 27. `get_avatar`、`list_contact`、`set_qq_signature`、`set_group_card` 只做 public name 改名，参数和行为暂时沿用现有工具。
 
 ## 14. 工具改名映射草案

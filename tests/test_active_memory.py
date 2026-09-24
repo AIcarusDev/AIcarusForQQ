@@ -213,7 +213,7 @@ def test_write_tool_captures_executor_cognition_without_external_anchors(db, mon
         monkeypatch.setattr(app_state, "main_loop", asyncio.get_running_loop())
         collection = build_tools(config={})
         call = SimpleNamespace(id="test", function=SimpleNamespace(
-            name="memory_write", namespace="core", arguments=json.dumps({"memories": ["one", "two"]}),
+            name="memory_write", namespace="memory_manage", arguments=json.dumps({"memories": ["one", "two"]}),
         ))
         executor = ToolExecutor(provider_name="fixture", tool_collection=collection)
         result = await asyncio.to_thread(executor.execute, [call], inner_state={"cognition": "round cognition"})
@@ -222,15 +222,15 @@ def test_write_tool_captures_executor_cognition_without_external_anchors(db, mon
     asyncio.run(run())
     assert captured == [("round cognition", ["one", "two"])]
     assert get_current_inner_state() == {}
-    from tools.core.memory_write import execute
+    from tools.memory_manage.memory_write import execute
     result = execute(memories=["one"], source_refs=["external-message"])
     assert result.get("error")
     assert store.read(db, "B000001")["memories"] == ["one", "two"]
 
 
 def test_read_and_search_tools_work_without_computer_or_main_loop(db, monkeypatch):
-    from tools.core.memory_search import execute as search
-    from tools.core.memory_read import execute as read
+    from tools.memory_manage.memory_search import execute as search
+    from tools.memory_manage.memory_read import execute as read
     monkeypatch.setattr(app_state, "main_loop", None)
     monkeypatch.setattr(app_state, "workspace_service", None)
     item_id = seed(db, "standalone query")

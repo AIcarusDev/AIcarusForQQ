@@ -37,6 +37,7 @@ SKILL_KINDS: dict[str, SkillKind] = {
     "computer": "project",
     "video": "project",
     "qq-file": "project",
+    "memory-manage": "project",
 }
 
 

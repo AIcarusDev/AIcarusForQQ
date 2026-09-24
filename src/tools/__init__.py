@@ -594,7 +594,7 @@ def build_tools(
             module_name=getattr(mod, "__name__", name),
             result_cdata=bool(getattr(mod, "RESULT_CDATA", False)),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
-            always_available=(namespace == CORE_NAMESPACE),
+            always_available=namespace_spec.permanent,
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,
             namespace=namespace,

@@ -172,9 +172,9 @@ def test_web_extract_contract_requires_nonempty_url():
 
 
 def test_recall_tool_contracts_require_nonempty_ids():
-    from tools.core import recall_memory, recall_skill_resource
+    from tools.core import recall_skill_resource
 
-    for mod in (recall_memory, recall_skill_resource):
+    for mod in (recall_skill_resource,):
         contract = get_contract_from_module(mod)
         assert contract is not None
         declaration = contract.declaration()

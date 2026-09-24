@@ -537,6 +537,13 @@ class ConsciousnessFlow:
                     break
         return list(reversed(result))
 
+    def visible_tool_responses(self) -> list[ToolResponse]:
+        """Results still rendered in raw rounds or old cycles, excluding summaries."""
+        covered_seq = self._compression_summary.coverage_end_seq if self._compression_summary else 0
+        return [response for rnd in self._rounds
+                if isinstance(rnd, FlowRound) and rnd.seq > covered_seq
+                for response in rnd.responses]
+
     def visible_cognitions(self, limit: int = 8) -> list[str]:
         """Return visible, uncompressed cognition blocks from old to new."""
         if limit <= 0:

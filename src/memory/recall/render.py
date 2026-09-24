@@ -1,7 +1,7 @@
 """Memory XML rendering helpers.
 
-Event render output is intentionally minimal: summary, relative time, and
-confidence. Active memories expose their internal memory ID for correction;
+Event render output is intentionally minimal: ID, summary, relative time, and
+confidence. All memories expose a readable internal ID;
 scores, external source IDs, predicates and participants stay internal.
 """
 
@@ -9,6 +9,45 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import html
+import xml.etree.ElementTree as ET
+
+from memory.access import memory_id
+
+
+def omit_visible_tool_memories(block: str, responses: list) -> str:
+    """Prefer an unchanged full tool result over its duplicate automatic memory.
+
+    Recompute from visible history on each request; never hide future revisions
+    or keep exclusions after the tool response has left the raw context.
+    """
+    returned = set()
+    for response in responses:
+        if response.namespace != "memory_manage" or not isinstance(response.response, dict):
+            continue
+        payload = response.response
+        if response.name == "memory_search":
+            items = payload.get("items", [])
+        elif response.name == "memory_read" and payload.get("found"):
+            items = [payload.get("item")]
+        else:
+            continue
+        for item in items:
+            if isinstance(item, dict) and item.get("id") and isinstance(item.get("content"), str):
+                returned.add((str(item["id"]), item["content"]))
+    if not returned or not isinstance(block, str) or not block.strip():
+        return block
+    try:
+        root = ET.fromstring(block)
+    except ET.ParseError:
+        return block
+    if root.tag != "memory":
+        return block
+    changed = False
+    for entry in list(root):
+        if entry.tag == "mem" and (entry.get("id", ""), entry.text or "") in returned:
+            root.remove(entry)
+            changed = True
+    return ET.tostring(root, encoding="unicode") if changed else block
 
 
 def _format_absolute_event_time(created_at_ms: int, now: datetime) -> str:
@@ -69,16 +108,17 @@ def _render_memory_items(
     lines = []
     for event in events:
         summary = html.escape(str(event.get("summary", "")))
+        identity = html.escape(memory_id(event), quote=True)
+        id_attr = f' id="{identity}"' if identity else ""
         if event.get("memory_kind") == "active":
-            memory_id = html.escape(str(event.get("memory_id", "")))
-            lines.append(f'  <mem kind="active" id="{memory_id}">{summary}</mem>')
+            lines.append(f'  <mem kind="active"{id_attr}>{summary}</mem>')
             continue
         occurred_at = int(event.get("occurred_at") or event.get("created_at") or 0)
         when = html.escape(_format_relative_event_time(occurred_at, now))
         confidence = html.escape(_format_confidence(event.get("confidence")))
         kind = "summary" if event.get("memory_kind") == "summary" else ""
         kind_attr = ' kind="summary"' if kind else ""
-        lines.append(f'  <mem{kind_attr} when="{when}" confidence="{confidence}">{summary}</mem>')
+        lines.append(f'  <mem{kind_attr}{id_attr} when="{when}" confidence="{confidence}">{summary}</mem>')
     return "\n".join(lines)
 
 

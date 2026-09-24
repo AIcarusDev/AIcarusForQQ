@@ -29,7 +29,7 @@ class NamespaceManageArgs(ToolArgsModel):
     )
     close: list[str] | None = Field(
         default=None,
-        description="关闭一个或多个已经用不到的 namespace。无法关闭 core。",
+        description="关闭一个或多个已经用不到的 namespace，常开命名空间不可关闭。",
     )
     preview: list[str] | None = Field(
         default=None,

@@ -381,6 +381,12 @@ class LLMRoundRunner:
         )
         if flow:
             flow.promote_ready_compression_summary(max_rounds)
+            from memory.recall.render import omit_visible_tool_memories
+
+            prompt_sections = replace(
+                prompt_sections,
+                memory=omit_visible_tool_memories(prompt_sections.memory, flow.visible_tool_responses()),
+            )
         summary_message = flow.summary_message() if flow else None
         timeline_messages = (
             flow.timeline_messages(

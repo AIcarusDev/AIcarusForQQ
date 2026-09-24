@@ -6,7 +6,7 @@ from tools._async_bridge import run_coroutine_sync
 
 
 class MemoryWriteArgs(ToolArgsModel):
-    memories: list[str] = Field(min_length=1, description="本次要记住或修正的多条内容，一起整理。用完整自然语言说明主体、条件和不确定性；修正/撤回可在文字中注明已有记忆 ID。")
+    memories: list[str] = Field(min_length=1, description="要保存、新增或修正的记忆内容。")
 
     @field_validator("memories")
     @classmethod
@@ -16,11 +16,7 @@ class MemoryWriteArgs(ToolArgsModel):
         return values
 
 
-@tool(name="memory_write", args_model=MemoryWriteArgs, description=(
-    "主动保存值得长期记住的内容，也可提出修正或撤回。一次多条按同一批次持久化，后台依次整理。"
-    "自动附带本轮认知；无需来源引用或 Computer。返回 batch_id，可用 memory_read 查看处理结果。"
-    "saved 表示已保存，尚不表示已整理；不要因 pending 或 processor_ready=false 重复提交。"
-))
+@tool(name="memory_write", args_model=MemoryWriteArgs, description="提交长期记忆的新增或修正，返回批次 ID。")
 def execute(args: MemoryWriteArgs) -> dict:
     import app_state
     from llm.core.round_context import get_current_inner_state

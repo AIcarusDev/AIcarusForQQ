@@ -4,6 +4,7 @@ modules:
     always_active: true
     namespaces:
       - core
+      - memory_manage
 
   browser:
     path: browser
