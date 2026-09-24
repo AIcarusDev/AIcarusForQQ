@@ -54,12 +54,8 @@ def search(path: str, query: str, *, limit: int = 10, offset: int = 0, literal: 
         return [dict(row) for row in rows]
 
 
-def read(path: str, item_id: str, *, history: bool = False) -> dict | None:
-    if item_id.startswith(("M", "B")):
-        item = store.read(path, item_id, history=history)
-        if item is not None:
-            item["kind"] = "batch" if item_id.startswith("B") else "active"
-        return item
+def read(path: str, item_id: str) -> dict | None:
+    """Read the complete text of a currently available memory."""
     with store.connection(path) as con:
         sources = _sources(con)
         if not sources:

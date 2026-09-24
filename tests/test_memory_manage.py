@@ -8,7 +8,8 @@ import app_state
 import database
 from consciousness.flow import ConsciousnessFlow, ToolResponse
 from memory.active import store
-from memory.recall.render import build_memory_xml, omit_visible_tool_memories
+from memory.recall.render import build_memory_xml, prepare_memory_context
+from memory.preview import MEMORY_PREVIEW_CHARS
 from llm.prompt.sections import build_memory_block
 from tools.memory_manage.memory_search import execute as search
 from tools.memory_manage.memory_read import execute as read
@@ -56,8 +57,6 @@ def test_search_all_stores_with_real_pagination_and_readable_ids(memories, monke
         assert read(id=item["id"])["item"]["content"] == item["content"]
         assert search(query=item["id"])["items"][0]["id"] == item["id"]
     assert search(query="no_such_memory")["items"] == []
-    assert read(id=memories["batch_id"])["item"]["status"] == "completed"
-    assert len(read(id="M000001", history=True)["item"]["history"]) == 1
 
 
 def test_literal_matching_and_hidden_records(memories):
@@ -70,7 +69,51 @@ def test_literal_matching_and_hidden_records(memories):
     assert search(query="shared")["items"] == []
     assert read(id="E000001")["found"] is False
     assert read(id="summary:storyline:test")["found"] is False
-    assert read(id="M000001")["item"]["status"] == "retracted"
+    assert read(id="M000001")["found"] is False
+
+
+@pytest.mark.parametrize("table,column,item_id,event", [
+    ("ActiveMemoryEntries", "content", "M000001", {"memory_kind": "active", "memory_id": "M000001"}),
+    ("MemoryEvents", "summary", "E000001", {"event_id": 1}),
+    ("MemorySummaryCache", "summary", "summary:storyline:test",
+     {"memory_kind": "summary", "summary_id": "summary:storyline:test"}),
+])
+@pytest.mark.parametrize("length_delta", [-1, 0, 1])
+def test_preview_boundaries_and_lossless_read(memories, table, column, item_id, event, length_delta):
+    # A match at the end must remain searchable even when omitted from the preview.
+    length = MEMORY_PREVIEW_CHARS + length_delta
+    content = ("中<&🙂\n" * length)[:length - 8] + "tail-key"
+    with store.connection(database.DB_PATH) as con:
+        con.execute(f"UPDATE {table} SET {column}=?", (content,))
+    item = next(item for item in search(query="tail-key", literal=True)["items"] if item["id"] == item_id)
+    assert item["content"] == content[:MEMORY_PREVIEW_CHARS]
+    assert item["truncated"] is (length_delta > 0)
+    assert read(id=item_id)["item"]["content"] == content
+    block = build_memory_block(build_memory_xml(recalled_events=[{**event, "summary": content}]))
+    entry = ET.fromstring(prepare_memory_context(block, [])).find("mem")
+    assert entry.text == item["content"]
+    assert (entry.get("truncated") == "true") is item["truncated"]
+
+
+def test_long_memory_dedup_requires_full_current_content(memories):
+    content = "正文<&🙂" * MEMORY_PREVIEW_CHARS + "旧结论"
+    event = {"memory_kind": "active", "memory_id": "M000001", "summary": content}
+    with store.connection(database.DB_PATH) as con:
+        con.execute("UPDATE ActiveMemoryEntries SET content=? WHERE id=1", (content,))
+    block = build_memory_block(build_memory_xml(recalled_events=[event]))
+    response = ToolResponse(name="memory_search", namespace="memory_manage", response=search(query="M000001"))
+    assert ET.fromstring(prepare_memory_context(block, [response])).find("mem") is not None
+    full = ToolResponse(name="memory_read", namespace="memory_manage", response=read(id="M000001"))
+    assert ET.fromstring(prepare_memory_context(block, [full])).find("mem") is None
+    # Equal previews must not hide a changed conclusion beyond the visible prefix.
+    changed = content[:-3] + "新结论"
+    with store.connection(database.DB_PATH) as con:
+        con.execute("UPDATE ActiveMemoryEntries SET content=? WHERE id=1", (changed,))
+    updated = build_memory_block(build_memory_xml(recalled_events=[{**event, "summary": changed}]))
+    assert ET.fromstring(prepare_memory_context(updated, [response, full])).find("mem") is not None
+    assert read(id="M000001")["item"]["content"] == changed
+    # Once the full response leaves visible history, automatic previews return.
+    assert ET.fromstring(prepare_memory_context(block, [])).find("mem").get("truncated") == "true"
 
 
 @pytest.mark.parametrize("name", ["memory_search", "memory_read"])
@@ -90,26 +133,24 @@ def test_dedup_keeps_tool_result_and_recovers_after_compression(name, event, ite
     for _ in range(3):
         flow.append_round([], [], cognition="later")
     block = build_memory_block(build_memory_xml(recalled_events=[{**event, "summary": content}]))
-    assert not ET.fromstring(omit_visible_tool_memories(block, flow.visible_tool_responses())).findall("mem")
+    assert not ET.fromstring(prepare_memory_context(block, flow.visible_tool_responses())).findall("mem")
     assert response.response == payload
     updated = build_memory_block(build_memory_xml(recalled_events=[{**event, "summary": "new revision"}]))
-    assert ET.fromstring(omit_visible_tool_memories(updated, flow.visible_tool_responses())).findtext("mem") == "new revision"
+    assert ET.fromstring(prepare_memory_context(updated, flow.visible_tool_responses())).findtext("mem") == "new revision"
     assert flow.queue_compression_summary("lossy summary", coverage_end_seq=1)
     assert flow.promote_ready_compression_summary(max_rounds=3)
-    assert omit_visible_tool_memories(block, flow.visible_tool_responses()) == block
+    assert prepare_memory_context(block, flow.visible_tool_responses()) == block
 
 
-def test_dedup_does_not_merge_different_ids_or_batch_mentions():
+def test_dedup_does_not_merge_different_ids():
     block = build_memory_block(build_memory_xml(recalled_events=[
         {"event_id": 1, "summary": "same words"},
         {"memory_kind": "active", "memory_id": "M000001", "summary": "same words"},
     ]))
     responses = [ToolResponse(name="memory_search", namespace="memory_manage", response={
         "items": [{"id": "M000001", "content": "same words"}],
-    }), ToolResponse(name="memory_read", namespace="memory_manage", response={
-        "found": True, "item": {"id": "B000001", "result": {"memory_ids": ["E000001"]}},
     })]
-    root = ET.fromstring(omit_visible_tool_memories(block, responses))
+    root = ET.fromstring(prepare_memory_context(block, responses))
     assert [entry.get("id") for entry in root.findall("mem")] == ["E000001"]
 
 
@@ -136,17 +177,19 @@ def test_memory_namespace_and_bound_skill_stay_available(monkeypatch):
 
 
 @pytest.mark.parametrize("compressed", [False, True])
-def test_actual_model_request_deduplicates_after_summary_promotion(monkeypatch, compressed):
+@pytest.mark.parametrize("long_memory", [False, True])
+def test_actual_model_request_deduplicates_after_summary_promotion(monkeypatch, compressed, long_memory):
     from types import SimpleNamespace
     from tools import build_tools
     from llm.core.round_runner import LLMRoundRunner
     from llm.prompt.sections import UserPromptSections
     from llm.compression.config import MIN_LLM_CONTENTS_MAX_ROUNDS
 
+    content = "unique memory body" + ("长" * MEMORY_PREVIEW_CHARS if long_memory else "")
     flow = ConsciousnessFlow()
     flow.append_round([], [ToolResponse(
         name="memory_read", namespace="memory_manage", result_cdata=True,
-        response={"found": True, "item": {"id": "M000001", "content": "unique memory body"}},
+        response={"found": True, "item": {"id": "M000001", "content": content}},
     )], cognition="first")
     for _ in range(MIN_LLM_CONTENTS_MAX_ROUNDS):
         flow.append_round([], [], cognition="later")
@@ -172,7 +215,7 @@ def test_actual_model_request_deduplicates_after_summary_promotion(monkeypatch, 
         )])
     monkeypatch.setattr(runner, "_create_chat_completion", completion)
     block = build_memory_block(build_memory_xml(recalled_events=[{
-        "memory_kind": "active", "memory_id": "M000001", "summary": "unique memory body",
+        "memory_kind": "active", "memory_id": "M000001", "summary": content,
     }]))
     result = runner.call_one_round(
         lambda *_, **__: "system", "<world/>", {"llm_contents_max_rounds": 1},
@@ -185,3 +228,10 @@ def test_actual_model_request_deduplicates_after_summary_promotion(monkeypatch, 
     tail = next(message["content"] for message in reversed(captured)
                 if isinstance(message.get("content"), str) and "<memory>" in message["content"])
     assert ("unique memory body" in tail) is compressed
+    if compressed:
+        memory_block = tail[tail.index("<memory>"):tail.index("</memory>") + len("</memory>")]
+        entry = ET.fromstring(memory_block).find("mem")
+        assert entry.text == content[:MEMORY_PREVIEW_CHARS]
+        assert (entry.get("truncated") == "true") is long_memory
+    else:
+        assert content in text

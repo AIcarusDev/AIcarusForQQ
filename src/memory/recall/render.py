@@ -12,10 +12,11 @@ import html
 import xml.etree.ElementTree as ET
 
 from memory.access import memory_id
+from memory.preview import preview
 
 
-def omit_visible_tool_memories(block: str, responses: list) -> str:
-    """Prefer an unchanged full tool result over its duplicate automatic memory.
+def prepare_memory_context(block: str, responses: list) -> str:
+    """Deduplicate against full tool results, then bound automatic previews.
 
     Recompute from visible history on each request; never hide future revisions
     or keep exclusions after the tool response has left the raw context.
@@ -32,9 +33,12 @@ def omit_visible_tool_memories(block: str, responses: list) -> str:
         else:
             continue
         for item in items:
-            if isinstance(item, dict) and item.get("id") and isinstance(item.get("content"), str):
+            if (
+                isinstance(item, dict) and item.get("id")
+                and isinstance(item.get("content"), str) and not item.get("truncated", False)
+            ):
                 returned.add((str(item["id"]), item["content"]))
-    if not returned or not isinstance(block, str) or not block.strip():
+    if not isinstance(block, str) or not block.strip():
         return block
     try:
         root = ET.fromstring(block)
@@ -47,6 +51,12 @@ def omit_visible_tool_memories(block: str, responses: list) -> str:
         if entry.tag == "mem" and (entry.get("id", ""), entry.text or "") in returned:
             root.remove(entry)
             changed = True
+        elif entry.tag == "mem":
+            content, truncated = preview(entry.text or "")
+            if truncated:
+                entry.text = content
+                entry.set("truncated", "true")
+                changed = True
     return ET.tostring(root, encoding="unicode") if changed else block
 
 

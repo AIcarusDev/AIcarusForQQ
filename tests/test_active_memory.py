@@ -236,7 +236,6 @@ def test_read_and_search_tools_work_without_computer_or_main_loop(db, monkeypatc
     item_id = seed(db, "standalone query")
     assert search(query="standalone")["items"][0]["id"] == item_id
     assert read(id=item_id)["item"]["content"] == "standalone query"
-    assert read(id="B000001")["item"]["status"] == "completed"
 
 
 def test_active_recall_reaches_shared_facade_even_when_old_recall_fails(db, monkeypatch):
