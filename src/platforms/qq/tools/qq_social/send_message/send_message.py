@@ -118,6 +118,12 @@ class SendMessageArrayArgs(ToolArgsModel):
         min_length=1,
         description="要发送的消息列表，每个元素作为一条消息独立发送。",
     )
+    simulate_typing: bool = Field(
+        default=True,
+        description=(
+            "模拟打字时间，默认 true。"
+        ),
+    )
 
 
 SEND_MESSAGE_ARRAY_CONTRACT = ToolContract(
@@ -867,6 +873,7 @@ def make_handler(
         messages: list | None = None,
         segments: list | None = None,
         quote: str | None = None,
+        simulate_typing: bool = True,
         **kwargs,
     ) -> dict:
         import app_state
@@ -901,6 +908,7 @@ def make_handler(
                     "interrupted": False,
                 }
             send_messages = [copy.deepcopy(message) for message in pending.messages]
+            simulate_typing = pending.simulate_typing
             message_error = None
         else:
             send_messages, message_error = _coerce_execute_messages(messages, segments, quote)
@@ -1038,6 +1046,7 @@ def make_handler(
                         session,
                         messages=send_messages,
                         artifacts=browser_artifacts,
+                        simulate_typing=bool(simulate_typing),
                     )
                     return {
                         "to": target,
@@ -1212,6 +1221,7 @@ def make_handler(
                             temp_source_group_id=temp_source_group_id,
                             message=qq_adapter_segs,
                             llm_elapsed=0.0,
+                            simulate_typing=bool(simulate_typing),
                         ),
                         loop,
                         timeout=30,

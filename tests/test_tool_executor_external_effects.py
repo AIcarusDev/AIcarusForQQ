@@ -116,6 +116,36 @@ def test_external_tool_before_focus_switch_executes_in_model_output_order():
     assert results["enter_qq_session"] == {"ok": True, "name": "enter_qq_session"}
 
 
+def test_send_message_array_split_preserves_simulate_typing():
+    from llm.core.tool_executor import _split_send_message_array_slots
+
+    args = {
+        "messages": [
+            {"segments": [{"command": "text", "content": "a"}]},
+            {"segments": [{"command": "text", "content": "b"}], "quote": "9"},
+        ],
+        "simulate_typing": False,
+    }
+    slot = {
+        "fn_name": "send_message",
+        "send_message_schema": "array",
+        "args": args,
+        "result": None,
+        "namespace": "qq_social",
+        "tc": SimpleNamespace(id="call_send"),
+    }
+
+    expanded = _split_send_message_array_slots([slot])
+
+    assert len(expanded) == 2
+    assert [item["args"]["simulate_typing"] for item in expanded] == [False, False]
+    assert expanded[1]["args"]["quote"] == "9"
+
+    args.pop("simulate_typing")
+    expanded = _split_send_message_array_slots([slot])
+    assert all("simulate_typing" not in item["args"] for item in expanded)
+
+
 def test_tool_call_log_includes_call_id_and_elapsed_ms():
     executed: list[str] = []
     collection = _collection(["ordinary_tool"], executed=executed)

@@ -80,6 +80,25 @@ def test_confirmation_consumes_batch_once_and_revalidates_bound_hash(monkeypatch
     assert session.browser_image_confirmation_last_status["reason"] == "artifact_changed"
 
 
+def test_pending_confirmation_keeps_simulate_typing_preference() -> None:
+    session = _session()
+    default_pending = stage_pending(
+        session,
+        messages=[{"segments": [{"command": "text", "content": "caption"}]}],
+        artifacts=_artifacts(1),
+    )
+    assert default_pending.simulate_typing is True
+
+    pasted_pending = stage_pending(
+        session,
+        messages=[{"segments": [{"command": "text", "content": "pasted log"}]}],
+        artifacts=_artifacts(1),
+        simulate_typing=False,
+    )
+    assert pasted_pending.simulate_typing is False
+    assert current_pending(session).simulate_typing is False
+
+
 def test_new_inbound_message_invalidates_pending_confirmation() -> None:
     session = _session()
     pending = stage_pending(

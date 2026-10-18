@@ -29,6 +29,17 @@ def test_get_declaration_always_returns_array_shape():
     assert "messages" in decl_single_cfg["parameters"]["properties"]
 
 
+def test_declaration_exposes_optional_simulate_typing_defaulting_to_true():
+    declaration = send_mod.get_declaration()
+    parameters = declaration["parameters"]
+    simulate_typing = parameters["properties"]["simulate_typing"]
+
+    assert simulate_typing["type"] == "boolean"
+    assert simulate_typing["default"] is True
+    assert simulate_typing["description"]
+    assert "simulate_typing" not in parameters["required"]
+
+
 def test_image_segment_accepts_one_agent_linux_path():
     declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
     result = process_tool_arguments(
@@ -496,6 +507,63 @@ def test_face_send_persists_a_typed_history_entry_without_real_qq(fake_session, 
     assert _render_content_xml(entry) == '    <content type="face" id="364">/超级赞</content>'
 
 
+def test_send_message_forwards_simulate_typing_to_adapter(fake_session, monkeypatch):
+    import app_state
+    import database
+    from web import debug_server
+
+    fake_session.key = "qq:group:1234"
+    sent: list[dict] = []
+
+    class FakeClient:
+        connected = True
+        adapter = "napcat"
+
+        def __init__(self):
+            self.last_api_error = None
+
+        async def send_message(self, **kwargs):
+            sent.append(kwargs)
+            return {"message_id": 100 + len(sent)}
+
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(database, "save_chat_message", no_op)
+    monkeypatch.setattr(debug_server, "broadcast_chat_event", no_op)
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    old_loop = getattr(app_state, "main_loop", None)
+    monkeypatch.setattr(app_state, "main_loop", loop)
+    try:
+        handler = send_mod.make_handler(lambda: fake_session, FakeClient())
+        default_result = handler(messages=[
+            {"segments": [{"command": "text", "content": "普通回复"}]},
+        ])
+        pasted_result = handler(
+            messages=[
+                {"segments": [{"command": "text", "content": "日志第一行"}]},
+                {"segments": [{"command": "text", "content": "日志第二行"}]},
+            ],
+            simulate_typing=False,
+        )
+    finally:
+        monkeypatch.setattr(app_state, "main_loop", old_loop)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert default_result["sent_count"] == 1
+    assert pasted_result["sent_count"] == 2
+    assert [call["simulate_typing"] for call in sent] == [True, False, False]
+    assert [call["message"][0]["data"]["text"] for call in sent] == [
+        "普通回复",
+        "日志第一行",
+        "日志第二行",
+    ]
+
+
 def test_dual_use_face_can_be_mixed_while_super_only_face_cannot():
     assert send_mod._validate_face_composition(
         [{"command": "text", "content": "哭"}, {"command": "face", "id": 5}],
@@ -553,13 +621,16 @@ def test_high_risk_browser_image_stages_exact_message_without_sending(
             SimpleNamespace(connected=False),
             {"browser_control": {"image_send_confirmation": "high_risk"}},
         )
-        result = handler(messages=[{
-            "quote": "message-1",
-            "segments": [
-                {"command": "text", "content": "caption"},
-                {"command": "image", "resource_ref": "br_" + "a" * 20},
-            ],
-        }])
+        result = handler(
+            messages=[{
+                "quote": "message-1",
+                "segments": [
+                    {"command": "text", "content": "caption"},
+                    {"command": "image", "resource_ref": "br_" + "a" * 20},
+                ],
+            }],
+            simulate_typing=False,
+        )
     finally:
         monkeypatch.setattr(app_state, "main_loop", old_loop)
         loop.call_soon_threadsafe(loop.stop)
@@ -573,6 +644,7 @@ def test_high_risk_browser_image_stages_exact_message_without_sending(
     assert pending is not None
     assert pending.target == ("group", "1234", "")
     assert pending.inbound_revision == 0
+    assert pending.simulate_typing is False
     assert pending.messages == ({
         "quote": "message-1",
         "segments": [

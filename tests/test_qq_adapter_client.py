@@ -24,6 +24,37 @@ def test_adapter_diagnostics_redact_file_resources_and_local_paths() -> None:
     assert _safe_adapter_message("ordinary adapter failure") == "ordinary adapter failure"
 
 
+def test_send_message_simulate_typing_false_skips_typing_delay(monkeypatch) -> None:
+    async def scenario() -> None:
+        client = QQAdapterClient()
+        requests: list[dict] = []
+
+        async def fake_send_api(action, params, timeout=15.0):
+            requests.append(params)
+            return {"message_id": 1}
+
+        monkeypatch.setattr(client, "send_api", fake_send_api)
+        typing_calls: list[str] = []
+
+        def fake_typing_delay(text: str) -> float:
+            typing_calls.append(text)
+            return 0.05
+
+        monkeypatch.setattr(client, "_calculate_typing_delay", fake_typing_delay)
+        message = [{"type": "text", "data": {"text": "粘贴的日志"}}]
+
+        assert await client.send_message(user_id=1, message=message, simulate_typing=False) == {
+            "message_id": 1,
+        }
+        assert typing_calls == []
+        assert requests == [{"message": message, "user_id": 1, "message_type": "private"}]
+
+        assert await client.send_message(user_id=1, message=message) == {"message_id": 1}
+        assert typing_calls == ["粘贴的日志"]
+
+    asyncio.run(scenario())
+
+
 def test_active_disconnect_resolves_pending_api_waits() -> None:
     async def scenario() -> None:
         client = QQAdapterClient()

@@ -21,6 +21,7 @@ class PendingBrowserImageSend:
     messages: tuple[dict[str, Any], ...]
     artifacts: tuple[dict[str, Any], ...]
     created_at: float
+    simulate_typing: bool = True
 
 
 def _target(session: Any) -> tuple[str, str, str]:
@@ -49,6 +50,7 @@ def stage_pending(
     *,
     messages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
+    simulate_typing: bool = True,
 ) -> PendingBrowserImageSend:
     if not artifacts or len(artifacts) > 4:
         raise ValueError("confirmation batch must contain 1..4 images")
@@ -60,6 +62,7 @@ def stage_pending(
         messages=tuple(copy.deepcopy(messages)),
         artifacts=tuple(copy.deepcopy(artifacts)),
         created_at=time.time(),
+        simulate_typing=bool(simulate_typing),
     )
     session.pending_browser_image_send = pending
     session.browser_image_confirmation_last_status = {

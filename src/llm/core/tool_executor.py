@@ -116,6 +116,8 @@ def _split_send_message_array_slots(slots: list[dict]) -> list[dict]:
             single_args: dict[str, Any] = {"segments": message.get("segments", [])}
             if message.get("quote"):
                 single_args["quote"] = message.get("quote")
+            if "simulate_typing" in args:
+                single_args["simulate_typing"] = args.get("simulate_typing")
             single_args_list.append(single_args)
         if not single_args_list:
             expanded.append(slot)
