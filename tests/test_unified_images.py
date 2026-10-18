@@ -124,7 +124,7 @@ print(register_image(Path(sys.argv[5]).read_bytes(),'workspace')['image_ref'])
 
 def test_browser_confirmation_cannot_be_bypassed_with_alias_or_sticker(tmp_path):
     from browser.image_resources import BrowserImageArtifactStore, BrowserImageResourceRegistry
-    from platforms.qq.tools.qq_social.send_message import send_message
+    from platforms.qq import image_pipeline
     from types import SimpleNamespace
     raw = png()
     first = register_image(raw, 'workspace')
@@ -139,4 +139,4 @@ def test_browser_confirmation_cannot_be_bypassed_with_alias_or_sticker(tmp_path)
     # Exercise the same guard used by the send handler, without sending anything.
     for command in ('image', 'sticker'):
         messages = [{'segments':[{'command':command,'image_ref':alias}]}]
-        assert send_message._unconfirmed_high_risk_image_error(messages, SimpleNamespace(), {"browser_control": {"image_send_confirmation": "high_risk"}})
+        assert image_pipeline.unconfirmed_high_risk_image_error(messages, SimpleNamespace(), {"browser_control": {"image_send_confirmation": "high_risk"}})

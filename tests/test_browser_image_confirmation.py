@@ -16,7 +16,7 @@ from platforms.qq.tools.qq_social import (
     cancel_browser_image_send,
     confirm_browser_image_send,
 )
-from platforms.qq.tools.qq_social.send_message import send_message as send_mod
+from platforms.qq import image_pipeline as image_mod
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 
@@ -247,7 +247,7 @@ def test_browser_resource_batch_materialization_preserves_order_and_maximum(monk
         ]
     }]
 
-    prepared, artifacts, error = send_mod._materialize_selected_browser_resources(messages)
+    prepared, artifacts, error = image_mod.materialize_browser_resources(messages)
 
     assert error is None
     assert selected == ["br_00000000000000000002", "br_00000000000000000001"]
@@ -264,7 +264,7 @@ def test_browser_resource_batch_materialization_preserves_order_and_maximum(monk
             for index in range(5)
         ]
     }]
-    prepared, artifacts, error = send_mod._materialize_selected_browser_resources(too_many)
+    prepared, artifacts, error = image_mod.materialize_browser_resources(too_many)
     assert prepared is None
     assert artifacts == []
     assert error
@@ -281,7 +281,7 @@ def test_pending_high_risk_artifact_cannot_bypass_confirmation() -> None:
         artifacts=artifacts,
     )
 
-    error = send_mod._unconfirmed_high_risk_image_error(
+    error = image_mod.unconfirmed_high_risk_image_error(
         [{
             "segments": [{"command": "image", "image_ref": artifacts[0]["image_ref"]}],
         }],

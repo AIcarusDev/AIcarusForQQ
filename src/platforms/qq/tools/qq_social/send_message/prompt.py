@@ -10,6 +10,6 @@ messages 按顺序发送，每项中的 segments 拼成一条消息。
 DESCRIPTION = ARRAY_DESCRIPTION
 
 
-def get_description(message_shape: str = "array") -> str:
+def get_description() -> str:
     return ARRAY_DESCRIPTION
 

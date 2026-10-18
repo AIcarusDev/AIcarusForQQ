@@ -5,26 +5,27 @@ Handler 运行在 asyncio.to_thread 派生的线程中，
 """
 
 import asyncio
-import base64
 import copy
 import logging
 import re
 import time
-import uuid
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable, Literal
 
 from pydantic import Field, RootModel
 
-from llm.media.image_resolver import ImagePayloadError, ImageResolver, image_bytes, inspect_image_payload, normalize_image_ref
-from llm.media.sticker_collection import MAX_STICKER_BYTES, valid_image_ref
-from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.prompt_signatures import build_prompt_signature
-from platforms.qq.adapter.conversation import format_adapter_error
-from workspace.errors import WorkspaceError
+from platforms.qq.image_pipeline import prepare_sticker_segment
+from platforms.qq.send_pipeline import (
+    SendTarget,
+    build_result,
+    failure_result,
+    load_face_catalog,
+    preflight_images,
+    record_bot_message,
+    send_one,
+)
 
 from .prompt import get_description
 
@@ -45,15 +46,6 @@ _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
     r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|content|user_id|image_ref|resource_ref|sticker_id)"?)\s*:.*)$',
     re.DOTALL,
 )
-
-_MESSAGE_SHAPE_ARRAY = "array"
-_MESSAGE_SHAPE_SINGLE = "single"
-_SINGLE_SHAPE_ALIASES = {"single", "single_message", "message", "segments"}
-_ARRAY_SHAPE_ALIASES = {"array", "messages", "multi", "multi_message", "batch"}
-_PENDING_RECHECK_DELAYS = (0.2, 2.0, 5.0, 10.0)
-_MAX_LOCAL_IMAGE_BYTES = 20 * 1024 * 1024
-_MAX_LOCAL_IMAGE_PIXELS = 100_000_000
-_MAX_LOCAL_IMAGES_PER_CALL = 4
 
 
 class TextSegment(ToolArgsModel):
@@ -128,16 +120,11 @@ class SendMessageArrayArgs(ToolArgsModel):
 
 SEND_MESSAGE_ARRAY_CONTRACT = ToolContract(
     name="send_message",
-    description=get_description(_MESSAGE_SHAPE_ARRAY),
+    description=get_description(),
     args_model=SendMessageArrayArgs,
 )
 
 TOOL_CONTRACT = SEND_MESSAGE_ARRAY_CONTRACT
-
-
-def get_send_message_shape(config: dict | None = None) -> str:
-    """Return the configured model-facing send_message shape."""
-    return _MESSAGE_SHAPE_ARRAY
 
 
 def get_declaration(session: Any | None = None, config: dict | None = None, **_: Any) -> dict:
@@ -150,7 +137,6 @@ def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
 
 def _repair_schema_args_for_shape(
     args: dict[str, Any],
-    message_shape: str = _MESSAGE_SHAPE_ARRAY,
 ) -> tuple[dict[str, Any], list[str]]:
     """修复 send_message 的 messages 容器结构性字段错误。"""
     repair_notes: list[str] = []
@@ -204,7 +190,7 @@ def make_schema_repairer(
     config: dict | None = None,
 ) -> Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]:
     def _repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-        return _repair_schema_args_for_shape(args, _MESSAGE_SHAPE_ARRAY)
+        return _repair_schema_args_for_shape(args)
 
     return _repair_schema_args
 
@@ -305,214 +291,6 @@ def _extract_message_text(
     return text, content_segments, content_type
 
 
-def _normalize_delivery_match_text(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip()
-
-
-def _delivery_match_text(
-    message: list[dict],
-    *,
-    bot_sender_id: str = "",
-    bot_sender_name: str = "",
-) -> str:
-    """Compare face IDs instead of display names that can vary in QQ echoes."""
-    from platforms.qq.adapter import segments as qq_segments
-
-    comparable = [
-        {"type": "text", "data": {"text": f"[QQ-face:{(seg.get('data') or {}).get('id', '')}]"}}
-        if seg.get("type") == "face" else seg
-        for seg in message
-    ]
-    return qq_segments.qq_adapter_segments_to_text(
-        comparable,
-        bot_id=bot_sender_id,
-        bot_display_name=bot_sender_name,
-    )
-
-
-def _patch_session_message(session: Any, message_id: str, updates: dict[str, Any]) -> dict | None:
-    messages = list(getattr(session, "context_messages", []) or [])
-    for index, entry in enumerate(messages):
-        if str(entry.get("message_id", "")) != str(message_id):
-            continue
-        updated = dict(entry)
-        for key, value in updates.items():
-            if value is None:
-                updated.pop(key, None)
-            else:
-                updated[key] = value
-        messages[index] = updated
-        try:
-            session.context_messages = messages
-        except Exception:
-            return None
-        return updated
-    return None
-
-
-def _history_message_matches_pending_send(
-    event: dict,
-    *,
-    bot_sender_id: str,
-    bot_sender_name: str,
-    expected_text: str,
-    reply_id: str | None,
-    sent_started_at: float,
-    known_bot_message_ids: set[str],
-) -> bool:
-    from platforms.qq.adapter import segments as qq_segments
-
-    message_id = str(event.get("message_id", "") or "").strip()
-    if not message_id or message_id in known_bot_message_ids:
-        return False
-    sender = event.get("sender") or {}
-    sender_id = str(sender.get("user_id") or event.get("user_id") or "").strip()
-    if sender_id != str(bot_sender_id):
-        return False
-    try:
-        event_time = float(event.get("time") or 0)
-    except (TypeError, ValueError):
-        event_time = 0.0
-    if event_time and event_time < sent_started_at - 5.0:
-        return False
-
-    message = event.get("message")
-    if not isinstance(message, list):
-        return False
-    if str(qq_segments.get_reply_message_id(message) or "") != str(reply_id or ""):
-        return False
-    actual_text = _delivery_match_text(
-        message,
-        bot_sender_id=str(bot_sender_id),
-        bot_sender_name=str(bot_sender_name or bot_sender_id),
-    )
-    return _normalize_delivery_match_text(actual_text) == _normalize_delivery_match_text(expected_text)
-
-
-async def _fetch_recent_history_for_confirmation(
-    qq_client: Any,
-    *,
-    conv_type: str,
-    group_id: int | None,
-    user_id: int | None,
-    temp_source_group_id: int | None,
-) -> list[dict]:
-    if not qq_client or not getattr(qq_client, "connected", False):
-        return []
-    if conv_type == "group":
-        if group_id is None:
-            return []
-        action = "get_group_msg_history"
-        params: dict[str, Any] = {"group_id": int(group_id), "count": 50}
-    elif conv_type in {"private", "temp"}:
-        if user_id is None:
-            return []
-        action = "get_friend_msg_history"
-        params = {"user_id": int(user_id), "count": 50}
-        if temp_source_group_id is not None:
-            params["group_id"] = int(temp_source_group_id)
-    else:
-        return []
-
-    if hasattr(qq_client, "send_api_raw"):
-        resp = await qq_client.send_api_raw(action, params, timeout=20.0)
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            return []
-        data = resp.get("data") or {}
-    else:
-        data = await qq_client.send_api(action, params, timeout=20.0)
-    messages = (data or {}).get("messages", [])
-    return messages if isinstance(messages, list) else []
-
-
-async def _reconcile_pending_send(
-    *,
-    session: Any,
-    conversation_id: str,
-    internal_message_id: str,
-    qq_client: Any,
-    conv_type: str,
-    group_id: int | None,
-    user_id: int | None,
-    temp_source_group_id: int | None,
-    bot_sender_id: str,
-    bot_sender_name: str,
-    expected_text: str,
-    reply_id: str | None,
-    sent_started_at: float,
-    known_bot_message_ids: set[str],
-    pending_error: str,
-) -> None:
-    from database import update_chat_message_delivery_state, update_chat_message_id
-
-    for delay in _PENDING_RECHECK_DELAYS:
-        await asyncio.sleep(delay)
-        try:
-            history = await _fetch_recent_history_for_confirmation(
-                qq_client,
-                conv_type=conv_type,
-                group_id=group_id,
-                user_id=user_id,
-                temp_source_group_id=temp_source_group_id,
-            )
-        except Exception:
-            logger.debug("[send_message] 投递回查异常 conv=%s id=%s", conversation_id, internal_message_id, exc_info=True)
-            continue
-
-        matches = [
-            event for event in history
-            if _history_message_matches_pending_send(
-                event,
-                bot_sender_id=bot_sender_id,
-                bot_sender_name=bot_sender_name,
-                expected_text=expected_text,
-                reply_id=reply_id,
-                sent_started_at=sent_started_at,
-                known_bot_message_ids=known_bot_message_ids,
-            )
-        ]
-        if not matches:
-            continue
-        matches.sort(key=lambda event: float(event.get("time") or 0))
-        real_id = str(matches[0].get("message_id", "") or "").strip()
-        if not real_id:
-            continue
-        _patch_session_message(
-            session,
-            internal_message_id,
-            {
-                "message_id": real_id,
-                "delivery_state": None,
-                "delivery_error": None,
-            },
-        )
-        await update_chat_message_id(conversation_id, internal_message_id, real_id)
-        logger.info(
-            "[send_message] pending 投递已回查确认 conv=%s internal=%s real=%s",
-            conversation_id,
-            internal_message_id,
-            real_id,
-        )
-        return
-
-    failed_error = pending_error or "消息投递状态未能通过 adapter 历史回查确认。"
-    _patch_session_message(
-        session,
-        internal_message_id,
-        {
-            "delivery_state": "failed",
-            "delivery_error": failed_error,
-        },
-    )
-    await update_chat_message_delivery_state(
-        conversation_id,
-        internal_message_id,
-        "failed",
-        failed_error,
-    )
-    logger.warning("[send_message] pending 投递确认失败 conv=%s id=%s", conversation_id, internal_message_id)
-
-
 def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
@@ -587,27 +365,10 @@ def _prepare_sendable_segments(
                 return None, "face segment 需要非负整数 id。", warnings
             has_sendable = True
         elif cmd == "sticker":
-            image_ref = normalize_image_ref(seg.get("image_ref"))
-            if "sticker_id" in seg or not valid_image_ref(image_ref):
-                return None, "sticker segment 需要 image_ref，旧表情包编号已停用。", warnings
-            resolver = ImageResolver(session)
-            found = resolver.resolve(image_ref, include_browser=False)
-            if found is None:
-                return None, f"未找到可见或已收藏的图片 image_ref={image_ref!r}。", warnings
-            image, _source = found
-            payload = image_bytes(image)
-            if payload is None:
-                return None, f"图片不可用 image_ref={image_ref!r}: {resolver.unavailable_status(image)}", warnings
-            raw, mime = payload
-            try:
-                info = inspect_image_payload(raw, max_bytes=MAX_STICKER_BYTES, max_pixels=100_000_000)
-            except ImagePayloadError as exc:
-                return None, f"图片内容无效 image_ref={image_ref!r}: {exc.code}", warnings
-            mime = info.mime_type
-            prepared_seg["image_ref"] = str(image.get("image_ref") or image_ref)
-            prepared_seg["_image_bytes"] = raw
-            prepared_seg["_image_mime"] = mime
-            prepared_seg["_image_source"] = _source
+            sticker_fields, sticker_error = prepare_sticker_segment(seg, session)
+            if sticker_error:
+                return None, sticker_error, warnings
+            prepared_seg.update(sticker_fields or {})
             has_sendable = True
         elif cmd == "image":
             image_ref = str(seg.get("image_ref", "") or "")
@@ -620,160 +381,6 @@ def _prepare_sendable_segments(
     if not has_sendable:
         return None, "消息没有可发送的内容，未发送。", warnings
     return prepared_segments, None, warnings
-
-
-async def _materialize_local_image_paths(
-    messages: list[dict[str, Any]],
-    workspace_service: Any,
-) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Validate Agent-local image paths and embed their bytes for the adapter."""
-
-    prepared = copy.deepcopy(messages)
-    local_segments: list[tuple[dict[str, Any], str]] = []
-    for message in prepared:
-        if not isinstance(message, dict):
-            continue
-        for segment in message.get("segments") or []:
-            if not isinstance(segment, dict) or segment.get("command") != "image":
-                continue
-            sources = {
-                "path": str(segment.get("path") or "").strip(),
-                "image_ref": str(segment.get("image_ref") or "").strip(),
-                "resource_ref": str(segment.get("resource_ref") or "").strip(),
-            }
-            selected = [(name, value) for name, value in sources.items() if value]
-            if len(selected) != 1:
-                return None, "image segment 的 path、image_ref、resource_ref 必须且只能提供一个。"
-            if selected[0][0] == "path":
-                local_segments.append((segment, selected[0][1]))
-
-    if len(local_segments) > _MAX_LOCAL_IMAGES_PER_CALL:
-        return None, f"单次发送最多选择 {_MAX_LOCAL_IMAGES_PER_CALL} 张 Agent Linux 本地图片。"
-    if local_segments and workspace_service is None:
-        return None, "Agent 电脑服务不可用，无法读取本地图片。"
-
-    try:
-        for segment, path in local_segments:
-            async with workspace_service.stage_host_file(path) as staged:
-                if staged.size > _MAX_LOCAL_IMAGE_BYTES:
-                    return None, "本地图片超过 20 MiB 大小限制。"
-                raw = await asyncio.to_thread(Path(staged.host_path).read_bytes)
-                image_info = await asyncio.to_thread(
-                    inspect_image_payload,
-                    raw,
-                    max_bytes=_MAX_LOCAL_IMAGE_BYTES,
-                    max_pixels=_MAX_LOCAL_IMAGE_PIXELS,
-                )
-                from llm.media.image_store import register_image
-                record = await asyncio.to_thread(register_image, raw, "workspace")
-                segment.pop("path", None)
-                segment["image_ref"] = record["image_ref"]
-                segment["_local_image_ref"] = record["image_ref"]
-                segment["_local_image_base64"] = base64.b64encode(raw).decode("ascii")
-                segment["_local_image_mime"] = image_info.mime_type
-    except WorkspaceError as exc:
-        logger.info("[send_message] Agent Linux 图片暂存失败 code=%s", exc.code.value)
-        return None, "无法读取指定的 Agent Linux 图片。"
-    except ImagePayloadError as exc:
-        logger.info("[send_message] Agent Linux 图片校验失败 status=%s", exc.code)
-        return None, f"Agent Linux 图片内容无效（{exc.code}）。"
-    except OSError:
-        logger.warning("[send_message] Agent Linux 图片读取失败", exc_info=True)
-        return None, "无法读取指定的 Agent Linux 图片。"
-
-    return prepared, None
-
-
-def _materialize_selected_browser_resources(
-    messages: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]], str | None]:
-    selected: list[str] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        for segment in message.get("segments") or []:
-            if not isinstance(segment, dict) or segment.get("command") != "image":
-                continue
-            image_ref = str(segment.get("image_ref") or "").strip()
-            resource_ref = str(segment.get("resource_ref") or "").strip()
-            if image_ref and resource_ref:
-                return None, [], "image segment 不能同时包含 image_ref 和 resource_ref。"
-            if resource_ref:
-                selected.append(resource_ref)
-    if not selected:
-        return copy.deepcopy(messages), [], None
-    if len(selected) > 4:
-        return None, [], "单次发送最多选择 4 张浏览器图片。"
-
-    try:
-        from browser import materialize_browser_resources
-
-        artifacts = materialize_browser_resources(selected)
-    except Exception:
-        logger.warning("[send_message] 浏览器原图固化失败", exc_info=True)
-        return None, [], "浏览器原图固化失败，未发送且不会降级为截图。"
-    if len(artifacts) != len(selected):
-        return None, [], "浏览器原图固化结果数量不一致，未发送。"
-
-    prepared = copy.deepcopy(messages)
-    artifact_index = 0
-    for message in prepared:
-        if not isinstance(message, dict):
-            continue
-        for segment in message.get("segments") or []:
-            if not isinstance(segment, dict) or segment.get("command") != "image":
-                continue
-            if not str(segment.get("resource_ref") or "").strip():
-                continue
-            artifact = artifacts[artifact_index]
-            expected_resource = selected[artifact_index]
-            artifact_index += 1
-            if str(artifact.get("resource_ref") or "") != expected_resource:
-                return None, [], "浏览器原图固化身份校验失败，未发送。"
-            image_ref = str(artifact.get("image_ref") or "")
-            if not image_ref:
-                return None, [], "浏览器原图固化未生成 image_ref，未发送。"
-            segment.pop("resource_ref", None)
-            segment["image_ref"] = image_ref
-    return prepared, artifacts, None
-
-
-def _unconfirmed_high_risk_image_error(
-    messages: list[dict[str, Any]],
-    session: Any,
-    config: dict | None,
-) -> str | None:
-    from browser.config import browser_image_send_confirmation
-
-    if browser_image_send_confirmation(config) != "high_risk":
-        return None
-    from browser import read_sendable_browser_image_file
-    from browser.image_confirmation import current_pending
-
-    pending = current_pending(session)
-    pending_refs = {
-        str(artifact.get("image_ref") or "")
-        for artifact in pending.artifacts
-    } if pending is not None else set()
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        for segment in message.get("segments") or []:
-            if not isinstance(segment, dict) or segment.get("command") not in ("image", "sticker"):
-                continue
-            image_ref = str(segment.get("image_ref") or "").strip()
-            if not image_ref:
-                continue
-            from llm.media.image_store import lookup_image
-            record = lookup_image(image_ref)
-            if record:
-                image_ref = record["image_ref"]
-            if image_ref in pending_refs:
-                return "该原图属于待确认批次，必须使用 confirm_browser_image_send，不能直接发送。"
-            artifact = read_sendable_browser_image_file(image_ref)
-            if artifact is not None and artifact[2].get("confirmation_reasons"):
-                return "该原图需要高风险确认，不能通过 image_ref 直接发送。"
-    return None
 
 
 def _split_consecutive_texts(segments: list[dict]) -> list[list[dict]]:
@@ -836,20 +443,6 @@ def _coerce_execute_messages(
     return None, "messages must be a non-empty array, or segments must be a non-empty array."
 
 
-def _adapter_response_is_definitive_failure(api_error: dict[str, Any] | None) -> bool:
-    """Return True when the adapter has synchronously rejected the send."""
-
-    if not api_error:
-        return False
-    status = str(api_error.get("status") or "").strip().lower()
-    if status in {"failed", "failure", "error"}:
-        return True
-    if status in {"timeout", "disconnected"}:
-        return False
-    retcode = api_error.get("retcode")
-    return retcode not in (None, "", 0, "0")
-
-
 def _snap_chat_window_to_latest_for_send(session: Any) -> bool:
     """Treat sending from a browsed history window as jumping back to latest."""
     try:
@@ -878,20 +471,10 @@ def make_handler(
     ) -> dict:
         import app_state
         from platforms.qq import adapter as qq_adapter
-        from database import save_chat_message
-        from llm.core.round_context import get_current_inner_state
-        from web.debug_server import broadcast_chat_event
 
         session = qq_session_provider()
         if session is None:
-            return {
-                "to": "qq:home",
-                "error": NO_CURRENT_SESSION_ERROR,
-                "sent_count": 0,
-                "failed_count": 1,
-                "total_count": 1,
-                "interrupted": False,
-            }
+            return failure_result("qq:home", NO_CURRENT_SESSION_ERROR, 1)
 
         confirmed_batch_id = str(kwargs.pop("_confirmed_batch_id", "") or "")
         if confirmed_batch_id:
@@ -899,40 +482,27 @@ def make_handler(
 
             pending = consume_pending(session, confirmed_batch_id)
             if pending is None:
-                return {
-                    "to": _format_result_target(session),
-                    "error": "图片确认批次不存在、已过期或因新消息而失效。",
-                    "sent_count": 0,
-                    "failed_count": 1,
-                    "total_count": 1,
-                    "interrupted": False,
-                }
+                return failure_result(
+                    _format_result_target(session),
+                    "图片确认批次不存在、已过期或因新消息而失效。",
+                    1,
+                )
             send_messages = [copy.deepcopy(message) for message in pending.messages]
             simulate_typing = pending.simulate_typing
             message_error = None
         else:
             send_messages, message_error = _coerce_execute_messages(messages, segments, quote)
             if message_error or send_messages is None:
-                return {
-                    "to": _format_result_target(session),
-                    "error": message_error or "messages must be a non-empty array.",
-                    "sent_count": 0,
-                    "failed_count": 1,
-                    "total_count": 1,
-                    "interrupted": False,
-                }
+                return failure_result(
+                    _format_result_target(session),
+                    message_error or "messages must be a non-empty array.",
+                    1,
+                )
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         target = _format_result_target(session)
         if loop is None or not loop.is_running():
-            return {
-                "to": target,
-                "error": "主事件循环不可用",
-                "sent_count": 0,
-                "failed_count": len(send_messages),
-                "total_count": len(send_messages),
-                "interrupted": False,
-            }
+            return failure_result(target, "主事件循环不可用", len(send_messages))
 
         qq_adapter_available = bool(qq_client and qq_client.connected)
 
@@ -942,149 +512,45 @@ def make_handler(
         group_id, user_id, temp_source_group_id, target_error = _resolve_send_target(session)
         target = _format_result_target(session, temp_source_group_id)
         if target_error:
-            return {
-                "to": target,
-                "error": target_error,
-                "sent_count": 0,
-                "failed_count": len(send_messages),
-                "total_count": len(send_messages),
-                "interrupted": False,
-            }
+            return failure_result(target, target_error, len(send_messages))
 
         if not confirmed_batch_id:
-            prepared_messages, local_image_error = run_coroutine_sync(
-                _materialize_local_image_paths(
-                    send_messages,
-                    getattr(app_state, "workspace_service", None),
-                ),
-                loop,
-            )
-            if local_image_error or prepared_messages is None:
-                return {
-                    "to": target,
-                    "error": local_image_error or "Agent Linux 图片读取失败。",
-                    "sent_count": 0,
-                    "failed_count": len(send_messages),
-                    "total_count": len(send_messages),
-                    "interrupted": False,
-                }
-            send_messages = prepared_messages
-            if (
-                any(
-                    isinstance(segment, dict) and segment.get("_local_image_base64")
-                    for message in send_messages
-                    if isinstance(message, dict)
-                    for segment in (message.get("segments") or [])
-                )
-                and round_inbound_revision is not None
-                and int(getattr(session, "inbound_revision", 0) or 0)
-                != int(round_inbound_revision)
-            ):
-                return {
-                    "to": target,
-                    "error": "读取图片期间收到新消息，本次图片发送意图已失效，未发送。",
-                    "sent_count": 0,
-                    "failed_count": len(send_messages),
-                    "total_count": len(send_messages),
-                    "interrupted": True,
-                }
-            confirmation_bypass_error = _unconfirmed_high_risk_image_error(
+            send_messages, image_response = preflight_images(
                 send_messages,
-                session,
-                config,
+                session=session,
+                config=config,
+                loop=loop,
+                target=target,
+                round_inbound_revision=round_inbound_revision,
+                simulate_typing=simulate_typing,
             )
-            if confirmation_bypass_error:
-                return {
-                    "to": target,
-                    "error": confirmation_bypass_error,
-                    "sent_count": 0,
-                    "failed_count": len(send_messages),
-                    "total_count": len(send_messages),
-                    "interrupted": False,
-                }
-            prepared_messages, browser_artifacts, browser_error = (
-                _materialize_selected_browser_resources(send_messages)
-            )
-            if browser_error or prepared_messages is None:
-                return {
-                    "to": target,
-                    "error": browser_error or "浏览器原图固化失败。",
-                    "sent_count": 0,
-                    "failed_count": len(send_messages),
-                    "total_count": len(send_messages),
-                    "interrupted": False,
-                }
-            send_messages = prepared_messages
-            if browser_artifacts:
-                if (
-                    round_inbound_revision is not None
-                    and int(getattr(session, "inbound_revision", 0) or 0)
-                    != int(round_inbound_revision)
-                ):
-                    return {
-                        "to": target,
-                        "error": "固化期间收到新消息，本次图片发送意图已失效，未发送。",
-                        "sent_count": 0,
-                        "failed_count": len(send_messages),
-                        "total_count": len(send_messages),
-                        "interrupted": True,
-                    }
-                from browser.config import browser_image_send_confirmation
+            if image_response is not None:
+                return image_response
 
-                confirmation_reasons = list(dict.fromkeys(
-                    str(reason)
-                    for artifact in browser_artifacts
-                    for reason in artifact.get("confirmation_reasons") or []
-                ))
-                if (
-                    browser_image_send_confirmation(config) == "high_risk"
-                    and confirmation_reasons
-                ):
-                    from browser.image_confirmation import stage_pending
-
-                    pending = stage_pending(
-                        session,
-                        messages=send_messages,
-                        artifacts=browser_artifacts,
-                        simulate_typing=bool(simulate_typing),
-                    )
-                    return {
-                        "to": target,
-                        "confirmation_required": True,
-                        "batch_id": pending.batch_id,
-                        "image_count": len(browser_artifacts),
-                        "confirmation_reasons": confirmation_reasons,
-                        "sent_count": 0,
-                        "failed_count": 0,
-                        "total_count": len(send_messages),
-                        "interrupted": False,
-                        "note": "最终原图将在下一正常复合轮展示；该轮未确认或取消会自动失效。",
-                    }
 
         # QQ adapter 不可用时降级运行：仅入库/入上下文，不实际发送。
         offline_mode = not qq_adapter_available
         if offline_mode and conv_type == "temp":
-            return {
-                "to": target,
-                "error": "QQ adapter 未连接，无法发送临时会话消息",
-                "sent_count": 0,
-                "failed_count": len(send_messages),
-                "total_count": len(send_messages),
-                "interrupted": False,
-            }
+            return failure_result(
+                target,
+                "QQ adapter 未连接，无法发送临时会话消息",
+                len(send_messages),
+            )
         if offline_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
-            return {
-                "to": target,
-                "error": "QQ adapter 未连接",
-                "sent_count": 0,
-                "failed_count": len(send_messages),
-                "total_count": len(send_messages),
-                "interrupted": False,
-            }
+            return failure_result(target, "QQ adapter 未连接", len(send_messages))
 
         conversation_id = session.key or f"qq:{conv_type}:{conv_id}"
-        bot_sender_id = session._qq_id or "bot"
-        bot_sender_name = session._qq_name or ""
+        send_target = SendTarget(
+            conversation_id=conversation_id,
+            conv_type=conv_type,
+            conv_id=conv_id,
+            group_id=group_id,
+            user_id=user_id,
+            temp_source_group_id=temp_source_group_id,
+            bot_sender_id=session._qq_id or "bot",
+            bot_sender_name=session._qq_name or "",
+        )
+
         # Keep the image-visible window for the entire batch before sending snaps UI to live.
         image_session = copy.copy(session)
         image_session.context_messages = copy.deepcopy(getattr(session, "context_messages", []))
@@ -1107,22 +573,8 @@ def make_handler(
         failed_count: int = 0
         failed_messages: list[dict] = []
         warnings: list[str] = []
-        has_face = any(
-            isinstance(msg, dict)
-            and isinstance(msg.get("segments"), list)
-            and any(isinstance(seg, dict) and seg.get("command") == "face" for seg in msg["segments"])
-            for msg in send_messages
-        )
-        face_descriptions: dict[int, str] = {}
-        super_only_face_ids: set[int] = set()
-        if has_face:
-            from platforms.qq.tools.qq_social.list_faces import load_face_entries
+        face_descriptions, super_only_face_ids = load_face_catalog(config, send_messages)
 
-            face_entries = load_face_entries(config or {})
-            face_descriptions = {face_id: face.des for face_id, face in face_entries.items()}
-            super_only_face_ids = {
-                face_id for face_id, face in face_entries.items() if face.super and not face.normal
-            }
 
         for i, msg in enumerate(send_messages):
             if not isinstance(msg, dict):
@@ -1183,14 +635,13 @@ def make_handler(
                     conversation_id,
                     exc_info=True,
                 )
-                return {
-                    "to": target,
-                    "error": "图片加载失败，消息未发送。",
-                    "sent_count": sent_count,
-                    "failed_count": failed_count + 1,
-                    "total_count": len(send_messages),
-                    "interrupted": False,
-                }
+                return failure_result(
+                    target,
+                    "图片加载失败，消息未发送。",
+                    len(send_messages),
+                    sent_count=sent_count,
+                    failed_count=failed_count + 1,
+                )
             if not qq_adapter_segs:
                 failed_count += 1
                 failed_messages.append({
@@ -1206,150 +657,47 @@ def make_handler(
 
             text, content_segments, content_type = _extract_message_text(segments, face_descriptions)
             send_started_at = time.time()
-
-            # 发送消息（异步→同步）
-            if offline_mode:
-                send_result = None
-                send_exception = None
-            else:
-                send_exception = None
-                try:
-                    send_result = run_coroutine_sync(
-                        qq_client.send_message(
-                            group_id=group_id,
-                            user_id=user_id,
-                            temp_source_group_id=temp_source_group_id,
-                            message=qq_adapter_segs,
-                            llm_elapsed=0.0,
-                            simulate_typing=bool(simulate_typing),
-                        ),
-                        loop,
-                        timeout=30,
-                    )
-                except Exception as e:
-                    logger.warning("[send_message] 发送第 %d 条消息失败: %s", i + 1, e)
-                    send_exception = e
-                    send_result = None
-
-            now_ts = datetime.now(app_state.TIMEZONE).isoformat()
-
-            if offline_mode:
-                real_id = f"offline_{uuid.uuid4().hex[:8]}"
-                delivery_state = "failed"
-                delivery_error = "QQ adapter 未连接；消息只保存在本地，未投递。"
+            outcome = send_one(
+                send_target,
+                qq_client=qq_client,
+                loop=loop,
+                message_index=i,
+                qq_adapter_segs=qq_adapter_segs,
+                simulate_typing=simulate_typing,
+                offline_mode=offline_mode,
+            )
+            if outcome.kind == "failed":
                 failed_count += 1
-                failed_messages.append({
-                    "index": i,
-                    "reason": delivery_error,
-                })
-            elif send_result and send_result.get("message_id") is not None:
-                real_id = str(send_result["message_id"])
-                delivery_state = ""
-                delivery_error = ""
-                sent_count += 1
-            elif (
-                send_exception is None
-                and _adapter_response_is_definitive_failure(getattr(qq_client, "last_api_error", None))
-            ):
-                delivery_error = format_adapter_error(
-                    getattr(qq_client, "last_api_error", None),
-                    "QQ adapter send_msg failed",
-                )
-                failed_count += 1
-                failed_messages.append({
-                    "index": i,
-                    "reason": delivery_error,
-                })
+                failed_messages.append({"index": i, "reason": outcome.delivery_error})
                 logger.warning(
                     "[send_message] adapter 同步返回发送失败 conv=%s idx=%d reason=%s",
                     conversation_id,
                     i,
-                    delivery_error,
+                    outcome.delivery_error,
                 )
                 continue
-            else:
-                real_id = f"pending_{uuid.uuid4().hex[:8]}"
-                delivery_state = "pending"
-                delivery_error = format_adapter_error(
-                    getattr(qq_client, "last_api_error", None),
-                    "QQ adapter send_msg failed or returned no message_id",
-                )
+            if outcome.kind == "sent":
+                sent_count += 1
+            elif outcome.kind == "offline":
+                failed_count += 1
+                failed_messages.append({"index": i, "reason": outcome.delivery_error})
+            elif outcome.kind == "pending":
                 logger.warning("[send_message] 消息投递状态待确认 conv=%s idx=%d", conversation_id, i)
 
-            entry: dict = {
-                "role": "bot",
-                "message_id": real_id,
-                "sender_id": bot_sender_id,
-                "sender_name": bot_sender_name,
-                "sender_role": "",
-                "timestamp": now_ts,
-                "content": text,
-                "content_type": content_type,
-                "content_segments": content_segments,
-            }
-            # Ordinary message image metadata keeps uncollected sends visible in history.
-            # Collection images remain addressable by ref without duplicating their bytes in the DB.
-            sent_images = {
-                seg["image_ref"]: {
-                    "base64": base64.b64encode(seg["_image_bytes"]).decode("ascii"),
-                    "mime": seg["_image_mime"],
-                    "label": "动画表情",
-                }
-                for seg in segments
-                if seg.get("command") == "sticker" and seg.get("_image_source") != "sticker"
-            }
-            if sent_images:
-                entry["images"] = sent_images
-            if delivery_state:
-                entry["delivery_state"] = delivery_state
-            if delivery_error:
-                entry["delivery_error"] = delivery_error
-            if reply_id:
-                entry["reply_to"] = str(reply_id)
-            session.add_to_context(entry)
-
-            # 持久化（fire-and-forget，不阻塞发送循环）
-            asyncio.run_coroutine_threadsafe(
-                save_chat_message(conversation_id, entry), loop
-            )
-            if delivery_state == "pending":
-                asyncio.run_coroutine_threadsafe(
-                    _reconcile_pending_send(
-                        session=session,
-                        conversation_id=conversation_id,
-                        internal_message_id=real_id,
-                        qq_client=qq_client,
-                        conv_type=conv_type,
-                        group_id=group_id,
-                        user_id=user_id,
-                        temp_source_group_id=temp_source_group_id,
-                        bot_sender_id=str(bot_sender_id),
-                        bot_sender_name=str(bot_sender_name),
-                        expected_text=_delivery_match_text(
-                            qq_adapter_segs,
-                            bot_sender_id=str(bot_sender_id),
-                            bot_sender_name=str(bot_sender_name),
-                        ),
-                        reply_id=str(reply_id) if reply_id else None,
-                        sent_started_at=send_started_at,
-                        known_bot_message_ids=set(known_bot_message_ids),
-                        pending_error=delivery_error,
-                    ),
-                    loop,
-                )
-            known_bot_message_ids.add(real_id)
-
-            # 广播到 debug 前端
-            asyncio.run_coroutine_threadsafe(
-                broadcast_chat_event({
-                    "type": "bot_turn",
-                    "conv_id": conversation_id,
-                    "conv_name": session.conv_name or conversation_id,
-                    "conv_type": conv_type or "unknown",
-                    "entries": [entry],
-                    "inner_state": get_current_inner_state(),
-                }),
-                loop,
+            record_bot_message(
+                send_target,
+                session=session,
+                loop=loop,
+                qq_client=qq_client,
+                segments=segments,
+                text=text,
+                content_segments=content_segments,
+                content_type=content_type,
+                reply_id=reply_id,
+                outcome=outcome,
+                qq_adapter_segs=qq_adapter_segs,
+                send_started_at=send_started_at,
+                known_bot_message_ids=known_bot_message_ids,
             )
 
         new_msgs_count = len([
@@ -1359,14 +707,13 @@ def make_handler(
             and str(m["message_id"]) not in pre_send_ids
         ])
 
-        result: dict = {
-            "to": target,
-            "sent_count": sent_count,
-            "failed_count": failed_count,
-            "total_count": len(send_messages),
-            "interrupted": False,
-            "new_messages_count": new_msgs_count,
-        }
+        result = build_result(
+            target,
+            sent_count=sent_count,
+            failed_count=failed_count,
+            total_count=len(send_messages),
+            new_messages_count=new_msgs_count,
+        )
         if snapped_to_latest:
             result["chat_window"] = {
                 "snapped_to_latest": True,
@@ -1384,5 +731,3 @@ def make_handler(
         return result
 
     return execute
-
-

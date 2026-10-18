@@ -16,6 +16,8 @@ from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from platforms.qq.adapter.conversation import format_adapter_error
 from platforms.qq.adapter.segments import llm_segments_to_qq_adapter
+from platforms.qq import delivery_confirmation as delivery_mod
+from platforms.qq import image_pipeline as image_mod
 from platforms.qq.tools.qq_social.send_message import send_message as send_mod
 
 
@@ -133,7 +135,7 @@ def test_face_segment_schema_conversion_and_local_history():
 
 def test_pending_face_send_matches_echo_by_id_even_if_name_changes():
     sent = [{"type": "face", "data": {"id": "364"}}]
-    expected = send_mod._delivery_match_text(sent)
+    expected = delivery_mod.delivery_match_text(sent)
     echo = {
         "message_id": "qq-echo-1",
         "user_id": "bot-1",
@@ -142,7 +144,7 @@ def test_pending_face_send_matches_echo_by_id_even_if_name_changes():
             "id": "364", "raw": {"faceText": "/超级赞"},
         }}],
     }
-    assert send_mod._history_message_matches_pending_send(
+    assert delivery_mod.history_message_matches_pending_send(
         echo,
         bot_sender_id="bot-1",
         bot_sender_name="Bot",
@@ -152,7 +154,7 @@ def test_pending_face_send_matches_echo_by_id_even_if_name_changes():
         known_bot_message_ids=set(),
     )
     echo["message"][0]["data"]["id"] = "365"
-    assert not send_mod._history_message_matches_pending_send(
+    assert not delivery_mod.history_message_matches_pending_send(
         echo,
         bot_sender_id="bot-1",
         bot_sender_name="Bot",
@@ -181,7 +183,7 @@ def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch, tm
                 name="result.png",
             )
 
-    messages, error = asyncio.run(send_mod._materialize_local_image_paths(
+    messages, error = asyncio.run(image_mod.materialize_local_image_paths(
         [{"segments": [{"command": "image", "path": "/home/agent/output/result.png"}]}],
         WorkspaceService(),
     ))
@@ -195,7 +197,7 @@ def test_materialize_local_image_path_validates_and_embeds_bytes(monkeypatch, tm
 
 
 def test_materialize_local_image_path_rejects_ambiguous_sources():
-    messages, error = asyncio.run(send_mod._materialize_local_image_paths(
+    messages, error = asyncio.run(image_mod.materialize_local_image_paths(
         [{"segments": [{
             "command": "image",
             "path": "/home/agent/output/result.png",
@@ -766,7 +768,7 @@ def test_history_confirmation_match_requires_self_quote_text_and_new_id():
         ],
     }
 
-    assert send_mod._history_message_matches_pending_send(
+    assert delivery_mod.history_message_matches_pending_send(
         event,
         bot_sender_id="2136288",
         bot_sender_name="Icc",
@@ -775,7 +777,7 @@ def test_history_confirmation_match_requires_self_quote_text_and_new_id():
         sent_started_at=1782569,
         known_bot_message_ids={"-8683226"},
     )
-    assert not send_mod._history_message_matches_pending_send(
+    assert not delivery_mod.history_message_matches_pending_send(
         event,
         bot_sender_id="2136288",
         bot_sender_name="Icc",
@@ -784,7 +786,7 @@ def test_history_confirmation_match_requires_self_quote_text_and_new_id():
         sent_started_at=1782569,
         known_bot_message_ids={"-1174946"},
     )
-    assert not send_mod._history_message_matches_pending_send(
+    assert not delivery_mod.history_message_matches_pending_send(
         event,
         bot_sender_id="2136288",
         bot_sender_name="Icc",
