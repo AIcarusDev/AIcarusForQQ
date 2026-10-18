@@ -31,7 +31,6 @@ class ToolContract:
     name: str
     description: str
     args_model: type[BaseModel]
-    result_model: type[BaseModel] | None = None
 
     def declaration(self) -> dict[str, Any]:
         return {
@@ -55,7 +54,6 @@ def tool(
     name: str,
     description: str,
     args_model: type[BaseModel],
-    result_model: type[BaseModel] | None = None,
 ) -> Callable[[F], Callable[..., Any]]:
     """Attach a Python-first tool contract to a legacy-compatible handler.
 
@@ -68,7 +66,6 @@ def tool(
         name=name,
         description=description,
         args_model=args_model,
-        result_model=result_model,
     )
 
     def decorate(func: F) -> Callable[..., Any]:

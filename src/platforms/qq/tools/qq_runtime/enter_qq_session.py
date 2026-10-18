@@ -369,16 +369,13 @@ def execute(type: str, id: str, **kwargs) -> dict:
     target_type = resolved["type"]
     target_id = resolved["id"]
     target = get_or_create_session(new_key)
-    try:
-        target.set_conversation_meta(
-            target_type,
-            target_id,
-            resolved.get("name", ""),
-            temp_source_group_id=resolved.get("temp_source_group_id", ""),
-            temp_source_group_name=resolved.get("temp_source_group_name", ""),
-        )
-    except TypeError:
-        target.set_conversation_meta(target_type, target_id)
+    target.set_conversation_meta(
+        target_type,
+        target_id,
+        resolved.get("name", ""),
+        temp_source_group_id=resolved.get("temp_source_group_id", ""),
+        temp_source_group_name=resolved.get("temp_source_group_name", ""),
+    )
 
     prev_focus = app_state.current_focus
     prev_key = current_focus_key(prev_focus)

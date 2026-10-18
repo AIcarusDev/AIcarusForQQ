@@ -47,14 +47,12 @@ class ToolSpec:
     prompt_signature: str = ""
     result_cdata: bool = False
     externally_perceptible: bool = False
-    always_available: bool = True
     schema_repairer: SchemaRepairer | None = None
     semantic_sanitizer: SemanticSanitizer | None = None
     namespace: str = ""
     visible_namespace: str = ""
     attached_to: str = ""
     mounted_to: str = ""
-    mounted_by_module: str = ""
     visibility: str = "visible"
     tool_kind: str = ""
     effect: ToolEffect | None = None
@@ -64,11 +62,6 @@ class ToolSpec:
     def call_namespace(self) -> str:
         """Namespace the model uses to address this tool in the current view."""
         return self.mounted_to or self.attached_to or self.visible_namespace or self.namespace
-
-    @property
-    def call_name(self) -> str:
-        namespace = self.call_namespace
-        return f"{namespace}.{self.name}" if namespace else self.name
 
 
 @dataclass
@@ -90,23 +83,6 @@ class ToolCollection:
         namespace = str(namespace or "").strip()
         name = str(name or "").strip()
         return f"{namespace}.{name}" if namespace else name
-
-    @staticmethod
-    def spec_key(spec: ToolSpec) -> str:
-        return ToolCollection.route_key(spec.call_namespace, spec.name)
-
-    def clone(self) -> "ToolCollection":
-        return ToolCollection(
-            active_specs=dict(self.active_specs),
-            latent_specs=dict(self.latent_specs),
-            all_specs=dict(self.all_specs),
-            namespace_specs=dict(self.namespace_specs),
-            namespace_registry=self.namespace_registry,
-            namespace_state=self.namespace_state,
-            active_namespace_order=list(self.active_namespace_order),
-            round_index=self.round_index,
-            namespace_closed_events=list(self.namespace_closed_events),
-        )
 
     def active_names(self) -> list[str]:
         if self.namespace_registry is None:
@@ -193,13 +169,6 @@ class ToolCollection:
             return self.active_specs.get(str(name or "").strip())
         return self._find_by_short_name(self.active_specs, name)
 
-    def get_latent(self, name: str, namespace: str = "") -> ToolSpec | None:
-        if namespace:
-            return self.latent_specs.get(self.route_key(namespace, name))
-        if "." in str(name or ""):
-            return self.latent_specs.get(str(name or "").strip())
-        return self._find_by_short_name(self.latent_specs, name)
-
     def get_any(self, name: str, namespace: str = "") -> ToolSpec | None:
         if namespace:
             key = self.route_key(namespace, name)
@@ -221,11 +190,6 @@ class ToolCollection:
             return ""
         return self.namespace_registry.namespace_for_tool(name, namespace=namespace)
 
-    def is_namespace_active(self, namespace: str) -> bool:
-        if self.namespace_registry is None or self.namespace_state is None:
-            return namespace in self.active_namespace_order
-        return self.namespace_state.is_open(namespace, self.namespace_registry)
-
     def active_namespace_names(self) -> list[str]:
         if self.namespace_registry is None or self.namespace_state is None:
             return list(self.active_namespace_order)
@@ -235,24 +199,6 @@ class ToolCollection:
             if name in self.namespace_specs
             and self.namespace_specs[name].visible
         ]
-
-    def inactive_namespace_summaries(self) -> list[dict[str, str]]:
-        if self.namespace_registry is None:
-            return []
-        active = set(self.active_namespace_names())
-        entries: list[dict[str, str]] = []
-        for name in self.namespace_registry.order:
-            if name in active:
-                continue
-            spec = self.namespace_specs.get(name)
-            if spec is None:
-                continue
-            if not spec.visible or not spec.discoverable:
-                continue
-            if not any(self.route_key(name, tool) in self.all_specs for tool in spec.tools):
-                continue
-            entries.append({"name": name, "description": spec.description})
-        return entries
 
     def namespace_prompt_blocks(self) -> list[dict[str, Any]]:
         if self.namespace_registry is None:

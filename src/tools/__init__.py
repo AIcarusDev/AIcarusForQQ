@@ -46,7 +46,6 @@ from zoneinfo import ZoneInfo
 from llm.compression.config import normalize_generation_config
 
 from .namespaces import (
-    CORE_NAMESPACE,
     ModuleRegistry,
     NamespaceClosedEvent,
     NamespaceRegistry,
@@ -348,21 +347,13 @@ def _ensure_registry_tools_discovered(registry: NamespaceRegistry) -> None:
 def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool:
     if not name:
         return True
-    if name in {"qq_platform_enabled", "qq_adapter_enabled"}:
+    if name == "qq_platform_enabled":
         platforms = config.get("platforms")
         if isinstance(platforms, dict):
             qq_config = platforms.get("qq")
             if isinstance(qq_config, dict):
                 return bool(qq_config.get("enabled", False))
-
-        # Keep accepting the legacy config shape until callers have all moved
-        # through normalize_qq_platform_config(). Permission still comes from
-        # user configuration, never from the adapter's connection state.
-        legacy_config = config.get("qq_adapter")
-        return bool(
-            isinstance(legacy_config, dict)
-            and legacy_config.get("enabled", False)
-        )
+        return False
     if name == "browser_available":
         return True
     if name == "workspace_enabled":
@@ -594,7 +585,6 @@ def build_tools(
             module_name=getattr(mod, "__name__", name),
             result_cdata=bool(getattr(mod, "RESULT_CDATA", False)),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
-            always_available=namespace_spec.permanent,
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,
             namespace=namespace,
@@ -723,7 +713,6 @@ def _partition_namespace_specs(
                         mounted_spec,
                         visible_namespace=target,
                         mounted_to=target,
-                        mounted_by_module=module_name,
                     ),
                 )
 

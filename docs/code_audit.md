@@ -1346,3 +1346,21 @@
 ## 10. 修复状态日志
 
 当前尚未修改生产代码。后续每次修复在这里记录：问题编号、决策、修改提交/工作区状态、聚焦测试、全量回归、以及是否完成真实运行时验证。
+
+### 2026-10-18 第一批低风险清理
+
+- 删除明确无调用者的兼容/死代码：`src/llm/core/decision_filter.py`（整模块）、`parse_tool_arguments()` 包装、send_message 恒等 repair 分支、`database.upsert_group_card()` / `load_last_bot_turn()`、`log_config.log_tool_call()`、`runtime.core_restart.reset_runtime_request_state()`。
+- 删除三个一次性的旧诊断脚本：`scripts/inspect_daycore.py`、`scripts/inspect_daycore2.py`、`scripts/read_result.py`。
+- 修复两个 browser 导出脚本的失效导入（旧 `tools.browser_control` 路径与旧 `ChatSession` 名称）；`--help` / `--list` 均可运行。
+- 删除仅测试调用的 `WorkspaceControlPlane.describe_actions()` 及其两条描述合同测试；`start_job` 的真实守卫仍由 `test_workspace_action_guards_reject_invalid_state` 覆盖。
+- 修复 AUD-113 的测试污染：`tests/test_memory.py` 改用 `tmp_path` + `monkeypatch` 隔离数据库、memory 模块缓存和 `app_state`；此前遗留的 1156 个 `tmp/memory-test-*`（390 MB）和 120 个 `tmp/memory-v2-test-*`（20.3 MB）已删除。
+- 验证：改动文件 Ruff F401/F841/F821/F811/E9 通过；全量 `python -m pytest -q -p no:cacheprovider` 为 `1031 passed, 9 skipped`，耗时 64.29s。未做 QQ/NapCat、浏览器、WSL 在线验证。
+
+### 2026-10-18 第二批低风险清理
+
+- 删除仅测试消费的 `ToolCollection.inactive_namespace_summaries()`；`tests/test_tool_namespaces.py` 改用公开的 `namespace_prompt_blocks()` 计算未激活 namespace。
+- 删除 `ToolContract.result_model`、`ToolSpec.always_available`、`ToolSpec.mounted_by_module`、`ToolSpec.call_name` 及其生产赋值/测试断言；这些字段均无生产读者。
+- 删除无调用的 `ToolCollection.spec_key()`、`clone()`、`get_latent()`、`is_namespace_active()`；`tests/test_tool_namespaces.py` 不再依赖这些测试专用查询。
+- 删除 `LLMRoundRunner._get_transport()` 中只为 `object.__new__(LLMRoundRunner)` 测试构造服务的 transport 拼装回退；缺失 transport 现在直接报错。
+- 保留 `activation.surface/surfaces`：它仍是 manifest 中明确标注的预留平台分层字段，当前测试只固定元数据；若确认不实现，再单独删除。
+- 验证：`tests/test_tool_namespaces.py`、`test_memory_manage.py`、`test_round_runner_cognition_prefill.py`、`test_prompt_composer.py`、`test_tool_prompt_signatures.py`、`test_tool_execution_guard.py` 共 `122 passed`；改动文件 Ruff 通过。

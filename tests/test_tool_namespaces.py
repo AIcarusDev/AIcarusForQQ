@@ -44,6 +44,14 @@ def _handler(**_kwargs):
     return {"ok": True}
 
 
+def _inactive_namespace_names(collection: ToolCollection) -> set[str]:
+    return {
+        block["name"]
+        for block in collection.namespace_prompt_blocks()
+        if not block["active"]
+    }
+
+
 def _qq_enabled_config(**values) -> dict:
     config = {"platforms": {"qq": {"enabled": True}}}
     config.update(values)
@@ -194,7 +202,7 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             main_loop=loop,
         )
         assert "computer" not in collection.active_namespace_names()
-        assert any(item["name"] == "computer" for item in collection.inactive_namespace_summaries())
+        assert "computer" in _inactive_namespace_names(collection)
         assert collection.namespace_tool_names("computer") == [
             "command",
             "read_file",
@@ -361,9 +369,7 @@ def test_workspace_namespace_is_discoverable_on_every_root_platform():
                 main_loop=loop,
                 **context,
             )
-            assert "computer" in {
-                item["name"] for item in collection.inactive_namespace_summaries()
-            }
+            assert "computer" in _inactive_namespace_names(collection)
     finally:
         loop.close()
 
@@ -404,7 +410,7 @@ def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
             main_loop=loop,
         )
         assert "computer" not in enabled.active_namespace_names()
-        assert any(item["name"] == "computer" for item in enabled.inactive_namespace_summaries())
+        assert "computer" in _inactive_namespace_names(enabled)
     finally:
         loop.close()
 
@@ -946,8 +952,7 @@ def test_internal_runtime_namespaces_are_not_model_operable(fake_session):
     assert result["warnings"][0]["warning"]
     assert "preview" not in result
     assert "search" not in result
-    inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
-    assert "qq_runtime" not in inactive_namespaces
+    assert "qq_runtime" not in _inactive_namespace_names(collection)
 
 
 def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_session):
@@ -976,7 +981,6 @@ def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_sessi
     assert spec.namespace == "qq_runtime"
     assert spec.visible_namespace == "core"
     assert spec.mounted_to == "core"
-    assert spec.mounted_by_module == "qq"
     assert "qq_runtime" not in collection.active_namespace_names()
 
     core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
@@ -1008,7 +1012,7 @@ def test_build_tools_uses_namespace_registry(fake_session):
 
     assert "core.namespace_manage" in collection.active_names()
     assert "core.recall_skill_resource" in collection.active_names()
-    inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
+    inactive_namespaces = _inactive_namespace_names(collection)
     assert "qq_group_info" in inactive_namespaces
     assert "qq_contacts" in inactive_namespaces
 
@@ -1126,7 +1130,6 @@ def test_core_chat_namespace_visible_on_core_session_and_uses_short_tool_names(m
     assert "core_chat.search_chat_log" in collection.active_names()
     send_spec = collection.active_specs["core_chat.send_message"]
     assert send_spec.name == "send_message"
-    assert send_spec.call_name == "core_chat.send_message"
     assert send_spec.effect.surface == "core"
 
 
@@ -1143,9 +1146,9 @@ def test_core_chat_namespace_hidden_when_core_page_closed():
     )
 
     assert "core_chat.send_message" not in collection.all_specs
-    assert "core_chat" not in {item["name"] for item in collection.inactive_namespace_summaries()}
+    assert "core_chat" not in _inactive_namespace_names(collection)
     assert "qq_social.send_message" not in collection.all_specs
-    assert "qq_social" not in {item["name"] for item in collection.inactive_namespace_summaries()}
+    assert "qq_social" not in _inactive_namespace_names(collection)
 
 
 def test_platform_owned_namespaces_are_mutually_exclusive(fake_session):
@@ -1235,9 +1238,7 @@ def test_enabled_qq_namespaces_remain_operable_while_adapter_is_connecting(fake_
         provider=None,
     )
 
-    inactive_namespaces = {
-        item["name"] for item in collection.inactive_namespace_summaries()
-    }
+    inactive_namespaces = _inactive_namespace_names(collection)
     assert "qq_profile" in inactive_namespaces
 
     opened = ToolExecutor(
@@ -1292,9 +1293,7 @@ def test_disabled_qq_config_hides_namespaces_even_if_client_is_connected(fake_se
         provider=None,
     )
 
-    assert "qq_profile" not in {
-        item["name"] for item in collection.inactive_namespace_summaries()
-    }
+    assert "qq_profile" not in _inactive_namespace_names(collection)
     assert "qq_profile.get_user_info" not in collection.all_specs
 
 

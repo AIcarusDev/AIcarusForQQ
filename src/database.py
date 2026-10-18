@@ -2215,35 +2215,6 @@ def save_llm_usage_event_sync(
         return False
 
 
-async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
-    """加载最新一轮 bot 输出（用于重启后恢复 previous_cycle_json 和 tool_calls）。
-
-    返回 (result, tool_calls, created_at_iso)，created_at_iso 为 UTC ISO 格式时间戳。
-    """
-    import json as _json
-    async with _connect() as db:
-        async with db.execute(
-            "SELECT result_json, tool_calls, created_at FROM bot_turns ORDER BY created_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-    if not row:
-        return None, None, None
-    try:
-        result = _json.loads(row[0])
-    except Exception:
-        result = None
-    try:
-        tool_calls = _json.loads(row[1]) if row[1] else None
-    except Exception:
-        tool_calls = None
-    created_at_iso = (
-        datetime.fromtimestamp(row[2] / 1000, tz=timezone.utc).isoformat()
-        if row[2]
-        else None
-    )
-    return result, tool_calls, created_at_iso
-
-
 # ── Bot 自身 ─────────────────────────────────────────────
 
 async def get_bot_self() -> tuple[str, str]:
@@ -2338,11 +2309,6 @@ async def upsert_group(
         group_id, group_name, member_count,
     )
     return group_uid
-
-
-async def upsert_group_card(group_id: str, group_name: str, bot_card: str, member_count: int = 0) -> None:
-    """兼容旧调用，内部转发到 upsert_group。"""
-    await upsert_group(group_id, group_name, bot_card, member_count)
 
 
 # ── 用户账号 ─────────────────────────────────────────────

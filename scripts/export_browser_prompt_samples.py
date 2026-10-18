@@ -17,8 +17,8 @@ import app_state  # noqa: E402
 import browser  # noqa: E402
 import llm.prompt.user_prompt_builder as user_prompt_builder  # noqa: E402
 from export_browser_world_samples import _sanitize, _summarize, _xml_text_and_image_count  # noqa: E402
-from llm.session import ChatSession  # noqa: E402
-from tools.browser_control.browser_control import execute  # noqa: E402
+from llm.session import ConversationSession  # noqa: E402
+from tools.browser.browser_use.browser_control.browser_control import execute  # noqa: E402
 from browser.session import browser_world_snapshot  # noqa: E402
 from browser.world_prompt import render_browser_world_content  # noqa: E402
 
@@ -112,8 +112,8 @@ def _configure_runtime() -> None:
     app_state.GEN = app_state.config["generation"]
 
 
-def _sample_session(slug: str) -> ChatSession:
-    session = ChatSession()
+def _sample_session(slug: str) -> ConversationSession:
+    session = ConversationSession()
     session.set_conversation_meta("group", "browser_prompt_samples", "Browser prompt samples", 2)
     session._timezone = ZoneInfo("Asia/Shanghai")
     session._qq_id = "10000"

@@ -197,19 +197,8 @@ class LLMRoundRunner:
 
     def _get_transport(self) -> OpenAICompatClient:
         transport = getattr(self, "transport", None)
-        if transport is not None:
-            return transport
-
-        # Unit tests sometimes construct the runner with object.__new__ to avoid
-        # creating a real SDK client. Production construction always sets
-        # self.transport in __init__.
-        transport = object.__new__(OpenAICompatClient)
-        transport.client = getattr(self, "client")
-        transport.provider = getattr(self, "provider", "")
-        transport.model = getattr(self, "model", "")
-        transport.vision_enabled = bool(getattr(self, "_vision_enabled", True))
-        transport._thinking_control = getattr(self, "_thinking_control", "enable_thinking")
-        self.transport = transport
+        if transport is None:
+            raise RuntimeError("LLMRoundRunner.transport is not initialized")
         return transport
 
     def _normalize_generation_for_transport(self, gen: dict) -> dict:

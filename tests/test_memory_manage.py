@@ -170,7 +170,6 @@ def test_memory_namespace_and_bound_skill_stay_available(monkeypatch):
     for name in ("memory_write", "memory_search", "memory_read"):
         spec = collection.active_specs[f"memory_manage.{name}"]
         assert spec.visible_namespace == "memory_manage"
-        assert spec.always_available
     block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
     assert "skill sentinel" in block
     assert 'from="namespace.memory_manage"' in block

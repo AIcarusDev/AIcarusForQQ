@@ -207,12 +207,3 @@ async def shutdown_after_round_if_requested() -> bool:
     wake_runtime_shutdown_waiters()
     event.set()
     return True
-
-
-def reset_runtime_request_state() -> None:
-    """Reset process-local flags. Mainly useful in tests."""
-    import app_state
-
-    app_state.core_restart_requested = False
-    app_state.core_restart_exit_code = None
-    app_state.launcher_switch_requested = False

@@ -30,14 +30,9 @@ def _try_load_object(text: str) -> tuple[dict[str, Any] | None, list[str]]:
     return (value if isinstance(value, dict) else None), []
 
 
-def _repair_send_message_raw_arguments(text: str) -> tuple[str, list[str]]:
-    """send_message 不再恢复旧 params 嵌套协议。"""
-    return text, []
-
-
 def parse_argument_object(
     raw_arguments: str | None,
-    fn_name: str,
+    _fn_name: str,
 ) -> tuple[dict[str, Any] | None, bool, str | None, list[str]]:
     """用少量 tool-call 专用策略把 arguments 恢复为 JSON object。"""
     if raw_arguments is None:
@@ -62,17 +57,6 @@ def parse_argument_object(
     _push(stripped)
     _push(_extract_object_slice(raw_text))
     _push(_extract_object_slice(stripped))
-
-    if fn_name == "send_message":
-        for candidate, notes in list(candidates):
-            repaired_candidate, repair_notes = _repair_send_message_raw_arguments(candidate)
-            if not repair_notes:
-                continue
-            merged_notes = [*notes, *repair_notes]
-            _push(repaired_candidate, merged_notes)
-            sliced_candidate = _extract_object_slice(repaired_candidate)
-            if sliced_candidate != repaired_candidate:
-                _push(sliced_candidate, merged_notes)
 
     for candidate, notes in candidates:
         parsed, parse_changes = _try_load_object(candidate)

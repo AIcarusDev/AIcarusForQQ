@@ -170,26 +170,6 @@ def process_tool_arguments(
     return result
 
 
-def parse_tool_arguments(
-    raw_arguments: str | None,
-    fn_name: str,
-    provider_name: str,
-    tool_declaration: dict[str, Any] | None = None,
-    schema_repairer: SchemaRepairer | None = None,
-    semantic_sanitizer: SemanticSanitizer | None = None,
-) -> tuple[dict[str, Any], bool]:
-    """兼容旧调用点，只返回 (args, ok)。"""
-    result = process_tool_arguments(
-        raw_arguments,
-        fn_name,
-        provider_name,
-        tool_declaration,
-        schema_repairer,
-        semantic_sanitizer,
-    )
-    return result.args, result.ok
-
-
 def build_tool_argument_error(result: ToolArgumentProcessingResult) -> dict[str, Any]:
     """将处理失败结果转为回传模型的结构化错误。"""
     if result.ok or result.failure is None:

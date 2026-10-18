@@ -323,12 +323,6 @@ def test_completed_artifacts_do_not_override_unfinished_provisioning_marker(
     assert observed.state == "not_built"
     assert "ownership_marker" in observed.pending_changes
 
-    actions = {action["id"]: action for action in control.describe_actions(
-        workspace_config(), observed=observed
-    )}
-    assert actions["build"]["available"] is True
-    assert actions["apply"]["available"] is False
-
     with pytest.raises(WorkspaceControlError):
         control.start_job("apply", workspace_config())
     job = control.start_job("build", workspace_config())
@@ -613,7 +607,7 @@ def test_worker_dispatches_resource_apply_and_system_rebuild_separately(
         ),
     ],
 )
-def test_workspace_action_descriptions_match_execution_guards(
+def test_workspace_action_guards_reject_invalid_state(
     control_kwargs: dict,
     action: str,
     config_overrides: dict,
@@ -621,16 +615,10 @@ def test_workspace_action_descriptions_match_execution_guards(
 ) -> None:
     control = ProbeControl(tmp_path, **control_kwargs)
     config = workspace_config(**config_overrides)
-    descriptions = {
-        item["id"]: item
-        for item in control.describe_actions(config)
-    }
 
-    assert descriptions[action]["available"] is False
-    assert descriptions[action]["disabled_reason"]
     with pytest.raises(WorkspaceControlError):
         control.start_job(
             action,
             config,
-            confirmation=descriptions[action]["expected_confirmation"],
+            confirmation=control_module.ACTION_CONFIRMATIONS.get(action, ""),
         )

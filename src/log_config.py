@@ -46,7 +46,6 @@ _LEVEL_STYLES: dict[int, tuple[str, str]] = {
 
 _PROMPT_STYLE   = "\033[95m"  # 亮洋红
 _RESPONSE_STYLE = "\033[96m"  # 亮青色
-_TOOL_STYLE     = "\033[93m"  # 亮黄
 _COGNITION_STYLE = "\033[94m"  # 亮蓝
 _BOX_STYLE      = "\033[90m"  # 暗灰
 
@@ -223,11 +222,9 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
 #   AICQ.llm.io.prompt    模型输入
 #   AICQ.llm.io.response  模型输出
 #   AICQ.llm.io.cognition 模型输出的 <cognition>
-#   AICQ.llm.io.tool      模型发起的工具调用
 _prompt_logger   = logging.getLogger("AICQ.llm.io.prompt")
 _response_logger = logging.getLogger("AICQ.llm.io.response")
 _cognition_logger = logging.getLogger("AICQ.llm.io.cognition")
-_tool_logger     = logging.getLogger("AICQ.llm.io.tool")
 
 _BOX_W = 70
 _BOX_H = "─" * _BOX_W
@@ -307,19 +304,3 @@ def log_cognition(provider: str, cognition: str | None):
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
         stacklevel=2,
     )
-
-
-def log_tool_call(provider: str, fn_name: str, args: dict):
-    """DEBUG 级别记录 LLM 发起的工具调用原文，以格式化方框展示。"""
-    import json as _json
-    args_text = _json.dumps(args, ensure_ascii=False, indent=2)
-    _tool_logger.debug(
-        "%s",
-        f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
-        f"{_BOX_STYLE}│{_RESET} {_TOOL_STYLE}🔧 TOOL CALL  {fn_name}  [{provider}]{_RESET}\n"
-        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
-        f"{args_text}\n"
-        f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
-        stacklevel=2,
-    )
-
