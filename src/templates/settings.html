@@ -1,5 +1,5 @@
 {% extends "_base.html" %} {% set active_page = "settings" %} {% block title
-%}设置{% endblock %} {% block topbar_title %}设置{% endblock %} {% block
+%}设置{% endblock %} {% block topbar_title %}设置 <span aria-hidden="true" class="settings-breadcrumb-separator">/</span> <span id="workbenchSectionTitle">主模型</span>{% endblock %} {% block
 topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block head_extra %}
 <style>
   .page-content {
@@ -996,29 +996,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     .workspace-path-row { grid-template-columns: 1fr; }
   }
 </style>
+<link rel="stylesheet" href="/static/css/settings-workbench.css?v=20261102-25">
 {% endblock %} {% block content %}
 <div class="settings-shell">
-  <div class="page-hero">
-    <div class="page-title">
-      <h1>设置控制台</h1>
-      <p>管理 WebUI 的模型、连接与运行参数。</p>
-    </div>
-    <div class="page-actions">
-      <span class="page-status" id="settingsStatus">未加载</span>
-      <button class="btn-ghost" type="button" onclick="loadSettings()">
-        重新加载
-      </button>
-      <button
-        class="btn-primary"
-        id="saveBtn"
-        type="button"
-        onclick="saveSettings()"
-        disabled
-      >
-        已保存
-      </button>
-    </div>
-  </div>
 
   <div class="toast" id="toast"></div>
   <label class="mobile-section-picker" for="mobileSectionSelect">
@@ -1031,113 +1011,30 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   </label>
 
   <div class="settings-layout">
-    <nav class="settings-nav" aria-label="设置分区">
-      <div class="nav-kicker">Settings</div>
-      <button
-        type="button"
-        data-section-button="security"
-        onclick="showSection('security')"
-      >
-        面板安全 <span>WebUI</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="providers"
-        onclick="showSection('providers')"
-      >
-        模型供应商 <span>API</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="model"
-        onclick="showSection('model')"
-      >
-        主模型 <span>LLM</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="submodels"
-        onclick="showSection('submodels')"
-      >
-        子模型 <span>Agents</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="memory"
-        onclick="showSection('memory')"
-      >
-        记忆 <span>Memory</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="persona"
-        onclick="showSection('persona')"
-      >
-        角色 <span>Prompt</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="agent_prompt"
-        onclick="showSection('agent_prompt')"
-      >
-        Agent Prompt <span>Cognition</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="self_image"
-        onclick="showSection('self_image')"
-      >
-        自身形象 <span>Personal-img</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="cache"
-        onclick="showSection('cache')"
-      >
-        缓存管理 <span>Cache</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="workspace"
-        onclick="showSection('workspace')"
-      >
-        Agent 电脑 <span>Linux</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="qq_adapter"
-        onclick="showSection('qq_adapter')"
-      >
-        QQ / QQ adapter <span>IM</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="tts"
-        onclick="showSection('tts')"
-      >
-        TTS 插件 <span>Voice</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="qq-supervisor"
-        onclick="showSection('qq-supervisor')"
-      >
-        QQ 自动重启 <span>Recovery</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="auxiliary"
-        onclick="showSection('auxiliary')"
-      >
-        辅助服务 <span>Services</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="advanced"
-        onclick="showSection('advanced')"
-      >
-        高级 <span>Advanced</span>
-      </button>
+    <nav class="settings-nav" aria-label="设置分区"><h1 class="workbench-nav-title">设置</h1>
+      <details class="settings-nav-group" open><summary>模型连接</summary><div>
+        <button type="button" data-section-button="providers" onclick="showSection('providers')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/database.svg')" aria-hidden="true"></span><span class="settings-nav-label">模型供应商</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="model" onclick="showSection('model')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/box.svg')" aria-hidden="true"></span><span class="settings-nav-label">主模型</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="submodels" onclick="showSection('submodels')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/box.svg')" aria-hidden="true"></span><span class="settings-nav-label">子模型</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+      </div></details>
+      <details class="settings-nav-group" open><summary>行为与记忆</summary><div>
+        <button type="button" data-section-button="persona" onclick="showSection('persona')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/user-circle.svg')" aria-hidden="true"></span><span class="settings-nav-label">角色</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="agent_prompt" onclick="showSection('agent_prompt')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/brain.svg')" aria-hidden="true"></span><span class="settings-nav-label">认知指令</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="memory" onclick="showSection('memory')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/database.svg')" aria-hidden="true"></span><span class="settings-nav-label">记忆</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="self_image" onclick="showSection('self_image')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/photo.svg')" aria-hidden="true"></span><span class="settings-nav-label">自身形象</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+      </div></details>
+      <details class="settings-nav-group" ><summary>连接与服务</summary><div>
+        <button type="button" data-section-button="qq_adapter" onclick="showSection('qq_adapter')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/bell.svg')" aria-hidden="true"></span><span class="settings-nav-label">QQ 连接</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="qq-supervisor" onclick="showSection('qq-supervisor')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/refresh.svg')" aria-hidden="true"></span><span class="settings-nav-label">QQ 自动重启</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="tts" onclick="showSection('tts')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/volume.svg')" aria-hidden="true"></span><span class="settings-nav-label">语音插件</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="workspace" onclick="showSection('workspace')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/device-desktop.svg')" aria-hidden="true"></span><span class="settings-nav-label">Agent 电脑</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="auxiliary" onclick="showSection('auxiliary')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/world.svg')" aria-hidden="true"></span><span class="settings-nav-label">辅助服务</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+      </div></details>
+      <details class="settings-nav-group" ><summary>系统</summary><div>
+        <button type="button" data-section-button="security" onclick="showSection('security')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/shield-lock.svg')" aria-hidden="true"></span><span class="settings-nav-label">访问安全</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="cache" onclick="showSection('cache')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/trash.svg')" aria-hidden="true"></span><span class="settings-nav-label">缓存管理</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+        <button type="button" data-section-button="advanced" onclick="showSection('advanced')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/adjustments.svg')" aria-hidden="true"></span><span class="settings-nav-label">高级</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
+      </div></details>
     </nav>
 
     <main class="settings-content">
@@ -1157,14 +1054,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <button class="btn-ghost" type="button" onclick="addProviderRow()">
               + 添加
             </button>
-            <button
-              class="btn-primary"
-              id="saveProvidersBtn"
-              type="button"
-              onclick="saveProviders()"
-            >
-              保存
-            </button>
+            <span class="hint">使用底部按钮保存本分区。</span>
           </div>
         </div>
         <div class="section-body">
@@ -1345,8 +1235,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     <div class="switch-field">
                       <div>
                         <label
-                          ><input type="checkbox" id="advanced_sampling_top_p_enabled" />
-                          top_p</label
+                          ><input type="checkbox" id="advanced_sampling_top_p_enabled" /><span class="sampling-param-name">top_p</span></label
                         ><span class="hint">OpenAI 兼容顶层参数。</span>
                       </div>
                     </div>
@@ -1362,8 +1251,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     <div class="switch-field">
                       <div>
                         <label
-                          ><input type="checkbox" id="advanced_sampling_top_k_enabled" />
-                          top_k</label
+                          ><input type="checkbox" id="advanced_sampling_top_k_enabled" /><span class="sampling-param-name">top_k</span></label
                         ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
                       </div>
                     </div>
@@ -1381,8 +1269,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     <div class="switch-field">
                       <div>
                         <label
-                          ><input type="checkbox" id="advanced_sampling_min_p_enabled" />
-                          min_p</label
+                          ><input type="checkbox" id="advanced_sampling_min_p_enabled" /><span class="sampling-param-name">min_p</span></label
                         ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
                       </div>
                     </div>
@@ -1550,7 +1437,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>配置辅助模型：视觉桥接、工具执行前守门、上下文压缩。</p>
+            <p>视频理解、视觉桥接和工具守门可按需配置；上下文压缩需要模型。底部按钮只保存本分区。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1687,10 +1574,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <span class="model-card-chevron">&#9660;</span>
             </div>
             <div class="model-card-body" id="card-video-understanding-body">
+              <p class="hint">不使用视频理解时可选择“暂不配置”，无需填写模型。保存该状态会移除已保存的视频连接；切换选项会保留本页输入，刷新后不保留。</p>
               <div class="row">
                 <div class="field"><label>连接方式</label>
-                  <select id="video_understanding_connection_mode">
-                    <option value="provider">继承供应商（保存时清除专用端点和密钥覆盖）</option>
+                  <select id="video_understanding_connection_mode" onchange="syncOptionalFields()">
+                    <option value="unconfigured">暂不配置视频理解</option>
+                    <option value="provider">使用模型供应商</option>
                     <option value="explicit">使用专用端点和密钥</option>
                   </select>
                 </div>
@@ -2291,7 +2180,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       >
         <div class="section-head">
           <div>
-            <h2>角色与身份</h2>
+            <h2>角色</h2>
             <p>配置自我名称、时区、监护人信息和 persona 文本。</p>
           </div>
         </div>
@@ -2350,7 +2239,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           </div>
           <div class="group">
             <div class="group-title">
-              <h3>Persona</h3>
+              <h3>角色文本</h3>
               <span class="subtle">独立保存并立即应用</span>
             </div>
             <pre id="persona-preview" class="persona-preview"></pre>
@@ -2370,7 +2259,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 class="btn-secondary"
                 onclick="openPersonaEdit()"
               >
-                编辑 Persona</button
+                编辑角色文本</button
               ><button
                 id="persona-save-btn"
                 type="button"
@@ -2393,7 +2282,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
           <div class="group">
             <div class="group-title">
-              <h3>QQ 社交风格 Skill</h3>
+              <h3>QQ 社交风格</h3>
               <span class="subtle">保存到本地用户副本，不进入 Git</span>
             </div>
             <pre id="qq-social-style-preview" class="persona-preview"></pre>
@@ -2444,7 +2333,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       >
         <div class="section-head">
           <div>
-            <h2>Agent Prompt</h2>
+            <h2>认知指令</h2>
             <p>配置全局自定义指令；保存后从下一次 Agent 轮次开始生效。</p>
           </div>
         </div>
@@ -2752,19 +2641,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       <section
         class="settings-section"
         id="section-tts"
-        data-section-title="TTS 插件"
+        data-section-title="语音插件"
       >
         <div class="section-head">
           <div>
-            <h2>TTS 插件</h2>
-            <p>管理跨进程语音合成 Worker 的 WebSocket 接入。</p>
+            <h2>语音插件</h2>
+            <p>接入外部语音合成程序。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="group">
             <div class="toggle-row">
               <div class="toggle-copy">
-                <strong>启用 TTS 插件服务端</strong
+                <strong>启用 语音插件服务端</strong
                 ><span>开启后外部 TTS Worker 可连接并注册。</span>
               </div>
               <label class="toggle"
@@ -2785,7 +2674,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="row">
               <div class="field">
-                <label>secret_token</label
+                <label>连接口令</label
                 ><input id="tts_secret_token" type="text" autocomplete="off" />
                 <span class="hint"
                   >Worker 注册时必须提供同一个 token；留空表示不校验。</span
@@ -3135,10 +3024,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   type="text"
                   placeholder="http://127.0.0.1:7890"
                 /><span class="hint">留空保留现有值；填写新地址会覆盖。</span
-                ><label class="hint"
-                  ><input id="proxy_openai_clear" type="checkbox" />
-                  清除当前代理</label
                 >
+                <input id="proxy_openai_clear" type="hidden" value="" />
+                <div class="proxy-clear-actions">
+                  <button class="btn-ghost" id="proxy_openai_clear_button" type="button" onclick="toggleProxyClear('proxy_openai')">清除代理</button>
+                  <span class="hint" id="proxy_openai_clear_status" role="status"></span>
+                </div>
               </div>
               <div class="field">
                 <label>Tavily 网络搜索代理</label
@@ -3147,10 +3038,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   type="text"
                   placeholder="http://127.0.0.1:7890"
                 /><span class="hint">留空保留现有值；填写新地址会覆盖。</span
-                ><label class="hint"
-                  ><input id="proxy_tavily_clear" type="checkbox" />
-                  清除当前代理</label
                 >
+                <input id="proxy_tavily_clear" type="hidden" value="" />
+                <div class="proxy-clear-actions">
+                  <button class="btn-ghost" id="proxy_tavily_clear_button" type="button" onclick="toggleProxyClear('proxy_tavily')">清除代理</button>
+                  <span class="hint" id="proxy_tavily_clear_status" role="status"></span>
+                </div>
               </div>
             </div>
           </div>
@@ -3227,11 +3120,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       <section
         class="settings-section"
         id="section-security"
-        data-section-title="面板安全"
+        data-section-title="访问安全"
       >
         <div class="section-head">
           <div>
-            <h2>面板安全</h2>
+            <h2>访问安全</h2>
             <p>设置 WebUI 页面、API 与实时连接的访问密码。</p>
           </div>
           <div class="section-head-actions">
@@ -3311,29 +3204,51 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         </div>
       </section>
     </main>
+    <aside class="workbench-context" aria-label="状态与帮助">
+      <details id="workbenchContextPanel" open>
+        <summary>状态与帮助</summary>
+        <div class="workbench-context-content">
+          <h2>已保存配置</h2><p class="hint">展示已保存的设置；当前草稿尚未生效。</p>
+          <dl id="workbenchSavedSummary"></dl>
+          <div class="workbench-recovery" id="workbenchRecovery" role="status"></div>
+          <p class="workbench-context-note" id="workbenchContextNote"></p>
+          <button class="btn-ghost workbench-mobile-reload" type="button" onclick="reloadSettings()">重新加载所有设置</button>
+        </div>
+      </details>
+    </aside>
   </div>
+  <footer class="workbench-actions" id="workbenchActions">
+    <div class="workbench-save-state"><span id="settingsStatus" role="status">加载中</span><span id="workbenchOtherDrafts"></span></div>
+    <div class="workbench-action-buttons">
+      <button class="btn-ghost" id="workbenchDiscard" type="button" onclick="discardWorkbenchSection()" disabled>撤销本分区修改</button>
+      <button class="btn-primary" id="saveBtn" type="button" onclick="saveSettings()" disabled>已保存</button>
+      <button class="btn-ghost" type="button" onclick="reloadSettings()">重新加载</button>
+    </div>
+  </footer>
 </div>
 {% endblock %} {% block scripts %}
+<script src="/static/js/settings-workbench.js?v=20261102-25"></script>
 <script>
   const TYPING_SPEED_STEPS = [0.5, 0.75, 1.0, 1.5, 2.0];
   const SECTION_IDS = [
-    ["security", "面板安全"],
+    ["security", "访问安全"],
     ["providers", "模型供应商"],
     ["model", "主模型"],
     ["submodels", "子模型"],
     ["memory", "记忆"],
     ["persona", "角色"],
-    ["agent_prompt", "Agent Prompt"],
+    ["agent_prompt", "认知指令"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
     ["workspace", "Agent 电脑"],
     ["qq_adapter", "QQ / QQ adapter"],
-    ["tts", "TTS 插件"],
+    ["tts", "语音插件"],
     ["qq-supervisor", "QQ 自动重启"],
     ["auxiliary", "辅助服务"],
     ["advanced", "高级"],
   ];
   const state = {
+    activeSection: "model",
     raw: null,
     providers: {},
       lists: { private: [], group: [] },
@@ -3409,19 +3324,34 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       false,
     );
   }
-  function showSection(id, updateHash = true) {
+  function showSection(id, updateHash = true, immediate = false) {
+    if (!immediate && switchWorkbenchSection(id, () => showSection(id, updateHash, true))) return;
+    state.activeSection = id;
     SECTION_IDS.forEach(([sectionId]) => {
-      $("section-" + sectionId)?.classList.toggle("active", sectionId === id);
+      const pane = $("section-" + sectionId);
+      if (pane) {
+        const selected = sectionId === id;
+        pane.classList.toggle("active", selected);
+        pane.inert = !selected;
+        pane.setAttribute("aria-hidden", String(!selected));
+      }
       document
         .querySelector(`[data-section-button="${sectionId}"]`)
         ?.classList.toggle("active", sectionId === id);
     });
     if ($("mobileSectionSelect")) $("mobileSectionSelect").value = id;
-    if (updateHash) history.replaceState(null, "", `#${id}`);
+    if (updateHash && location.hash !== `#${id}`) history.pushState(null, "", `#${id}`);
+    const activeButton = document.querySelector(`[data-section-button="${id}"]`);
+    activeButton?.closest("details")?.setAttribute("open", "");
+    document.querySelectorAll("[data-section-button]").forEach(button => {
+      if (button === activeButton) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    });
     if (id === "self_image") loadSelfImages();
     if (id === "cache") loadCacheInfo();
     if (id === "workspace") loadWorkspaceStatus();
     if (id === "security") loadWebUIAuthStatus();
+    updateDirtyState();
   }
   function statusTone(text) {
     if (/失败|错误/.test(text)) return "error";
@@ -3442,14 +3372,23 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function captureSavedState() {
     state.lastSavedSignature = settingsSignature();
+    rememberWorkbenchControls();
     updateDirtyState();
   }
-  function setSaveButtonState(dirty) {
+  function setSaveButtonState() {
     const btn = $("saveBtn");
     if (!btn || state.saving) return;
+    const section = state.activeSection;
+    btn.hidden = !SECTION_PATHS[section];
+    const dirty = sectionHasChanges(section);
+    const title = SECTION_IDS.find(([id]) => id === section)?.[1] || "当前分区";
     btn.disabled = !dirty;
-    btn.textContent = dirty ? "保存并应用" : "已保存";
-    btn.title = dirty ? "保存并热重载运行时配置" : "当前没有未保存更改";
+    btn.textContent = section === "persona"
+      ? (dirty ? "保存名称与时区" : "名称与时区已保存")
+      : (dirty ? `保存${title}设置` : "当前分区已保存");
+    btn.title = section === "persona"
+      ? "这里只保存名称与时区；角色文本、监护人介绍和社交风格使用各自的确认保存按钮"
+      : "只保存当前分区；其他分区的未保存内容会保留";
   }
   function setSaveButtonBusy(text) {
     const btn = $("saveBtn");
@@ -3470,8 +3409,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (state.hydrating) return;
     const dirty = hasUnsavedChanges();
     setSaveButtonState(dirty);
-    if (dirty) setStatus("有未保存更改");
-    else if (state.raw) setStatus("已加载");
+    if (dirty) setStatus(sectionHasChanges(state.activeSection) ? "当前分区有未保存更改" : "其他分区有未保存更改");
+    else if (state.raw) setStatus(allDraftsDirty() ? "有文本草稿，请使用对应的确认保存按钮" : "当前分区已保存");
+    refreshWorkbench();
   }
   function normalizeGuardianInfoValue(raw = rawValue("guardian_info")) {
     const normalized = String(raw ?? "").trim();
@@ -3515,6 +3455,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     btn.disabled = state.guardianSaving || !dirty;
     cancelBtn.disabled = state.guardianSaving;
     btn.textContent = state.guardianSaving ? "保存中..." : "确认保存";
+    if (!state.hydrating) updateDirtyState();
   }
   function formatRange(id, labelId) {
     const input = $(id);
@@ -3565,7 +3506,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function populateProviderSelect(selectId, selected) {
     const select = $(selectId);
     if (!select) return;
-    select.innerHTML = "";
+    select.innerHTML = '<option value="">请选择供应商</option>';
     const names = Object.keys(state.providers || {}).sort((a, b) =>
       providerLabel(a).localeCompare(providerLabel(b), "zh-CN"),
     );
@@ -3619,6 +3560,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function renderProviderRows(keys = {}) {
     const container = $("providerRows");
     if (!container) return;
+    const drafts = new Map(Array.from(container.querySelectorAll(".provider-row")).map(row =>
+      [row.dataset.providerId, row.querySelector('[data-field="api_key"]')?.value || ""]));
     container.innerHTML = "";
     Object.entries(state.providers || {})
       .sort((a, b) =>
@@ -3632,7 +3575,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         const keyPlaceholder =
           keyEnv && keys[keyEnv] ? `已设置 (${keys[keyEnv]})` : "未设置";
         row.innerHTML = `
-          <div class="field"><label>名称</label><input data-field="name" value="${escapeHtml(provider.name ?? "")}" /></div>
+          <div class="field"><label>名称</label><input data-field="name" placeholder="例如：我的模型供应商" value="${escapeHtml(provider.name ?? "")}" /></div>
           <div class="field"><label>URL</label><input data-field="base_url" value="${escapeHtml(provider.base_url || "")}" placeholder="https://api.example.com/v1" /></div>
           <div class="field"><label>Key</label><input data-field="api_key" type="password" autocomplete="new-password" placeholder="${escapeHtml(keyPlaceholder)}" /></div>
           <button class="btn-ghost" type="button" title="删除供应商">删除</button>
@@ -3651,11 +3594,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             updateDirtyState();
           });
         row.querySelector("button")?.addEventListener("click", () => {
+          const references = Array.from(document.querySelectorAll('select[id$="provider"], #provider'))
+            .filter(select => select.value === id)
+            .map(select => select.closest(".model-card")?.querySelector("h3")?.textContent ||
+              select.closest("section")?.dataset.sectionTitle || "模型配置");
+          if (references.length && !confirm(`此供应商正在被 ${[...new Set(references)].join("、")} 引用。删除后需要重新选择供应商，是否继续？`)) return;
           delete state.providers[id];
           renderProviderRows(keys);
           refreshProviderSelects();
           updateDirtyState();
         });
+        row.querySelectorAll('input[data-field]').forEach(input => {
+          input.id = `provider-${id}-${input.dataset.field}`;
+          input.previousElementSibling.htmlFor = input.id;
+        });
+        row.querySelector('[data-field="api_key"]').value = drafts.get(id) || "";
         container.appendChild(row);
       });
   }
@@ -3691,6 +3644,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (fields)
       fields.style.display =
         value("vision_mode") === "bridge" ? "flex" : "none";
+    syncWorkbenchModes();
   }
   function setPasswordPlaceholder(id, masked, emptyText = "未设置") {
     const el = $(id);
@@ -4044,6 +3998,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         : "";
       revision.style.color = "";
     }
+    if (!state.hydrating) updateDirtyState();
   }
 
   function hydrateAgentPromptSnapshot(snapshot) {
@@ -4128,6 +4083,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
   }
 
+  async function reloadSettings() {
+    if (state.saving) return;
+    if (allDraftsDirty() && !confirm("重新加载会丢弃所有分区尚未保存的修改，是否继续？")) return;
+    await loadSettings();
+  }
+  function allDraftsDirty() {
+    return hasUnsavedChanges() || guardianHasUnsavedChanges() || agentPromptHasUnsavedChanges() ||
+      ($("persona-edit")?.style.display === "block" && rawValue("persona-edit") !== personaOriginal) ||
+      ($("qq-social-style-edit")?.style.display === "block" && rawValue("qq-social-style-edit") !== qqSocialStyleOriginal);
+  }
   async function loadSettings(options = {}) {
     const preserveGuardianDraft = options.preserveGuardianDraft === true;
     const guardianDraft = preserveGuardianDraft
@@ -4149,7 +4114,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "配置加载失败");
       state.raw = data;
-      state.providers = data.model_providers || {};
+      state.providers = structuredClone(data.model_providers || {});
       hydrateSettings(data);
       if (agentPromptSnapshot) {
         hydrateAgentPromptSnapshot(agentPromptSnapshot);
@@ -4243,7 +4208,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
       onVisionModeChange();
     const vu = data.video_understanding || {};
-    setValue("video_understanding_connection_mode", (vu.base_url || vu.api_key || vu.api_key_env) ? "explicit" : "provider");
+    setValue("video_understanding_connection_mode", !vu.model ? "unconfigured" : (vu.base_url || vu.api_key || vu.api_key_env) ? "explicit" : "provider");
     setValue("video_understanding_base_url", vu.base_url || "");
     setValue("video_understanding_api_key_env", vu.api_key_env || "");
     setValue("video_understanding_api_key", vu.api_key || "");
@@ -4389,15 +4354,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     formatRange("memory_processing_temperature", "memoryProcessingTempVal");
     const proxies = data.proxies || {};
     setValue("proxy_openai", "");
-    setChecked("proxy_openai_clear", false);
+    setValue("proxy_openai_clear", "");
     $("proxy_openai").placeholder = proxies.OPENAI_PROXY
       ? `已设置 (${proxies.OPENAI_PROXY})`
       : "未设置";
     setValue("proxy_tavily", "");
-    setChecked("proxy_tavily_clear", false);
+    setValue("proxy_tavily_clear", "");
     $("proxy_tavily").placeholder = proxies.TAVILY_PROXY
       ? `已设置 (${proxies.TAVILY_PROXY})`
       : "未设置";
+    syncOptionalFields();
     state.hydrating = false;
     captureSavedState();
     updateGuardianSaveButton();
@@ -4478,6 +4444,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       $("persona-edit-btn").style.display = "inline-flex";
     if ($("persona-save-btn")) $("persona-save-btn").style.display = "none";
     if ($("persona-cancel-btn")) $("persona-cancel-btn").style.display = "none";
+    updateDirtyState();
   }
     async function confirmPersonaSave() {
       const btn = $("persona-save-btn");
@@ -4493,7 +4460,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       if (data.success) {
         $("persona-preview").textContent = rawValue("persona-edit") || "（空）";
         cancelPersonaEdit(false);
-        showToast("Persona 已保存并应用", "success");
+        showToast("角色文本已保存并应用", "success");
       } else showToast("保存失败: " + (data.error || "未知错误"), "error");
     } catch (error) {
       showToast("请求失败: " + error.message, "error");
@@ -4528,6 +4495,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         $("qq-social-style-save-btn").style.display = "none";
       if ($("qq-social-style-cancel-btn"))
         $("qq-social-style-cancel-btn").style.display = "none";
+      updateDirtyState();
     }
     async function confirmQqSocialStyleSave() {
       const btn = $("qq-social-style-save-btn");
@@ -4544,7 +4512,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           const body = data.body ?? rawValue("qq-social-style-edit");
           $("qq-social-style-preview").textContent = body || "（空）";
           cancelQqSocialStyleEdit(false);
-          showToast("QQ 社交风格 Skill 已保存", "success");
+          showToast("QQ 社交风格 已保存", "success");
         } else {
           showToast("保存失败: " + (data.error || "未知错误"), "error");
         }
@@ -4676,7 +4644,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function clearAuxiliaryApiKeyInputs() {
     document
       .querySelectorAll("[data-aux-api-key]")
-      .forEach((input) => (input.value = ""));
+      .forEach(input => {
+        if (input.value.trim()) input.placeholder = "已设置";
+        input.value = "";
+      });
   }
   function collectProviderApiKeys() {
     const api_keys = {};
@@ -4731,12 +4702,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function applySavedProviders(data) {
     const providers = data.model_providers || {};
     const apiKeys = data.api_keys || {};
-    state.providers = providers;
+    state.providers = structuredClone(providers);
     state.raw = state.raw || {};
     state.raw.model_providers = providers;
     state.raw.api_keys = apiKeys;
+    clearProviderApiKeyInputs();
     renderProviderRows(apiKeys);
-    hydrateAuxiliaryServices(apiKeys, state.raw.service_env || {});
+    // A provider save must not refill unrelated service drafts.
     refreshProviderSelects();
     clearProviderApiKeyInputs();
   }
@@ -4750,8 +4722,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       baseline = buildSettingsPayload();
     }
     baseline.model_providers = savedProviders;
-    baseline.api_keys = {};
+    baseline.api_keys ||= {};
+    Object.values(savedProviders).forEach(provider => {
+      delete baseline.api_keys[provider.api_key_env];
+    });
     state.lastSavedSignature = JSON.stringify(baseline);
+    rememberWorkbenchControls("providers");
     updateDirtyState();
   }
   function splitComma(id) {
@@ -4768,10 +4744,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function collectProxies() {
     const proxies = {};
-    if (checked("proxy_openai_clear")) proxies.OPENAI_PROXY = "";
+    if (value("proxy_openai_clear") === "1") proxies.OPENAI_PROXY = "";
     else if (value("proxy_openai"))
       proxies.OPENAI_PROXY = value("proxy_openai");
-    if (checked("proxy_tavily_clear")) proxies.TAVILY_PROXY = "";
+    if (value("proxy_tavily_clear") === "1") proxies.TAVILY_PROXY = "";
     else if (value("proxy_tavily"))
       proxies.TAVILY_PROXY = value("proxy_tavily");
     return proxies;
@@ -4799,6 +4775,116 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     };
   }
 
+  const SECTION_PATHS = {
+    providers: ["model_providers", "api_keys"],
+    model: ["provider", "model", "model_name", "generation", "max_calls_per_minute", "output_requirements"],
+    submodels: ["vision", "vision_bridge", "video_understanding", "tool_execution_guard", "cognition_compression"],
+    memory: ["memory"],
+    persona: ["self_name", "timezone"],
+    qq_adapter: ["typing_speed", "platforms.qq.enabled", "platforms.qq.adapter", "platforms.qq.access", "platforms.qq.attention", "platforms.qq.recovery"],
+    "qq-supervisor": ["platforms.qq.supervisor"],
+    tts: ["tts"],
+    auxiliary: ["api_keys.TAVILY_API_KEY", "api_keys.QWEATHER_API_KEY", "service_env", "web_search", "browser_control"],
+    advanced: ["proxies"],
+  };
+  function getPath(object, path) {
+    return path.split(".").reduce((part, key) => part?.[key], object);
+  }
+  function setPath(object, path, value) {
+    const keys = path.split(".");
+    const last = keys.pop();
+    const target = keys.reduce((part, key) => part[key] ||= {}, object);
+    if (value === undefined) delete target[last];
+    else target[last] = structuredClone(value);
+  }
+  function sectionPayload(section, full = buildSettingsPayload()) {
+    const payload = {};
+    for (const path of SECTION_PATHS[section] || []) setPath(payload, path, getPath(full, path));
+    if (section === "providers") {
+      const names = new Set(Object.entries(full.model_providers || {}).map(([id, provider]) => providerApiKeyEnv(id, provider)));
+      payload.api_keys = Object.fromEntries(Object.entries(full.api_keys || {}).filter(([key]) => names.has(key)));
+    }
+    return payload;
+  }
+  function sectionHasChanges(section) {
+    if (!state.lastSavedSignature || !SECTION_PATHS[section]) return false;
+    return JSON.stringify(sectionPayload(section)) !==
+      JSON.stringify(sectionPayload(section, JSON.parse(state.lastSavedSignature)));
+  }
+  function videoSettingsPayload() {
+    const mode = value("video_understanding_connection_mode");
+    if (mode === "unconfigured") return {connection_mode: mode};
+    return {
+      connection_mode: mode,
+      ...(mode === "explicit" ? {
+        base_url: value("video_understanding_base_url"),
+        api_key_env: value("video_understanding_api_key_env"),
+        api_key: value("video_understanding_api_key"),
+      } : {provider: value("video_understanding_provider")}),
+      model: value("video_understanding_model"),
+      protocol: value("video_understanding_protocol"),
+      max_size_mb: floatValue("video_understanding_max_size_mb", 20),
+      timeout: floatValue("video_understanding_timeout", 120),
+    };
+  }
+  function syncOptionalFields() {
+    const mode = value("video_understanding_connection_mode");
+    const videoBody = $("card-video-understanding-body");
+    videoBody.querySelectorAll(".field").forEach(field => {
+      if (field.contains($("video_understanding_connection_mode"))) return;
+      const explicit = !!field.querySelector('#video_understanding_base_url, #video_understanding_api_key, #video_understanding_api_key_env');
+      const provider = field.contains($("video_understanding_provider"));
+      field.hidden = mode === "unconfigured" || (explicit && mode !== "explicit") || (provider && mode !== "provider");
+      field.style.display = field.hidden ? "none" : "";
+    });
+    videoBody.querySelector(".model-fetch-btn")?.toggleAttribute("hidden", mode !== "provider");
+    for (const [bodyId, toggleId] of [
+      ["card-tool-guard-body", "guard_enabled"],
+      ["card-event-extraction-body", "event_extraction_enabled"],
+      ["card-memory-processing-body", "memory_processing_enabled"],
+    ]) {
+      if (toggleId === "guard_enabled" && $(bodyId).dataset.workbench === "true") {
+        $(bodyId).hidden = !checked(toggleId);
+        continue;
+      }
+      Array.from($(bodyId).children).forEach((child, index) => {
+        if (index > 0 && !child.querySelector("#memory_active_enabled"))
+          child.style.display = checked(toggleId) ? "" : "none";
+      });
+    }
+    syncWorkbenchModes();
+  }
+  function showFieldError(id, message) {
+    document.querySelectorAll(".settings-field-error").forEach(el => el.remove());
+    document.querySelectorAll('[aria-invalid="true"]').forEach(el => el.removeAttribute("aria-invalid"));
+    const field = $(id);
+    if (field) {
+      const section = field.closest("section");
+      if (section) showSection(section.id.replace("section-", ""));
+      const body = field.closest(".model-card-body");
+      body?.classList.remove("hidden");
+      if (field.closest("details")) field.closest("details").open = true;
+      body?.previousElementSibling?.classList.remove("collapsed");
+      field.setAttribute("aria-invalid", "true");
+      if (message.includes("尚未保存")) {
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "btn-ghost settings-field-error";
+        link.textContent = "前往模型供应商（保留当前草稿）";
+        link.onclick = () => showSection("providers");
+        field.closest(".field")?.appendChild(link);
+      }
+      const hint = document.createElement("p");
+      hint.className = "settings-field-error";
+      hint.style.color = "var(--error-text)";
+      hint.setAttribute("role", "alert");
+      hint.textContent = message;
+      field.closest(".field")?.appendChild(hint);
+      field.scrollIntoView({block: "center", behavior: "smooth"});
+      field.focus({preventScroll: true});
+    }
+    showToast(message, "error");
+  }
   function buildSettingsPayload() {
     const mainProvider = value("provider");
     const visionMode = value("vision_mode");
@@ -4829,17 +4915,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           max_size_mb: intValue("vision_bridge_cache_max_size_mb", 500),
         },
       },
-      video_understanding: {
-        connection_mode: value("video_understanding_connection_mode"),
-        base_url: value("video_understanding_base_url"),
-        api_key_env: value("video_understanding_api_key_env"),
-        api_key: value("video_understanding_api_key"),
-        provider: value("video_understanding_provider"),
-        model: value("video_understanding_model"),
-        protocol: value("video_understanding_protocol"),
-        max_size_mb: floatValue("video_understanding_max_size_mb", 20.0),
-        timeout: floatValue("video_understanding_timeout", 120.0),
-      },
+      video_understanding: videoSettingsPayload(),
       generation: {
         temperature: floatValue("temperature", 1.0),
         max_output_tokens: intValue("max_output_tokens", 10000),
@@ -4994,8 +5070,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
         processing: {
           enabled: checked("memory_processing_enabled"),
-          event_structuring_enabled: checked("memory_processing_event_structuring_enabled"),
-          algorithmic_storyline_enabled: checked(
+          event_structuring_enabled: checked("memory_processing_enabled") && checked("memory_processing_event_structuring_enabled"),
+          algorithmic_storyline_enabled: checked("memory_processing_enabled") && checked(
             "memory_processing_algorithmic_storyline_enabled",
           ),
           dry_run: checked("memory_processing_dry_run"),
@@ -5036,66 +5112,77 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     };
   }
   function validatePayload(payload) {
-    if (!Object.keys(payload.model_providers || {}).length)
-      return "请至少添加一个模型供应商";
-    if (!payload.provider) return "请选择主模型供应商";
-    if (!payload.model) return "请填写主模型 ID";
-
-    if (payload.vision_bridge.enabled && !payload.vision_bridge.provider)
-      return "启用 Vision Bridge 时需要选择供应商";
-    const qqPayload = payload.platforms?.qq || {};
-    const qqAdapterPayload = qqPayload.adapter || {};
-    const qqReverseWsPayload = qqAdapterPayload.reverse_ws || {};
-    if (!["auto", "napcat", "llonebot"].includes(qqAdapterPayload.type))
-      return "QQ adapter 只能选择自动识别、NapCat 或 LLoneBot";
-    if (qqReverseWsPayload.port < 1 || qqReverseWsPayload.port > 65535)
-      return "QQ adapter 端口必须在 1-65535 之间";
-    if (payload.tts.port < 1 || payload.tts.port > 65535)
-      return "TTS 端口必须在 1-65535 之间";
-    if (
-      payload.tts.max_concurrent_tasks_per_plugin < 1 ||
-      payload.tts.max_concurrent_tasks_per_plugin > 128
-    )
-      return "TTS 单插件并发上限必须在 1-128 之间";
-    if (
-      payload.web_search?.searxng?.enabled &&
-      !payload.web_search.searxng.base_url
-    )
-      return "启用 SearXNG 时需要填写地址";
-    if (payload.vision_bridge.enabled && !payload.vision_bridge.model)
-      return "启用 Vision Bridge 时需要填写视觉模型 ID";
-    if (
-      payload.tool_execution_guard.enabled &&
-      (!payload.tool_execution_guard.provider || !payload.tool_execution_guard.model)
-    )
-      return "启用工具执行前守门时需要选择供应商并填写模型 ID";
-    if (
-      !payload.cognition_compression.provider ||
-      !payload.cognition_compression.model
-    )
-      return "上下文压缩模型需要选择供应商并填写模型 ID";
-    if (
-      payload.memory.auto_archive.enabled &&
-      (!payload.memory.auto_archive.provider ||
-        !payload.memory.auto_archive.model)
-    )
-      return "启用事件提取时需要选择供应商并填写模型 ID";
-    if (
-      payload.memory.processing.enabled &&
-      (!payload.memory.processing.provider ||
-        !payload.memory.processing.model)
-    )
-      return "启用记忆处理模型时需要选择供应商并填写模型 ID";
-    if (
-      (payload.memory.processing.event_structuring_enabled ||
-        payload.memory.processing.algorithmic_storyline_enabled) &&
-      !payload.memory.processing.enabled
-    )
-      return "启用事件结构化或算法故事线前需要先启用记忆处理模型";
-    return "";
+    const error = (id, message) => ({id, message});
+    const binding = (cfg, prefix, label) => {
+      if (!cfg?.provider) return error(prefix === "main" ? "provider" : `${prefix}_provider`, `请选择${label}供应商`);
+      if (!cfg.model) return error(prefix === "main" ? "model" : `${prefix}_model`, `请填写${label}模型 ID`);
+      if (!state.raw?.model_providers?.[cfg.provider]) return error(prefix === "main" ? "provider" : `${prefix}_provider`, "该供应商尚未保存，请先前往模型供应商分区保存连接信息");
+      return null;
+    };
+    if ("provider" in payload) {
+      const issue = binding(payload, "main", "主模型");
+      if (issue) return issue;
+    }
+    for (const [cfg, prefix, label, required] of [
+      [payload.vision_bridge, "vision_bridge", "视觉桥接", payload.vision_bridge?.enabled],
+      [payload.tool_execution_guard, "guard", "工具执行前守门", payload.tool_execution_guard?.enabled],
+      [payload.cognition_compression, "compression", "上下文压缩", !!payload.cognition_compression],
+      [payload.memory?.auto_archive, "event_extraction", "事件提取", payload.memory?.auto_archive?.enabled],
+      [payload.memory?.processing, "memory_processing", "记忆处理", payload.memory?.processing?.enabled],
+    ]) {
+      if (required) {
+        const issue = binding(cfg, prefix, label);
+        if (issue) return issue;
+      }
+    }
+    const video = payload.video_understanding;
+    if (video && video.connection_mode !== "unconfigured") {
+      if (video.connection_mode === "provider") {
+        const issue = binding(video, "video_understanding", "视频理解");
+        if (issue) return issue;
+      } else if (!video.base_url) return error("video_understanding_base_url", "请填写视频专用端点");
+      if (!video.model) return error("video_understanding_model", "请填写视频理解模型 ID");
+    }
+    if ((payload.memory?.processing?.event_structuring_enabled || payload.memory?.processing?.algorithmic_storyline_enabled) && !payload.memory.processing.enabled)
+      return error("memory_processing_enabled", "启用事件结构化或算法故事线前需要先启用记忆处理模型");
+    if (payload.web_search?.searxng?.enabled && !payload.web_search.searxng.base_url)
+      return error("searxng_base_url", "启用 SearXNG 时需要填写地址");
+    if (payload.generation && payload.generation.cognition_compression_trigger_rounds >= payload.generation.llm_contents_max_rounds)
+      return error("cognition_compression_trigger_rounds", "压缩触发轮数必须小于最大上下文轮数");
+    const section = $("section-" + state.activeSection);
+    for (const field of section?.querySelectorAll("input, select, textarea") || []) {
+      if (field.id && field.getClientRects().length && !field.disabled && !field.checkValidity())
+        return error(field.id, field.validationMessage);
+    }
+    return null;
+  }
+  function lockSection(section) {
+    const controls = Array.from($("section-" + section)?.querySelectorAll("input, select, textarea, button") || []);
+    const previous = controls.map(control => control.disabled);
+    controls.forEach(control => control.disabled = true);
+    return () => controls.forEach((control, index) => control.disabled = previous[index]);
+  }
+  function serverErrorField(message, section) {
+    for (const [label, id] of [
+      ["视频", "video_understanding_model"], ["Vision Bridge", "vision_bridge_model"],
+      ["守门", "guard_model"], ["压缩", "compression_model"],
+      ["事件提取", "event_extraction_model"], ["记忆处理", "memory_processing_model"],
+      ["主模型", "model"], ["timezone", "timezone"],
+    ]) if (message.includes(label)) return id;
+    return $("section-" + section)?.querySelector("input[id], select[id], textarea[id]")?.id;
   }
   async function saveProviders() {
-    const btn = $("saveProvidersBtn");
+    if (state.saving) return;
+    for (const row of document.querySelectorAll(".provider-row")) {
+      const url = row.querySelector('[data-field="base_url"]');
+      if (!url.value.trim()) {
+        showFieldError(url.id, "请填写供应商 URL，例如 https://api.example.com/v1");
+        return;
+      }
+    }
+    state.saving = true;
+    const unlock = lockSection("providers");
+    const btn = $("saveBtn");
     const payload = buildProvidersPayload();
     btn.disabled = true;
     btn.textContent = "保存中...";
@@ -5120,23 +5207,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       setStatus("保存失败");
       showToast("请求失败: " + error.message, "error");
     } finally {
-      btn.disabled = false;
-      btn.textContent = "保存";
+      unlock();
+      state.saving = false;
+      updateDirtyState();
     }
   }
   async function saveSettings() {
-    if (!hasUnsavedChanges()) {
-      setStatus("已加载");
-      showToast("当前没有需要保存的更改", "success");
-      return;
-    }
-    const payload = buildSettingsPayload();
-    const validationError = validatePayload(payload);
-    if (validationError) {
-      showToast(validationError, "error");
-      return;
-    }
+    if (state.saving) return;
+    const section = state.activeSection;
+    if (section === "providers") return saveProviders();
+    if (!sectionHasChanges(section)) return;
+    const payload = sectionPayload(section);
+    const issue = validatePayload(payload);
+    if (issue) return showFieldError(issue.id, issue.message);
     state.saving = true;
+    const unlock = lockSection(section);
     setSaveButtonBusy("保存中...");
     setStatus("保存中");
     try {
@@ -5146,33 +5231,35 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (data.success) {
-        showToast("设置已保存并应用", "success");
-        clearProviderApiKeyInputs();
-        clearAuxiliaryApiKeyInputs();
-        [
-          "proxy_openai",
-          "proxy_tavily",
-        ].forEach((id) => setValue(id, ""));
-        const preserveGuardianDraft = guardianHasUnsavedChanges();
-        const guardianDraft = rawValue("guardian_info");
-        const preserveAgentPromptDraft = agentPromptHasUnsavedChanges();
-        const agentPromptDraft = agentPromptValues();
-        await loadSettings({
-          preserveGuardianDraft,
-          guardianDraft,
-          preserveAgentPromptDraft,
-          agentPromptDraft,
-        });
-        captureSavedState();
-      } else {
-        setStatus("保存失败");
-        showToast("保存失败: " + (data.error || "未知错误"), "error");
+      if (!res.ok || !data.success) {
+        const message = data.error || "保存失败";
+        unlock();
+        showFieldError(data.field || serverErrorField(message, section), message);
+        return;
       }
+      // No whole-page refill: other sections keep their drafts, including secrets.
+      if (section === "auxiliary") clearAuxiliaryApiKeyInputs();
+      if (section === "advanced") {
+        ["proxy_openai", "proxy_tavily"].forEach(id => {
+          if (value(id)) $(id).placeholder = "已设置";
+          else if (value(id + "_clear") === "1") $(id).placeholder = "未设置";
+          setValue(id, "");
+          setValue(id + "_clear", "");
+        });
+      }
+      const baseline = JSON.parse(state.lastSavedSignature);
+      const current = buildSettingsPayload();
+      for (const path of SECTION_PATHS[section]) setPath(baseline, path, getPath(current, path));
+      state.lastSavedSignature = JSON.stringify(baseline);
+      rememberWorkbenchControls(section);
+      document.querySelectorAll(".settings-field-error").forEach(el => el.remove());
+      document.querySelectorAll('[aria-invalid="true"]').forEach(el => el.removeAttribute("aria-invalid"));
+      const title = SECTION_IDS.find(([id]) => id === section)?.[1];
+      showToast(`${title}设置已保存${data.applied === false ? "，启动 Core 后生效" : "并应用"}`, "success");
     } catch (error) {
-      setStatus("保存失败");
-      showToast("请求失败: " + error.message, "error");
+      showToast("保存请求失败，请保留当前输入并重试：" + error.message, "error");
     } finally {
+      unlock();
       state.saving = false;
       updateDirtyState();
     }
@@ -5577,8 +5664,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       if (hint) hint.textContent = "启用后，WebUI 页面、API 与实时连接均需通过登录验证。";
     } catch (error) {
       if (status) status.textContent = "加载失败";
-      showToast("读取面板安全状态失败: " + error.message, "error");
+      showToast("读取访问安全状态失败: " + error.message, "error");
     }
+    refreshWorkbench();
   }
   function togglePasswordVisibility(inputId, button) {
     const input = $(inputId);
@@ -5660,6 +5748,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
   function initEvents() {
     $("native_reasoning_as_cognition").addEventListener("change", syncCognitionThinkingMode);
+    initWorkbench();
     initSections();
     initModelPickers();
     bindRange("temperature", "temperatureVal");
@@ -5678,26 +5767,28 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       $(id)?.addEventListener("input", updateAgentPromptSaveButton),
     );
     $("provider")?.addEventListener("change", onProviderChange);
+    ["guard_enabled", "event_extraction_enabled", "memory_processing_enabled"].forEach(id =>
+      $(id)?.addEventListener("change", syncOptionalFields));
     bindListInput("private", "whitelistInput");
     bindListInput("group", "groupWhitelistInput");
     document
       .querySelector(".settings-shell")
-      ?.addEventListener("input", updateDirtyState);
+      ?.addEventListener("input", (event) => {
+        event.target.removeAttribute("aria-invalid");
+        event.target.closest(".field")?.querySelectorAll(".settings-field-error").forEach(el => el.remove());
+        updateDirtyState();
+      });
     document
       .querySelector(".settings-shell")
       ?.addEventListener("change", updateDirtyState);
     window.addEventListener("beforeunload", (event) => {
-      if (
-        !hasUnsavedChanges() &&
-        !guardianHasUnsavedChanges() &&
-        !agentPromptHasUnsavedChanges()
-      )
+      if (!allDraftsDirty())
         return;
       event.preventDefault();
       event.returnValue = "";
     });
   }
   initEvents();
-  loadSettings();
+  window.appPageReady = loadSettings();
 </script>
 {% endblock %}

@@ -649,7 +649,7 @@ async def settings_save():
                     save_env_proxy(proxy_name, proxies_data.get(proxy_name, ""))
         load_dotenv(override=True)
 
-    await asyncio.to_thread(_write_env)
+    # Environment changes are written only after request validation succeeds.
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
@@ -1018,8 +1018,13 @@ async def settings_save():
         vu_data = data["video_understanding"]
         new_vu = dict(new_cfg.get("video_understanding", {}))
         connection_mode = vu_data.get("connection_mode")
-        if connection_mode not in (None, "provider", "explicit"):
+        if connection_mode not in (None, "unconfigured", "provider", "explicit"):
             return jsonify({"success": False, "error": "视频连接方式无效"}), 400
+        if connection_mode == "unconfigured":
+            # Empty bindings are already supported by the video runtime.
+            # This is a web configuration state, not a new runtime enable flag.
+            new_vu = {}
+            vu_data = {}
         if connection_mode == "provider" or (connection_mode is None and vu_data.get("provider")):
             for key in ("base_url", "api_key", "api_key_env"):
                 new_vu.pop(key, None)
@@ -1056,46 +1061,7 @@ async def settings_save():
             return jsonify({"success": False, "error": "视频理解需要填写模型 ID"}), 400
         new_cfg["video_understanding"] = new_vu
 
-    def _payload_binding_error(label: str, payload_part: dict, required: bool = True) -> str | None:
-        provider = (payload_part.get("provider") or "").strip()
-        model = (payload_part.get("model") or "").strip()
-        if required and (not provider or not model):
-            return f"{label} 必须同时选择供应商并填写模型 ID"
-        return None
-
     normalize_qq_platform_config(new_cfg, remove_legacy=True)
-
-    raw_auto_archive = (
-        data.get("memory", {}).get("auto_archive", {})
-        if isinstance(data.get("memory"), dict)
-        else {}
-    )
-    raw_memory_processing = (
-        data.get("memory", {}).get("processing", {})
-        if isinstance(data.get("memory"), dict)
-        else {}
-    )
-    auto_archive_required = _section_enabled(raw_auto_archive, True)
-    memory_processing_required = _section_enabled(raw_memory_processing, False)
-
-    for error in (
-        _payload_binding_error("主模型", data),
-        _payload_binding_error("工具执行前守门模型", data.get("tool_execution_guard", {}), bool(data.get("tool_execution_guard", {}).get("enabled", False))) if isinstance(data.get("tool_execution_guard"), dict) else None,
-        _payload_binding_error("上下文压缩模型", data.get("cognition_compression", {})) if isinstance(data.get("cognition_compression"), dict) else None,
-        _payload_binding_error(
-            "记忆事件提取模型",
-            raw_auto_archive if isinstance(raw_auto_archive, dict) else {},
-            auto_archive_required,
-        ) if isinstance(data.get("memory"), dict) else None,
-        _payload_binding_error(
-            "记忆处理模型",
-            raw_memory_processing if isinstance(raw_memory_processing, dict) else {},
-            memory_processing_required,
-        ) if isinstance(data.get("memory"), dict) else None,
-        _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
-    ):
-        if error:
-            return jsonify({"success": False, "error": error}), 400
 
     normalize_profile_config_inplace(new_cfg)
 
@@ -1104,7 +1070,7 @@ async def settings_save():
     def _validate_model_binding(label: str, cfg_part: dict, required: bool = True) -> str | None:
         provider = (cfg_part.get("provider") or "").strip()
         model = (cfg_part.get("model") or "").strip()
-        if not required and not provider and not model:
+        if not required:
             return None
         if not provider or not model:
             return f"{label} 必须同时选择供应商并填写模型 ID"
@@ -1115,24 +1081,36 @@ async def settings_save():
     new_auto_archive = new_cfg.get("memory", {}).get("auto_archive", {})
     new_memory_processing = new_cfg.get("memory", {}).get("processing", {})
 
-    for error in (
-        _validate_model_binding("主模型", new_cfg),
-        _validate_model_binding("工具执行前守门模型", new_cfg.get("tool_execution_guard", {}), bool(new_cfg.get("tool_execution_guard", {}).get("enabled", False))),
-        _validate_model_binding("上下文压缩模型", new_cfg.get("cognition_compression", {}), bool(new_cfg.get("cognition_compression", {}))),
-        _validate_model_binding(
-            "记忆事件提取模型",
-            new_auto_archive if isinstance(new_auto_archive, dict) else {},
-            _section_enabled(new_auto_archive, True),
-        ),
-        _validate_model_binding(
-            "记忆处理模型",
-            new_memory_processing if isinstance(new_memory_processing, dict) else {},
-            _section_enabled(new_memory_processing, False),
-        ),
-        _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
+    # A partial settings request validates only bindings it actually changes.
+    # Inactive optional models may keep unfinished configuration for later editing.
+    bindings = []
+    if any(key in data for key in ("provider", "model")):
+        bindings.append(("主模型", new_cfg, True))
+    for key, label, required in (
+        ("tool_execution_guard", "工具执行前守门模型", bool(new_cfg.get("tool_execution_guard", {}).get("enabled", False))),
+        ("cognition_compression", "上下文压缩模型", True),
+        ("vision_bridge", "Vision Bridge", bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
     ):
+        if key in data:
+            bindings.append((label, new_cfg.get(key, {}), required))
+    memory_data = data.get("memory", {})
+    if isinstance(memory_data, dict):
+        if "auto_archive" in memory_data:
+            bindings.append(("记忆事件提取模型", new_auto_archive, _section_enabled(new_auto_archive, True)))
+        if "processing" in memory_data:
+            bindings.append(("记忆处理模型", new_memory_processing, _section_enabled(new_memory_processing, False)))
+    for label, part, required in bindings:
+        error = _validate_model_binding(label, part, required)
         if error:
             return jsonify({"success": False, "error": error}), 400
+
+    if "timezone" in data:
+        try:
+            ZoneInfo(new_cfg["timezone"])
+        except (ValueError, KeyError):
+            return jsonify({"success": False, "field": "timezone", "error": "时区无效，请填写例如 Asia/Shanghai"}), 400
+
+    await asyncio.to_thread(_write_env)
 
     if getattr(app_state, "webui_only", False) or getattr(app_state, "webui_standalone", False):
         await asyncio.to_thread(save_config, new_cfg)
@@ -1148,17 +1126,30 @@ async def settings_save():
 
     # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
     # create_adapter / VisionBridge 会初始化 httpx.Client，属于慢同步操作
+    model_key_names = {provider.get("api_key_env") for provider in providers.values()}
+    refresh_connections = bool(
+        model_key_names.intersection(api_keys_data)
+        or "OPENAI_PROXY" in proxies_data
+        or "model_providers" in data
+    )
+
     def _create_and_save():
-        adapter = create_adapter(new_cfg)
+        # Saving a web settings section must not initialize unrelated model connections.
+        main_changed = refresh_connections or any(key in data for key in ("provider", "model", "generation"))
+        adapter = create_adapter(new_cfg) if main_changed else app_state.adapter
         guard_cfg_ = new_cfg.get("tool_execution_guard", {})
         guard_adapter_ = None
-        if guard_cfg_.get("enabled", False) and guard_cfg_.get("provider") and guard_cfg_.get("model"):
+        if "tool_execution_guard" not in data and not refresh_connections:
+            guard_adapter_ = app_state.tool_execution_guard_adapter
+        elif guard_cfg_.get("enabled", False) and guard_cfg_.get("provider") and guard_cfg_.get("model"):
             guard_adapter_ = create_adapter(
                 build_tool_execution_guard_adapter_cfg(new_cfg, guard_cfg_)
             )
         event_extraction_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
         event_extraction_adapter_ = None
-        if (
+        if "auto_archive" not in memory_data and not refresh_connections:
+            event_extraction_adapter_ = app_state.event_extraction_adapter
+        elif (
             event_extraction_cfg_.get("enabled", True)
             and event_extraction_cfg_.get("provider")
             and event_extraction_cfg_.get("model")
@@ -1168,7 +1159,9 @@ async def settings_save():
             )
         memory_processing_cfg_ = new_cfg.get("memory", {}).get("processing", {})
         memory_processing_adapter_ = None
-        if (
+        if "processing" not in memory_data and not refresh_connections:
+            memory_processing_adapter_ = app_state.memory_processing_adapter
+        elif (
             memory_processing_cfg_.get("enabled", False)
             and memory_processing_cfg_.get("provider")
             and memory_processing_cfg_.get("model")
@@ -1178,12 +1171,14 @@ async def settings_save():
             )
         compression_cfg_ = new_cfg.get("cognition_compression", {})
         compression_adapter_ = None
-        if compression_cfg_.get("provider") and compression_cfg_.get("model"):
+        if "cognition_compression" not in data and not refresh_connections:
+            compression_adapter_ = app_state.cognition_compression_adapter
+        elif compression_cfg_.get("provider") and compression_cfg_.get("model"):
             compression_adapter_ = create_adapter(
                 build_compression_adapter_cfg(new_cfg, compression_cfg_)
             )
+        vb = VisionBridge(new_cfg) if refresh_connections or "vision_bridge" in data or "vision" in data else app_state.vision_bridge
         save_config(new_cfg)
-        vb = VisionBridge(new_cfg)
         return (
             adapter,
             guard_cfg_,
@@ -1252,57 +1247,59 @@ async def settings_save():
         prompt_files=new_cfg.get("prompt_files", {}) or {},
     )
 
-    try:
-        await _reload_qq_platform_client(new_qq_platform_cfg, old_qq_platform_cfg)
-    except Exception as exc:
-        logger.exception("热重载 QQ adapter 失败")
-        return jsonify({"success": False, "error": f"QQ 平台热重载失败: {exc}"}), 400
+    if "qq" in (data.get("platforms") or {}):
+        try:
+            await _reload_qq_platform_client(new_qq_platform_cfg, old_qq_platform_cfg)
+        except Exception as exc:
+            logger.exception("热重载 QQ adapter 失败")
+            return jsonify({"success": False, "error": f"QQ 平台热重载失败: {exc}"}), 400
 
-    # QQ 平台监管器热重载
-    from platforms.qq.supervisor import QQAdapterSupervisor
+        # QQ 平台监管器热重载
+        from platforms.qq.supervisor import QQAdapterSupervisor
 
-    qq_runtime = get_platform("qq")
-    qq_client = getattr(qq_runtime, "client", None)
-    new_supervisor = QQAdapterSupervisor(
-        new_qq_platform_cfg.get("supervisor", {}) or {},
-        client=qq_client,
-    )
-    if qq_runtime is not None:
-        qq_runtime.supervisor = new_supervisor
-    if qq_client is not None:
-        qq_client.set_supervisor(
-            new_supervisor if new_supervisor.is_configured() else None
+        qq_runtime = get_platform("qq")
+        qq_client = getattr(qq_runtime, "client", None)
+        new_supervisor = QQAdapterSupervisor(
+            new_qq_platform_cfg.get("supervisor", {}) or {},
+            client=qq_client,
         )
+        if qq_runtime is not None:
+            qq_runtime.supervisor = new_supervisor
+        if qq_client is not None:
+            qq_client.set_supervisor(
+                new_supervisor if new_supervisor.is_configured() else None
+            )
 
     # ── 热重载 TTS 插件服务端 ───────────────────────
-    try:
-        from tts import TTSServer
+    if "tts" in data:
+        try:
+            from tts import TTSServer
 
-        old_tts_server = app_state.tts_server
-        if old_tts_server is not None:
-            await old_tts_server.stop()
+            old_tts_server = app_state.tts_server
+            if old_tts_server is not None:
+                await old_tts_server.stop()
 
-        def _buffer_tts_audio(task_id: str, pcm: bytes) -> None:
-            app_state.tts_audio_buffers.setdefault(task_id, bytearray()).extend(pcm)
+            def _buffer_tts_audio(task_id: str, pcm: bytes) -> None:
+                app_state.tts_audio_buffers.setdefault(task_id, bytearray()).extend(pcm)
 
-        app_state.tts_audio_buffers.clear()
-        if app_state.tts_cfg.get("enabled", False):
-            new_tts_server = TTSServer(
-                host=app_state.tts_cfg.get("host", "127.0.0.1"),
-                port=int(app_state.tts_cfg.get("port", 8765)),
-                secret_token=app_state.tts_cfg.get("secret_token", ""),
-                on_audio_chunk=_buffer_tts_audio,
-                max_concurrent_tasks_per_plugin=int(
-                    app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)
-                ),
-            )
-            await new_tts_server.start()
-            app_state.tts_server = new_tts_server
-        else:
+            app_state.tts_audio_buffers.clear()
+            if app_state.tts_cfg.get("enabled", False):
+                new_tts_server = TTSServer(
+                    host=app_state.tts_cfg.get("host", "127.0.0.1"),
+                    port=int(app_state.tts_cfg.get("port", 8765)),
+                    secret_token=app_state.tts_cfg.get("secret_token", ""),
+                    on_audio_chunk=_buffer_tts_audio,
+                    max_concurrent_tasks_per_plugin=int(
+                        app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)
+                    ),
+                )
+                await new_tts_server.start()
+                app_state.tts_server = new_tts_server
+            else:
+                app_state.tts_server = None
+        except Exception:
             app_state.tts_server = None
-    except Exception:
-        app_state.tts_server = None
-        logger.exception("热重载 TTS 插件服务端失败")
+            logger.exception("热重载 TTS 插件服务端失败")
 
     return jsonify({"success": True})
 

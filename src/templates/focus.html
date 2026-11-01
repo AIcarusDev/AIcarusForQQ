@@ -72,6 +72,8 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
     border-right: 1px solid var(--border);
   }
   .col-header {
@@ -89,6 +91,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   }
   .turns-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 4px 0;
   }
@@ -201,9 +204,10 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
 
   /* ── Sessions sub-panel ───────────────────────────────── */
   .sessions-panel {
-    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    max-height: 200px;
+    max-height: min(34%, 240px);
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
@@ -212,8 +216,14 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     flex: 1;
   }
   .session-row {
-    padding: 5px 14px;
-    font-size: 12px;
+    width: 100%;
+    min-height: 34px;
+    padding: 7px 14px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    font-size: 13px;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -223,6 +233,8 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   .session-row:hover {
     background: var(--surface);
   }
+  .session-row.is-selected { background: var(--accent-dim); }
+  .session-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .session-row.is-focus {
     color: var(--accent);
     font-weight: 600;
@@ -670,6 +682,21 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       min-height: 44px;
     }
   }
+  /* Balance records, conversation and browser on wide displays. */
+  @media (min-width:1201px) {
+    .focus-page { width:100%; max-width:1880px; margin:0 auto; }
+    .focus-layout { display:grid; grid-template-columns:minmax(250px,23%) minmax(0,1fr) minmax(280px,28%); }
+    .turns-col,.browser-col { width:auto; min-width:0; }
+  }
+  @media (min-width:761px) and (max-width:1200px) {
+    .focus-layout { display:grid; grid-template-columns:280px minmax(0,1fr); grid-template-rows:minmax(380px,1fr) 300px; overflow-y:auto; }
+    .turns-col,.browser-col { width:auto; min-width:0; }
+    .browser-col { grid-column:1 / -1; border-left:0; border-top:1px solid var(--border); }
+  }
+  .ctx-empty { margin:28px auto auto; width:min(520px,100%); box-shadow:none; }
+  .col-header,.browser-header,.context-header-title { font-size:14px; }
+  .turn-item { padding:11px 14px; }
+  .turn-item-header { font-size:13px; }
 </style>
 {% endblock %} {% block content %}
 <div class="focus-page">
@@ -685,13 +712,6 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
 <div class="focus-layout">
   <!-- ── Left: turns + sessions ── -->
   <div class="turns-col">
-    <div class="col-header">
-      <span>🔄 意识流日志</span>
-      <span id="turnsCount" style="font-weight: 400; font-size: 11px"></span>
-    </div>
-    <div class="turns-list" id="turnsList">
-      <div class="turns-empty">加载中…</div>
-    </div>
     <div class="sessions-panel">
       <div class="col-header" style="border-top: none">
         <span>🗂 已知会话</span>
@@ -702,6 +722,14 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       </div>
       <div class="sessions-list" id="sessionsList"></div>
     </div>
+    <div class="col-header">
+      <span>🔄 意识流日志</span>
+      <span id="turnsCount" style="font-weight: 400; font-size: 11px"></span>
+    </div>
+    <div class="turns-list" id="turnsList">
+      <div class="turns-empty">加载中…</div>
+    </div>
+
   </div>
 
   <!-- ── Right: context messages ── -->
@@ -716,8 +744,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     <div class="context-messages" id="contextMessages">
       <div class="ctx-empty">
         <div class="ctx-empty-title">等待焦点</div>
-        <div class="ctx-empty-copy">选择左侧会话，或等待核心产生新的意识流轮次。</div>
-        <div class="ctx-empty-hints"><span>跟随焦点</span><span>查看上下文</span></div>
+        <div class="ctx-empty-copy">当前没有焦点，可从左侧“已知会话”或上方选择框查看上下文。</div>
       </div>
     </div>
   </div>
@@ -773,12 +800,34 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   let _pollBlink = false;
   let _lastTurnsSig = ""; // turns change detection
   let _lastBrowserSig = "";
+  let _contextRequest = null;
+  let _contextRequestKey = null;
+  let _contextRequestVersion = 0;
 
   const contextSelect = document.getElementById("contextSelect");
-  contextSelect.addEventListener("change", () => {
-    const val = contextSelect.value || _currentFocus;
-    if (val) loadContext(val);
-  });
+  contextSelect.addEventListener("change", syncSelectedContext);
+
+  function syncSelectedContext() {
+    const key = contextSelect.value || _currentFocus;
+    document.querySelectorAll('.session-row[data-session-key]').forEach(row => {
+      const selected = row.dataset.sessionKey === key;
+      row.classList.toggle('is-selected', selected);
+      row.setAttribute('aria-pressed', String(selected));
+    });
+    if (key) {
+      loadContext(key);
+    } else {
+      _contextRequest?.abort();
+      _contextRequest = null;
+      _contextRequestKey = null;
+      _contextRequestVersion++;
+      _renderedKey = null;
+      document.getElementById('contextKeyLabel').textContent = '';
+      if (document.querySelector('#contextMessages .ctx-empty-title')?.textContent !== '等待焦点') {
+        renderContextEmpty('等待焦点', '当前没有焦点，可从左侧“已知会话”或上方选择框查看上下文。');
+      }
+    }
+  }
 
   // ── Poll loop ─────────────────────────────────────────────
   async function pollState() {
@@ -814,16 +863,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       updateContextSelect(_sessions);
 
       // 每轮都刷新上下文（保持实时同步），选择框为空时跟随焦点
-      const selectedKey = contextSelect.value || _currentFocus;
-      if (selectedKey) {
-        loadContext(selectedKey);
-      } else {
-        renderContextEmpty(
-          "等待焦点",
-          "选择左侧会话，或等待核心产生新的意识流轮次。",
-          ["跟随焦点", "查看上下文"],
-        );
-      }
+      syncSelectedContext();
       loadBrowserState();
     } catch (e) {
       console.warn("[focus] pollState error:", e);
@@ -1022,25 +1062,21 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       .map((s) => {
         const isFocus = s.session_key === focus;
         const displayName = s.conv_name || s.conv_id || s.session_key;
-        return `<div class="session-row ${isFocus ? "is-focus" : ""}" onclick="selectSession('${escAttr(s.session_key)}')">
+        return `<button type="button" class="session-row ${isFocus ? "is-focus" : ""}" data-session-key="${escAttr(s.session_key)}" aria-pressed="false" onclick="selectSession('${escAttr(s.session_key)}')">
         <span class="session-type-dot ${s.conv_type}"></span>
         <span class="session-name-text">${escHtml(displayName)}</span>
         ${isFocus ? '<span class="session-focus-star">🎯</span>' : ""}
-      </div>`;
+      </button>`;
       })
       .join("");
   }
 
   function selectSession(key) {
-    contextSelect.value = "";
-    // Find in options; if not found, keep following focus.
-    for (const opt of contextSelect.options) {
-      if (opt.value === key) {
-        contextSelect.value = key;
-        break;
-      }
+    if (!Array.from(contextSelect.options).some(opt => opt.value === key)) {
+      contextSelect.add(new Option(key, key));
     }
-    loadContext(key);
+    contextSelect.value = key;
+    syncSelectedContext();
   }
 
   // ── Update context select ─────────────────────────────────
@@ -1055,29 +1091,46 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       contextSelect.append(opt);
     }
     if (prev) {
-      for (const opt of contextSelect.options) {
-        if (opt.value === prev) {
-          contextSelect.value = prev;
-          break;
-        }
-      }
+      if (!Array.from(contextSelect.options).some(opt => opt.value === prev)) contextSelect.add(new Option(prev, prev));
+      contextSelect.value = prev;
     }
   }
 
   // ── Load context messages ─────────────────────────────────
   async function loadContext(key) {
+    if (_contextRequest && _contextRequestKey === key) return;
+    _contextRequest?.abort();
+    const controller = new AbortController();
+    const version = ++_contextRequestVersion;
+    _contextRequest = controller;
+    _contextRequestKey = key;
     const keyChanged = key !== _renderedKey;
     document.getElementById("contextKeyLabel").textContent = key || "";
+    if (keyChanged) {
+      _renderedKey = null;
+      renderContextEmpty('正在加载会话', '正在读取所选会话的上下文。');
+    }
     try {
       const r = await fetch(
         `/api/focus/context?key=${encodeURIComponent(key)}`,
+        {signal: controller.signal},
       );
-      if (!r.ok) return;
+      if (!r.ok) throw new Error('Context request failed');
       const d = await r.json();
+      if (version !== _contextRequestVersion || key !== (contextSelect.value || _currentFocus)) return;
       _renderedKey = key;
       renderContext(d.messages || [], keyChanged);
     } catch (e) {
-      console.warn("[focus] loadContext error:", e);
+      if (e.name !== 'AbortError' && version === _contextRequestVersion) {
+        console.warn("[focus] loadContext error:", e);
+        _renderedKey = null;
+        renderContextEmpty('上下文加载失败', '请重新选择会话，或等待自动刷新。');
+      }
+    } finally {
+      if (version === _contextRequestVersion) {
+        _contextRequest = null;
+        _contextRequestKey = null;
+      }
     }
   }
 

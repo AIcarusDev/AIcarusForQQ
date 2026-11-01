@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="zh-CN" data-theme="dark-deep">
 <head>
+  {% set content_page = request.args.get('_content') == '1' %}
   {% set has_app_icon_ico = static_asset_exists('app-icon.ico') %}
   {% set has_app_icon_png = static_asset_exists('app-icon-256.png') %}
   {% set has_favicon_32 = static_asset_exists('favicon-32.png') %}
@@ -1340,9 +1341,10 @@
       }
     }
   </style>
-  {% block head_extra %}{% endblock %}
+  <link rel="stylesheet" href="/static/css/layout-shell.css?v=20261102-7">
+  {% if content_page %}{% block head_extra %}{% endblock %}{% endif %}
 </head>
-<body data-page="{{ active_page|default('') }}">
+<body data-page="{{ active_page|default('') }}" {% if content_page %}data-content-page{% else %}data-shell-page{% endif %}>
 <div class="app-shell">
 
 <!-- 关闭确认浮层（pywebview frameless 模式）-->
@@ -1414,7 +1416,7 @@
 </div>
 
   <!-- ── Sidebar ── -->
-  <aside class="sidebar" id="app-sidebar" aria-label="主导航">
+  <aside class="sidebar app-navigation" id="app-sidebar" aria-label="主导航">
     <div class="sidebar-logo">
       <div class="logo-icon">
         {% if has_app_icon_png %}
@@ -1432,45 +1434,45 @@
     <nav class="sidebar-nav">
       <div class="nav-group-label">概览</div>
       <a href="/" class="nav-item {{ 'active' if active_page == 'home' else '' }}">
-        <span class="nav-icon">🏠</span> 主页
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/home.svg')" aria-hidden="true"></span></span> 主页
       </a>
       <a href="/focus" class="nav-item {{ 'active' if active_page == 'focus' else '' }}">
-        <span class="nav-icon">🎯</span> 焦点视图
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/circle-dot.svg')" aria-hidden="true"></span></span> 焦点视图
       </a>
       <a href="/chat" class="nav-item {{ 'active' if active_page == 'chat' else '' }}">
-        <span class="nav-icon">💬</span> Core 聊天
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/message-circle.svg')" aria-hidden="true"></span></span> Core 聊天
       </a>
       <a href="/agent" class="nav-item {{ 'active' if active_page == 'agent' else '' }}">
-        <span class="nav-icon">✦</span> Agent 视图
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/player-play.svg')" aria-hidden="true"></span></span> Agent 视图
       </a>
 
       <div class="nav-group-label">监控</div>
       <a href="/tool-stats" class="nav-item {{ 'active' if active_page == 'tool_stats' else '' }}">
-        <span class="nav-icon">📊</span> 工具统计
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/chart-pie.svg')" aria-hidden="true"></span></span> 工具统计
       </a>
       <a href="/token-stats" class="nav-item {{ 'active' if active_page == 'token_stats' else '' }}">
-        <span class="nav-icon">🔢</span> Token 统计
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/coin.svg')" aria-hidden="true"></span></span> Token 统计
       </a>
       <a href="/log" class="nav-item {{ 'active' if active_page == 'log' else '' }}">
-        <span class="nav-icon">📋</span> 运行日志
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/file-text.svg')" aria-hidden="true"></span></span> 运行日志
       </a>
 
       <div class="nav-group-label">数据</div>
       <a href="/memory" class="nav-item {{ 'active' if active_page == 'memory' else '' }}">
-        <span class="nav-icon">🧠</span> 记忆图谱
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/database.svg')" aria-hidden="true"></span></span> 记忆图谱
       </a>
       <a href="/stickers" class="nav-item {{ 'active' if active_page == 'stickers' else '' }}">
-        <span class="nav-icon">🎭</span> 表情包
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/photo.svg')" aria-hidden="true"></span></span> 表情包
       </a>
       <div class="nav-group-label">系统</div>
       <a href="/settings" class="nav-item {{ 'active' if active_page == 'settings' else '' }}">
-        <span class="nav-icon">⚙️</span> 设置
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/settings.svg')" aria-hidden="true"></span></span> 设置
       </a>
       <a href="/maintenance" class="nav-item {{ 'active' if active_page == 'maintenance' else '' }}">
-        <span class="nav-icon">🧰</span> 维护
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/file-settings.svg')" aria-hidden="true"></span></span> 维护
       </a>
       <button type="button" class="nav-item" onclick="showWebUIUpdates(true)">
-        <span class="nav-icon">📝</span> 更新公告
+        <span class="nav-icon"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/bell.svg')" aria-hidden="true"></span></span> 更新公告
       </button>
     </nav>
 
@@ -1531,12 +1533,27 @@
         aria-controls="app-sidebar"
         aria-expanded="false"
       >菜单</button>
-      <span class="topbar-title pywebview-drag-region">{% block topbar_title %}AIcarus{% endblock %}</span>
+      {% set page_heading_icon = {'home':'home', 'focus':'circle-dot', 'chat':'message-circle', 'agent':'player-play', 'tool_stats':'chart-pie', 'token_stats':'coin', 'log':'file-text', 'memory':'database', 'stickers':'photo', 'settings':'settings', 'maintenance':'file-settings'}.get(active_page | default(''), 'home') %}
+      <div class="topbar-heading pywebview-drag-region">
+        <span class="shell-icon topbar-heading-icon" style="--shell-icon:url('/static/vendor/tabler/filled/{{ page_heading_icon }}.svg')" aria-hidden="true"></span>
+        <span class="topbar-title">{% block topbar_title %}AIcarus{% endblock %}</span>
+      </div>
       <span class="topbar-desc pywebview-drag-region">{% block topbar_desc %}{% endblock %}</span>
       <div class="topbar-drag-fill pywebview-drag-region" aria-hidden="true"></div>
+      <div class="app-runtime-status" aria-label="系统运行状态">
+        <span id="appWebState"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/world.svg')" aria-hidden="true"></span><span data-status-label>网页状态读取中</span></span>
+        <span id="appCoreState"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/settings.svg')" aria-hidden="true"></span><span data-status-label>核心状态读取中</span></span>
+        <span id="appQQState"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/bell.svg')" aria-hidden="true"></span><span data-status-label>QQ 状态读取中</span></span>
+      </div>
     </div>
     <div class="page-content">
-      {% block content %}{% endblock %}
+      {% if content_page %}
+        {% block content %}{% endblock %}
+      {% else %}
+        <div class="shell-content-host" id="shellContentHost" aria-busy="true">
+          <p class="shell-content-loading" role="status">正在加载页面…</p>
+        </div>
+      {% endif %}
     </div>
   </div>
 
@@ -1566,7 +1583,7 @@
 
     function openMobileNavigation() {
       if (!breakpoint.matches) return;
-      restoreFocusTo = toggle;
+      restoreFocusTo = document.querySelector('.workbench-mobile-menu') || toggle;
       document.body.classList.add('mobile-nav-open');
       syncAccessibilityState();
       const target = sidebar.querySelector('.nav-item.active, .nav-item');
@@ -1687,6 +1704,22 @@
       });
     });
   })();
+
+  function renderAppRuntimeStatus() {
+    const runtime = window.workbenchRuntime || {};
+    for (const [id, flag, yes, no] of [
+      ['appWebState',runtime.webConnected,'网页已连接','网页连接中断'],
+      ['appCoreState',runtime.coreRunning,'核心运行中','核心未运行'],
+      ['appQQState',runtime.qqConnected,'QQ 已连接','QQ 未连接'],
+    ]) {
+      const target=document.getElementById(id);
+      if (!target) continue;
+      target.querySelector('[data-status-label]').textContent=flag == null ? (id==='appWebState'?'网页':id==='appCoreState'?'核心':'QQ')+'状态读取中' : flag ? yes : no;
+      target.dataset.tone=flag == null ? '' : flag ? 'ok' : 'warn';
+    }
+  }
+  window.addEventListener('workbench-status',renderAppRuntimeStatus);
+  renderAppRuntimeStatus();
 
   // ── QQ adapter status ────────────────────────────
   // ── WebUI 更新公告 / 首次密码设置 ─────────────────────
@@ -2090,6 +2123,7 @@
 
   document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('webui-update-body')?.addEventListener('click', handleHistoryItemClick);
+    if (document.body.hasAttribute('data-content-page')) return;
     checkWebUIAuthSetup().then((shown) => {
       if (!shown) checkWebUIUpdates();
     });
@@ -2101,6 +2135,8 @@
     const txt = document.getElementById('qq-adapter-text');
     if (!dot || !txt) return;
     const qq = d.platforms?.qq || {};
+    window.workbenchRuntime = {...window.workbenchRuntime, qqConnected: !!qq.connected};
+    window.dispatchEvent(new Event('workbench-status'));
     if (qq.connected) {
       dot.className = 'dot ok';
       txt.textContent = 'QQ adapter 已连接';
@@ -2156,8 +2192,10 @@
     ws.onerror = () => ws.close();
   }
 
-  pollQQAdapterStatus();
-  setInterval(pollQQAdapterStatus, 10000);
+  if (document.body.hasAttribute('data-shell-page')) {
+    pollQQAdapterStatus();
+    setInterval(pollQQAdapterStatus, 10000);
+  }
 
   // ── Core 状态轮询（仅 launcher 模式下可见）─────────────────
   let _coreIsWebuiOnly = false;
@@ -2168,6 +2206,8 @@
       const r = await fetch('/api/core/status');
       if (!r.ok) return;
       const d = await r.json();
+      window.workbenchRuntime = {...window.workbenchRuntime, webConnected: true, coreRunning: !d.webui_only, launcherMode: !!d.launcher_mode};
+      window.dispatchEvent(new Event('workbench-status'));
       // 只在 launcher_mode 下才显示这个芯片
       const chip = document.getElementById('core-status-chip');
       if (!d.launcher_mode) { chip.style.display = 'none'; return; }
@@ -2187,7 +2227,10 @@
         btn.textContent = '■ 停止';
         btn.style.background = 'var(--red)';
       }
-    } catch(e) { /* ignore */ }
+    } catch(e) {
+      window.workbenchRuntime = {...window.workbenchRuntime, webConnected: false, coreRunning: null};
+      window.dispatchEvent(new Event('workbench-status'));
+    }
   }
 
   async function toggleCore() {
@@ -2240,8 +2283,10 @@
     }
   }
 
-  pollCoreStatus();
-  setInterval(pollCoreStatus, 5000);
+  if (document.body.hasAttribute('data-shell-page')) {
+    pollCoreStatus();
+    setInterval(pollCoreStatus, 5000);
+  }
 
   // ── PyWebView 无边框窗口控制 ──────────────────────────────
   // 当运行在 launcher 的 pywebview 窗口内时激活：
@@ -2363,7 +2408,8 @@
     if (e.key === 'Escape') wcDialogCancel();
   });
 </script>
-{% block scripts %}{% endblock %}
+{% if content_page %}{% block scripts %}{% endblock %}{% endif %}
+<script src="/static/js/shell-navigation.js?v=20261102-2"></script>
 </body>
 </html>
 

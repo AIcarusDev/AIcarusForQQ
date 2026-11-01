@@ -103,9 +103,47 @@ endblock %} {% block head_extra %}
       padding: 15px 16px;
     }
   }
+  .home-content { width:100%; max-width:1640px; margin:0 auto; padding:28px; }
+  .home-heading { margin-bottom:22px; }
+  .home-heading h1 { font-size:26px; line-height:1.4; margin:0 0 7px; }
+  .home-heading p { color:var(--text-sec); font-size:14px; margin:0; }
+  .home-runtime-panel { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; margin-bottom:22px; background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:var(--radius); }
+  .home-eyebrow { font-size:12px; color:var(--text-sec); }
+  .home-runtime-panel h2 { font-size:21px; margin:9px 0; }
+  .home-runtime-panel p { font-size:14px; color:var(--text-sec); margin:0; line-height:1.7; }
+  .home-primary-link { flex-shrink:0; padding:11px 16px; border-radius:7px; background:var(--accent-dim); color:var(--text); font-size:14px; text-decoration:none; }
+  .stat-grid { grid-template-columns:repeat(6,minmax(0,1fr)); gap:14px; }
+  .stat-card { padding:20px; min-height:128px; }
+  .stat-card .label,.stat-card .sub { font-size:12px; text-transform:none; letter-spacing:0; }
+  .stat-card:hover { transform:none; box-shadow:none; }
+  .home-workspaces { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr); gap:22px; }
+  .home-panel { border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); overflow:hidden; }
+  .home-panel>header { display:flex; justify-content:space-between; align-items:center; padding:18px 22px; border-bottom:1px solid var(--border); }
+  .home-panel h2 { font-size:17px; margin:0; }
+  .home-panel>header a { color:var(--accent); font-size:13px; }
+  .home-shortcuts { display:grid; grid-template-columns:1fr 1fr; padding:8px 20px; }
+  .home-shortcuts>a { display:flex; align-items:center; gap:14px; padding:19px 10px; border-bottom:1px solid var(--border); text-decoration:none; color:var(--text); border-radius:6px; transition:background-color 140ms ease; }
+  .home-shortcuts>a:hover { background:var(--surface2); }
+  .home-shortcuts>a:nth-last-child(-n+2) { border-bottom:0; }
+  .home-shortcuts .shell-icon { color:var(--accent); width:24px; height:24px; flex-basis:24px; }
+  .home-shortcuts strong { display:block; font-size:14px; font-weight:600; }
+  .home-shortcuts small { display:block; margin-top:5px; font-size:12px; color:var(--text-sec); }
+  .home-memory-summary { margin:6px 22px; }
+  .home-memory-summary>div { display:flex; justify-content:space-between; padding:14px 0; border-bottom:1px solid var(--border); }
+  .home-memory-summary dt { color:var(--text-sec); font-size:14px; }
+  .home-memory-summary dd { margin:0; font-size:16px; font-variant-numeric:tabular-nums; }
+  .home-memory-note { margin:18px 22px; color:var(--text-sec); font-size:13px; line-height:1.7; }
+  @media(max-width:1300px){ .stat-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+  @media(max-width:1000px){ .home-workspaces { grid-template-columns:1fr; } }
+  @media(max-width:760px){ .home-content{padding:18px 14px;} .home-runtime-panel{align-items:flex-start;flex-direction:column;padding:20px;} .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .home-shortcuts{grid-template-columns:1fr;} .home-shortcuts>a:nth-last-child(2){border-bottom:1px solid var(--border);} }
 </style>
 {% endblock %} {% block content %}
 <div class="home-content">
+  <header class="home-heading"><h1>运行概览</h1><p>查看当前状态，继续常用操作。</p></header>
+  <section class="home-runtime-panel" aria-label="运行状态">
+    <div><span class="home-eyebrow">当前运行</span><h2 id="homeRuntimeTitle">正在读取状态</h2><p id="homeRuntimeCopy">读取核心与 QQ 连接状态。</p></div>
+    <a class="home-primary-link" id="homeRuntimeLink" href="/settings#model">查看模型设置</a>
+  </section>
   <div class="stat-grid">
     <div class="stat-card accent">
       <div class="label">当前焦点</div>
@@ -131,7 +169,7 @@ endblock %} {% block head_extra %}
     <div class="stat-card">
       <div class="label">记忆节点</div>
       <div class="value" id="stat-memory">—</div>
-      <div class="sub">事件 · 谓词 · 参与者</div>
+      <div class="sub">事件 · 谓词 · 参与者 · 关系</div>
     </div>
     <div class="stat-card">
       <div class="label">运行时长</div>
@@ -142,7 +180,7 @@ endblock %} {% block head_extra %}
       >
         —
       </div>
-      <div class="sub">自上次启动</div>
+      <div class="sub">自网页服务启动</div>
     </div>
     <div class="stat-card">
       <div class="label">Bot 名称</div>
@@ -156,9 +194,36 @@ endblock %} {% block head_extra %}
       <div class="sub" id="stat-model">模型: —</div>
     </div>
   </div>
+  <div class="home-workspaces">
+    <section class="home-panel"><header><h2>常用入口</h2></header>
+      <div class="home-shortcuts">
+        <a href="/chat"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/message-circle.svg')" aria-hidden="true"></span><span><strong>Core 聊天</strong><small>打开对话与核心状态</small></span></a>
+        <a href="/focus"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/circle-dot.svg')" aria-hidden="true"></span><span><strong>焦点视图</strong><small>查看会话与模型上下文</small></span></a>
+        <a href="/agent"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/player-play.svg')" aria-hidden="true"></span><span><strong>运行记录</strong><small>查看认知与工具动作</small></span></a>
+        <a href="/log"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/file-text.svg')" aria-hidden="true"></span><span><strong>运行日志</strong><small>查找警告与错误</small></span></a>
+        <a href="/settings#model"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/settings.svg')" aria-hidden="true"></span><span><strong>模型设置</strong><small>管理连接与生成参数</small></span></a>
+        <a href="/maintenance"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/filled/file-settings.svg')" aria-hidden="true"></span><span><strong>系统维护</strong><small>查看恢复与维护操作</small></span></a>
+      </div>
+    </section>
+    <section class="home-panel"><header><h2>记忆概览</h2><a href="/memory">查看图谱</a></header>
+      <dl class="home-memory-summary"><div><dt>事件</dt><dd id="homeMemoryEvents">—</dd></div><div><dt>谓词</dt><dd id="homeMemoryPredicates">—</dd></div><div><dt>参与者</dt><dd id="homeMemoryParticipants">—</dd></div><div><dt>关系</dt><dd id="homeMemoryRelations">—</dd></div></dl>
+      <p class="home-memory-note" id="homeMemoryNote">正在读取现有记忆数据。</p>
+    </section>
+  </div>
 </div>
 {% endblock %} {% block scripts %}
 <script>
+  function updateHomeRuntime() {
+    const runtime=window.workbenchRuntime || {};
+    const known=runtime.coreRunning != null;
+    document.getElementById('homeRuntimeTitle').textContent=!known?'正在读取运行状态':runtime.coreRunning?'核心正在运行':'当前仅网页运行';
+    document.getElementById('homeRuntimeCopy').textContent=!known?'稍后可在顶部查看核心与 QQ 状态。':runtime.coreRunning?(runtime.qqConnected?'QQ 已连接，可查看当前会话与运行记录。':'QQ 尚未连接，可先查看连接配置与运行日志。'):'核心未运行，当前可查看历史记录、调整配置。';
+    const link=document.getElementById('homeRuntimeLink');
+    link.href=runtime.coreRunning?'/focus':'/settings#model';
+    link.textContent=runtime.coreRunning?'查看当前焦点':'查看启动配置';
+  }
+  window.addEventListener('workbench-status',updateHomeRuntime);
+  updateHomeRuntime();
   function fmtUptime(seconds) {
     if (seconds == null || isNaN(seconds)) return "—";
     const h = Math.floor(seconds / 3600);
@@ -178,7 +243,7 @@ endblock %} {% block head_extra %}
         d.current_focus || "无";
       document.getElementById("stat-msgs").textContent =
         d.today_messages ?? "—";
-      document.getElementById("stat-llm").textContent = d.llm_calls ?? "—";
+      document.getElementById("stat-llm").textContent = d.llm_calls ?? "未统计";
       document.getElementById("stat-uptime").textContent = fmtUptime(
         d.uptime_seconds,
       );
@@ -190,7 +255,12 @@ endblock %} {% block head_extra %}
       const total =
         (mc.events || 0) + (mc.predicates || 0) + (mc.participants || 0) + (mc.relations || 0);
       document.getElementById("stat-memory").textContent = total;
-    } catch (e) {}
+      for (const [id,key] of [['homeMemoryEvents','events'],['homeMemoryPredicates','predicates'],['homeMemoryParticipants','participants'],['homeMemoryRelations','relations']])
+        document.getElementById(id).textContent=mc[key] ?? '—';
+      document.getElementById('homeMemoryNote').textContent=total?'数据来自当前记忆库。':'当前记忆库暂无记录，可在记忆设置中查看相关配置。';
+    } catch (e) {
+      document.getElementById('homeMemoryNote').textContent='数据读取失败，请稍后刷新。';
+    }
   }
 
   loadStatus();
