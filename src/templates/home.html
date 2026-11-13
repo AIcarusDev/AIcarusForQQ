@@ -109,6 +109,8 @@ endblock %} {% block head_extra %}
   .home-heading p { color:var(--text-sec); font-size:14px; margin:0; }
   .home-runtime-panel { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; margin-bottom:22px; background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:var(--radius); }
   .home-eyebrow { font-size:12px; color:var(--text-sec); }
+  .home-data-feedback { display:flex; align-items:center; gap:12px; margin-bottom:12px; min-height:30px; font-size:13px; color:var(--text-sec); }
+  .home-data-retry { visibility:hidden; }
   .home-runtime-panel h2 { font-size:21px; margin:9px 0; }
   .home-runtime-panel p { font-size:14px; color:var(--text-sec); margin:0; line-height:1.7; }
   .home-primary-link { flex-shrink:0; padding:11px 16px; border-radius:7px; background:var(--accent-dim); color:var(--text); font-size:14px; text-decoration:none; }
@@ -138,12 +140,16 @@ endblock %} {% block head_extra %}
   @media(max-width:760px){ .home-content{padding:18px 14px;} .home-runtime-panel{align-items:flex-start;flex-direction:column;padding:20px;} .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .home-shortcuts{grid-template-columns:1fr;} .home-shortcuts>a:nth-last-child(2){border-bottom:1px solid var(--border);} }
 </style>
 {% endblock %} {% block content %}
-<div class="home-content">
+<div class="home-content" data-scroll-key="content">
   <header class="home-heading"><h1>运行概览</h1><p>查看当前状态，继续常用操作。</p></header>
   <section class="home-runtime-panel" aria-label="运行状态">
     <div><span class="home-eyebrow">当前运行</span><h2 id="homeRuntimeTitle">正在读取状态</h2><p id="homeRuntimeCopy">读取核心与 QQ 连接状态。</p></div>
     <a class="home-primary-link" id="homeRuntimeLink" href="/settings#model">查看模型设置</a>
   </section>
+  <div class="home-data-feedback">
+    <span id="homeDataStatus" role="status" aria-live="polite">正在读取数据…</span>
+    <button type="button" class="btn-ghost home-data-retry" id="homeDataRetry" onclick="withButtonFeedback(this,loadStatus)">重试</button>
+  </div>
   <div class="stat-grid">
     <div class="stat-card accent">
       <div class="label">当前焦点</div>
@@ -215,6 +221,14 @@ endblock %} {% block head_extra %}
 <script>
   function updateHomeRuntime() {
     const runtime=window.workbenchRuntime || {};
+    if (runtime.webConnected === false) {
+      document.getElementById('homeRuntimeTitle').textContent = '运行状态暂时不可用';
+      document.getElementById('homeRuntimeCopy').textContent = '连接异常，正在自动重试。';
+      const link = document.getElementById('homeRuntimeLink');
+      link.href = '/log';
+      link.textContent = '查看运行日志';
+      return;
+    }
     const known=runtime.coreRunning != null;
     document.getElementById('homeRuntimeTitle').textContent=!known?'正在读取运行状态':runtime.coreRunning?'核心正在运行':'当前仅网页运行';
     document.getElementById('homeRuntimeCopy').textContent=!known?'稍后可在顶部查看核心与 QQ 状态。':runtime.coreRunning?(runtime.qqConnected?'QQ 已连接，可查看当前会话与运行记录。':'QQ 尚未连接，可先查看连接配置与运行日志。'):'核心未运行，当前可查看历史记录、调整配置。';
@@ -234,9 +248,14 @@ endblock %} {% block head_extra %}
     return `${s}s`;
   }
 
+  let homeDataLoading = false;
+  let homeDataLoaded = false;
   async function loadStatus() {
+    if (homeDataLoading) return;
+    homeDataLoading = true;
     try {
       const r = await fetch("/api/status");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
 
       document.getElementById("stat-focus").textContent =
@@ -258,8 +277,17 @@ endblock %} {% block head_extra %}
       for (const [id,key] of [['homeMemoryEvents','events'],['homeMemoryPredicates','predicates'],['homeMemoryParticipants','participants'],['homeMemoryRelations','relations']])
         document.getElementById(id).textContent=mc[key] ?? '—';
       document.getElementById('homeMemoryNote').textContent=total?'数据来自当前记忆库。':'当前记忆库暂无记录，可在记忆设置中查看相关配置。';
+      homeDataLoaded = true;
+      document.getElementById('homeDataStatus').textContent = '数据已更新';
+      document.getElementById('homeDataStatus').style.color = '';
+      document.getElementById('homeDataRetry').style.visibility = 'hidden';
     } catch (e) {
-      document.getElementById('homeMemoryNote').textContent='数据读取失败，请稍后刷新。';
+      if (!homeDataLoaded) document.getElementById('homeMemoryNote').textContent = '记忆数据暂时不可用。';
+      document.getElementById('homeDataStatus').textContent = homeDataLoaded ? '读取失败，显示上次数据；将自动重试。' : '数据读取失败，将自动重试。';
+      document.getElementById('homeDataStatus').style.color = 'var(--error-text)';
+      document.getElementById('homeDataRetry').style.visibility = 'visible';
+    } finally {
+      homeDataLoading = false;
     }
   }
 

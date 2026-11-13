@@ -595,7 +595,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="token-stats-shell">
+<div class="token-stats-shell" data-scroll-key="content">
   <div class="page-hero">
     <div class="page-title">
       <h1>LLM Token 用量</h1>
@@ -603,7 +603,7 @@
     </div>
     <div class="page-actions">
       <div class="page-status" id="statsStatus">未加载</div>
-      <button class="btn-ghost" type="button" onclick="loadTokenStats()">刷新</button>
+      <button class="btn-ghost" type="button" onclick="withButtonFeedback(this, loadTokenStats)">刷新</button>
     </div>
   </div>
 
@@ -668,8 +668,8 @@
           <option value="90d">近 90 天</option>
           <option value="custom">自定义</option>
         </select>
-        <input class="timeline-range" id="tokenStartDate" type="date" aria-label="Token 统计开始日期" />
-        <input class="timeline-range" id="tokenEndDate" type="date" aria-label="Token 统计结束日期" />
+        <input class="timeline-range" id="tokenStartDate" type="date" aria-label="Token 统计开始日期" aria-describedby="timelineHint" />
+        <input class="timeline-range" id="tokenEndDate" type="date" aria-label="Token 统计结束日期" aria-describedby="timelineHint" />
       </div>
     </div>
     <div class="timeline-metrics">
@@ -700,7 +700,7 @@
       </div>
     </div>
     <div class="timeline-content">
-      <div class="timeline-chart-wrap" role="region" aria-label="Token 用量时间线，可横向滚动" tabindex="0">
+      <div class="timeline-chart-wrap" data-scroll-key="timeline" role="region" aria-label="Token 用量时间线，可横向滚动" tabindex="0">
         <svg class="token-timeline-svg" id="tokenTimelineSvg" viewBox="0 0 920 320" role="img" aria-label="Token 趋势"></svg>
         <div class="chart-empty" id="tokenChartEmpty">暂无时段数据</div>
         <div class="timeline-legend" id="tokenTimelineLegend"></div>
@@ -761,6 +761,8 @@
 {% block scripts %}
 <script>
   let tokenStatsData = null;
+  let tokenStatsRequest = 0;
+  let timelineRequest = 0;
   const sortState = { model: "total_tokens", feature: "total_tokens" };
   const timelineState = {
     data: null,
@@ -888,16 +890,19 @@
   }
 
   async function loadTokenStats() {
+    const requestId = ++tokenStatsRequest;
+    ++timelineRequest;
     setStatsStatus("加载中", "loading");
     try {
       const res = await fetch("/api/token-stats");
       const data = await res.json();
+      if (requestId !== tokenStatsRequest) return;
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       tokenStatsData = data;
       renderTokenStats();
       await loadTimelineStats();
-      setStatsStatus("已加载", "loaded");
     } catch (error) {
+      if (requestId !== tokenStatsRequest) return;
       setStatsStatus("加载失败", "error");
       document.getElementById("modelList").innerHTML =
         `<div class="empty-state">加载失败: ${escHtml(error.message)}</div>`;
@@ -907,6 +912,25 @@
   }
 
   async function loadTimelineStats() {
+    const requestId = ++timelineRequest;
+    const startField = document.getElementById('tokenStartDate');
+    const endField = document.getElementById('tokenEndDate');
+    [startField, endField].forEach(field => {
+      field.removeAttribute('aria-invalid');
+      field.setCustomValidity('');
+    });
+    if (timelineState.range === 'custom' && startField.value && endField.value && startField.value > endField.value) {
+      const message = '开始日期不能晚于结束日期';
+      [startField, endField].forEach(field => {
+        field.setAttribute('aria-invalid', 'true');
+        field.setCustomValidity(message);
+      });
+      timelineState.data = null;
+      renderTimelineUnavailable(message);
+      setStatsStatus('请调整日期范围', 'error');
+      return;
+    }
+    setStatsStatus("时段统计加载中", "loading");
     document.getElementById("timelineHint").textContent = "时段统计加载中";
     try {
       const params = new URLSearchParams({
@@ -929,6 +953,7 @@
       }
       const res = await fetch(`/api/token-stats?${params}`);
       const data = await res.json();
+      if (requestId !== timelineRequest) return;
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       timelineState.data = data;
       const buckets = Array.isArray(data.buckets) ? data.buckets : [];
@@ -939,13 +964,17 @@
         timelineState.activeBucketStart = data.summary?.peak?.bucket_start ?? null;
       }
       renderTimelineStats();
+      setStatsStatus("已加载", "loaded");
     } catch (error) {
+      if (requestId !== timelineRequest) return;
       timelineState.data = null;
-      renderTimelineError(error);
+      renderTimelineUnavailable(`时段统计加载失败: ${error.message}`);
+      setStatsStatus("时段统计加载失败", "error");
     }
   }
 
   function renderTimelineStats() {
+    if (!timelineState.data) return;
     const data = timelineState.data || {};
     const summary = data.summary || {};
     const granularityText = { hour: "小时", day: "天", month: "月" }[data.granularity] || "天";
@@ -971,20 +1000,17 @@
     renderTimelineDetail(findTimelineBucket(timelineState.activeBucketStart));
   }
 
-  function renderTimelineError(error) {
-    document.getElementById("timelineHint").textContent = `时段统计加载失败: ${error.message}`;
-    document.getElementById("avgBucketTokens").textContent = "0";
-    document.getElementById("minBucketTokens").textContent = "0";
-    document.getElementById("maxBucketTokens").textContent = "0";
-    document.getElementById("medianBucketTokens").textContent = "0";
-    document.getElementById("timelineRequests").textContent = "0";
-    document.getElementById("activeBucketCount").textContent = "0 个活跃时段";
-    document.getElementById("timelineKnownRequests").textContent = "0 已知 / 0 未知";
-    document.getElementById("peakBucketLabel").textContent = "暂无峰值";
+  function renderTimelineUnavailable(message) {
+    document.getElementById("timelineHint").textContent = message;
+    for (const id of ['avgBucketTokens', 'minBucketTokens', 'maxBucketTokens', 'medianBucketTokens', 'timelineRequests', 'timelineKnownRequests']) {
+      document.getElementById(id).textContent = '—';
+    }
+    document.getElementById("activeBucketCount").textContent = "时段统计未加载";
+    document.getElementById("peakBucketLabel").textContent = "未加载";
     document.getElementById("tokenTimelineSvg").innerHTML = "";
     document.getElementById("tokenTimelineLegend").innerHTML = "";
     const empty = document.getElementById("tokenChartEmpty");
-    empty.textContent = `时段统计加载失败: ${error.message}`;
+    empty.textContent = message;
     empty.style.display = "flex";
     renderTimelineDetail(null);
   }
@@ -1322,6 +1348,23 @@
     });
   });
 
-  loadTokenStats();
+  window.capturePageView = () => ({
+    granularity: timelineState.granularity, range: timelineState.range, metric: timelineState.metric,
+    filter: timelineState.filter, activeBucketStart: timelineState.activeBucketStart,
+    sort: { ...sortState }, start: document.getElementById('tokenStartDate').value, end: document.getElementById('tokenEndDate').value,
+  });
+  window.initializePage = saved => {
+    if (!saved) return loadTokenStats();
+    const { sort, start, end, ...timeline } = saved;
+    Object.assign(timelineState, timeline);
+    Object.assign(sortState, sort);
+    document.getElementById('tokenRangeSelect').value = saved.range;
+    document.getElementById('tokenStartDate').value = start;
+    document.getElementById('tokenEndDate').value = end;
+    document.querySelectorAll('#tokenGranularityButtons button').forEach(button => button.classList.toggle('active', button.dataset.granularity === saved.granularity));
+    document.querySelectorAll('#tokenMetricButtons button').forEach(button => button.classList.toggle('active', button.dataset.metric === saved.metric));
+    for (const [target, key] of Object.entries(sort)) setSort(target, key);
+    return loadTokenStats();
+  };
 </script>
 {% endblock %}

@@ -650,7 +650,7 @@ block head_extra %}
 
   <div class="core-chat-grid">
     <main class="dialogue-panel" aria-label="聊天对话">
-      <div class="messages-scroll" id="messagesScroll" aria-live="polite"></div>
+      <div class="messages-scroll" id="messagesScroll" data-scroll-key="messages" aria-live="polite"></div>
 
       <form class="composer" id="composerForm" autocomplete="off">
         <div class="composer-main">
@@ -708,7 +708,7 @@ block head_extra %}
         <div class="side-title">状态</div>
         <div class="side-subtitle">聊天</div>
       </div>
-      <div class="side-scroll">
+      <div class="side-scroll" data-scroll-key="sidebar">
         <section class="side-module">
           <div class="module-title">
             <span>运行状态</span>
@@ -763,6 +763,7 @@ block head_extra %}
     messages: [],
     coreStatus: null,
     focusState: null,
+    focusError: false,
     events: [],
   };
 
@@ -786,7 +787,7 @@ block head_extra %}
     bindEvents();
     addEvent("聊天打开");
     renderAll();
-    refreshMessages({ quiet: true, forceScroll: true });
+    window.appPageReady = refreshMessages({ quiet: true, forceScroll: true });
     refreshCoreStatus({ quiet: true });
     refreshFocusState();
     window.setInterval(() => refreshMessages({ quiet: true }), 5000);
@@ -835,6 +836,8 @@ block head_extra %}
   }
 
   function renderMessages(forceScroll) {
+    const previousTop = els.messagesScroll.scrollTop;
+    const wasAtBottom = els.messagesScroll.scrollHeight - previousTop - els.messagesScroll.clientHeight < 40;
     els.messagesScroll.innerHTML = "";
     els.messagesScroll.classList.toggle("has-messages", state.messages.length > 0);
 
@@ -856,10 +859,12 @@ block head_extra %}
       updateThreadHeadroom();
     }
 
-    if (forceScroll) {
+    if (forceScroll || wasAtBottom) {
       requestAnimationFrame(() => {
         els.messagesScroll.scrollTop = els.messagesScroll.scrollHeight;
       });
+    } else {
+      els.messagesScroll.scrollTop = previousTop;
     }
   }
 
@@ -950,12 +955,17 @@ block head_extra %}
     }
   }
 
+  let messagesRequest = 0;
   async function refreshMessages(options = {}) {
+    const requestId = ++messagesRequest;
     try {
       const res = await fetch("/api/core/chat?limit=120", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      state.messages = (data.messages || []).map(normalizeMessage);
+      if (requestId !== messagesRequest) return;
+      const messages = (data.messages || []).map(normalizeMessage);
+      if (options.quiet && !options.forceScroll && JSON.stringify(messages) === JSON.stringify(state.messages)) return;
+      state.messages = messages;
       renderMessages(options.forceScroll ?? !options.quiet);
     } catch (err) {
       if (!options.quiet) toast("聊天记录读取失败。");
@@ -1013,9 +1023,11 @@ block head_extra %}
       const res = await fetch("/api/focus/state", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       state.focusState = await res.json();
+      state.focusError = false;
       renderBotWatchState();
     } catch (err) {
       state.focusState = null;
+      state.focusError = true;
       renderBotWatchState();
       console.warn("[core-chat] focus state failed:", err);
     }
@@ -1050,6 +1062,11 @@ block head_extra %}
     const isWatching = Boolean(currentFocus && targetKey && currentFocus === targetKey);
 
     if (isReading) {
+      if (state.focusError) {
+        setBotWatchVisual('状态不可用', 'core-tag warn', false);
+        els.botWatchText.textContent = '状态读取失败，将自动重试。';
+        return;
+      }
       setBotWatchVisual("读取中", "core-tag warn", false);
       els.botWatchText.textContent = `正在读取 ${agentName()} 当前状态。`;
       return;

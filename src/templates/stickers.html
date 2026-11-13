@@ -213,13 +213,20 @@
 
   /* ── 灯箱 ── */
   .stk-lightbox {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.88);
+    display: flex; visibility:hidden; opacity:0; pointer-events:none;
+    transition:opacity 160ms ease,visibility 0s linear 160ms;
+    position: fixed; inset: 0; background: rgba(0,0,0,.88);
     z-index: 9999; align-items: center; justify-content: center;
     cursor: zoom-out; flex-direction: column; gap: 12px;
   }
-  .stk-lightbox.show { display: flex; }
-  .stk-lightbox img { max-width: 86vw; max-height: 78vh; object-fit: contain; border-radius: 10px; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+  .stk-lightbox.show { visibility:visible; opacity:1; pointer-events:auto; transition-delay:0s; }
+  .stk-lightbox img { max-width: 86vw; max-height: 78vh; object-fit: contain; border-radius: 10px; box-shadow: 0 8px 40px rgba(0,0,0,.6); transform:scale(.98); transition:transform 180ms ease; }
+  .stk-lightbox.show img { transform:scale(1); }
+  @media (prefers-reduced-motion:reduce) {
+    .stk-lightbox,.stk-lightbox img { transition:none; transform:none; }
+  }
   .stk-lightbox-meta { color: rgba(255,255,255,.7); font-size: 12.5px; font-family: var(--font-mono); pointer-events: none; }
+  .stk-lightbox-close { position:absolute; top:20px; right:20px; border:1px solid rgba(255,255,255,.4); border-radius:8px; background:rgba(0,0,0,.4); color:#fff; padding:8px 14px; cursor:pointer; }
 
   /* ── 顶栏按钮 ── */
   .stk-btn {
@@ -280,7 +287,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="stk-page" id="stickerPageScroll">
+<div class="stk-page" id="stickerPageScroll" data-scroll-key="content">
   <div class="stk-inner">
 
     <!-- 统计行 -->
@@ -351,7 +358,8 @@
 </div>
 
 <!-- 灯箱 -->
-<div class="stk-lightbox" id="imgOverlay" onclick="closeLightbox()">
+<div class="stk-lightbox" id="imgOverlay" role="dialog" aria-modal="true" aria-label="表情包预览" aria-describedby="lightboxMeta" tabindex="-1" onclick="closeLightbox()">
+  <button type="button" class="stk-lightbox-close btn" onclick="event.stopPropagation(); closeLightbox()">关闭预览</button>
   <img id="imgOverlayImg" src="" alt="">
   <div class="stk-lightbox-meta" id="lightboxMeta"></div>
 </div>
@@ -363,10 +371,27 @@
 
   // ── State ──
   let _stickers = [];
+  const descriptionEdits = new Map();
+  function allDraftsDirty() {
+    return Array.from(descriptionEdits).some(([id, edit]) =>
+      edit.saving || edit.value !== (_stickers.find(s => s.image_ref === id)?.description || ''));
+  }
+  window.addEventListener('beforeunload', event => {
+    if (!allDraftsDirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
   let _imgVersion = Date.now(); // cache-bust: incremented after any mutation
 
   // ── Init ──
-  loadStickers();
+  window.capturePageView = () => ({ search: document.getElementById('searchInput').value, sort: document.getElementById('sortSelect').value });
+  window.initializePage = saved => {
+    if (saved) {
+      document.getElementById('searchInput').value = saved.search;
+      document.getElementById('sortSelect').value = saved.sort;
+    }
+    return loadStickers();
+  };
 
   // ── Upload wiring ──
   const uploadInput = document.getElementById("uploadInput");
@@ -565,8 +590,13 @@
     descInput.value = s.description || "";
     descInput.placeholder = "描述表情包的含义…";
     descInput.onkeydown = e => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveDesc(s.image_ref); }
       if (e.key === "Escape") cancelEditDesc(s.image_ref);
+    };
+    descInput.oninput = () => {
+      const edit = descriptionEdits.get(s.image_ref);
+      if (edit) edit.value = descInput.value;
     };
     info.append(descInput);
 
@@ -590,6 +620,7 @@
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "stk-act-btn cancel-desc-btn";
+    cancelBtn.setAttribute('aria-label', '取消编辑');
     cancelBtn.textContent = "✕";
     cancelBtn.style.display = "none";
     cancelBtn.onclick = () => cancelEditDesc(s.image_ref);
@@ -598,6 +629,7 @@
     meta.append(actions);
     info.append(meta);
     card.append(info);
+    renderDescEditor(card, s.image_ref);
     return card;
   }
 
@@ -606,35 +638,52 @@
     return document.querySelector(".stk-card[data-image-ref='" + CSS.escape(id) + "']");
   }
 
+  function renderDescEditor(card, id) {
+    if (!card) return;
+    const edit = descriptionEdits.get(id);
+    const saving = !!edit?.saving;
+    const input = card.querySelector('.stk-card-desc-input');
+    input.value = edit ? edit.value : (_stickers.find(s => s.image_ref === id)?.description || '');
+    input.disabled = saving;
+    input.classList.toggle('editing', !!edit);
+    card.querySelector('.stk-card-desc').classList.toggle('editing', !!edit);
+    card.querySelector('.stk-card-actions').classList.toggle('always-show', !!edit);
+    const save = card.querySelector('.save-desc-btn');
+    save.classList.toggle('is-busy', saving);
+    save.setAttribute('aria-label', saving ? '保存中' : '保存描述');
+    if (saving) save.setAttribute('aria-busy', 'true');
+    else save.removeAttribute('aria-busy');
+    for (const button of [save, card.querySelector('.cancel-desc-btn')]) {
+      button.disabled = saving;
+      button.style.display = edit ? '' : 'none';
+    }
+  }
+
   function startEditDesc(id) {
     const card = getCard(id);
-    if (!card) return;
-    card.querySelector(".stk-card-desc").classList.add("editing");
-    const input = card.querySelector(".stk-card-desc-input");
-    input.classList.add("editing");
-    card.querySelector(".stk-card-actions").classList.add("always-show");
-    card.querySelector(".save-desc-btn").style.display = "";
-    card.querySelector(".cancel-desc-btn").style.display = "";
+    if (!card || descriptionEdits.get(id)?.saving) return;
+    if (!descriptionEdits.has(id)) {
+      descriptionEdits.set(id, { value: card.querySelector('.stk-card-desc-input').value, saving: false });
+    }
+    renderDescEditor(card, id);
+    const input = card.querySelector('.stk-card-desc-input');
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   }
 
   function cancelEditDesc(id) {
-    const card = getCard(id);
-    if (!card) return;
-    const s = _stickers.find(x => x.image_ref === id);
-    card.querySelector(".stk-card-desc-input").value = s ? (s.description || "") : "";
-    card.querySelector(".stk-card-desc").classList.remove("editing");
-    card.querySelector(".stk-card-desc-input").classList.remove("editing");
-    card.querySelector(".stk-card-actions").classList.remove("always-show");
-    card.querySelector(".save-desc-btn").style.display = "none";
-    card.querySelector(".cancel-desc-btn").style.display = "none";
+    if (descriptionEdits.get(id)?.saving) return;
+    descriptionEdits.delete(id);
+    renderDescEditor(getCard(id), id);
   }
 
   async function saveDesc(id) {
-    const card = getCard(id);
-    if (!card) return;
-    const desc = card.querySelector(".stk-card-desc-input").value.trim();
+    const edit = descriptionEdits.get(id);
+    if (!edit || edit.saving) return;
+    const submitted = edit.value;
+    const desc = submitted.trim();
+    edit.saving = true;
+    renderDescEditor(getCard(id), id);
     try {
       const r = await fetch("/api/stickers/" + encodeURIComponent(id), {
         method: "PATCH",
@@ -642,26 +691,30 @@
         body: JSON.stringify({ description: desc }),
       });
       const d = await r.json();
-      if (!d.success) { showStatus("保存失败: " + d.error, "error"); return; }
+      if (!r.ok || !d.success) { showStatus("保存失败: " + (d.error || `HTTP ${r.status}`), "error"); return; }
       const s = _stickers.find(x => x.image_ref === id);
       if (s) s.description = desc;
-      const descEl = card.querySelector(".stk-card-desc");
-      descEl.textContent = desc || "点击添加描述…";
-      descEl.style.opacity = desc ? "" : ".4";
-      cancelEditDesc(id);
+      if (descriptionEdits.get(id) === edit && edit.value === submitted) descriptionEdits.delete(id);
+      updateStats(_stickers);
+      filterGrid();
       showStatus("ref: " + id + " 描述已更新", "ok");
     } catch (e) {
       showStatus("保存异常: " + e, "error");
+    } finally {
+      edit.saving = false;
+      renderDescEditor(getCard(id), id);
     }
   }
 
   // ── Delete ──
   async function deleteSticker(id) {
+    if (descriptionEdits.get(id)?.saving) return;
     if (!confirm("确定删除表情包 " + id + "？\n该收藏及其引用别名将删除，工作空间副本保留。")) return;
     try {
       const r = await fetch("/api/stickers/" + encodeURIComponent(id), { method: "DELETE" });
       const d = await r.json();
       if (!d.success) { showStatus("删除失败: " + d.error, "error"); return; }
+      descriptionEdits.delete(id);
       _imgVersion = Date.now(); // refresh previews after deletion
       showStatus("ref: " + id + " 已删除", "ok");
       await loadStickers();
@@ -697,18 +750,28 @@
   }
 
   // ── Lightbox ──
+  let lightboxFocusTarget = null;
   function openLightbox(s, ver) {
+    lightboxFocusTarget = document.activeElement;
     ver = ver || _imgVersion;
     document.getElementById("imgOverlayImg").src = "/api/sticker/" + encodeURIComponent(s.image_ref) + "?v=" + ver;
     document.getElementById("lightboxMeta").textContent =
       "ref: " + s.image_ref + (s.description ? "  ·  " + s.description : "");
     document.getElementById("imgOverlay").classList.add("show");
+    document.querySelector('.stk-lightbox-close').focus({ preventScroll: true });
   }
   function closeLightbox() {
+    if (!document.getElementById('imgOverlay').classList.contains('show')) return;
     document.getElementById("imgOverlay").classList.remove("show");
-    document.getElementById("imgOverlayImg").src = "";
+    if (lightboxFocusTarget?.isConnected) lightboxFocusTarget.focus({ preventScroll: true });
+    lightboxFocusTarget = null;
   }
-  document.addEventListener("keydown", e => { if (e.key === "Escape") closeLightbox(); });
+  document.addEventListener('keydown', e => {
+    const modal = document.getElementById('imgOverlay');
+    if (!modal.classList.contains('show')) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeLightbox(); }
+    else trapDialogTab(e, modal);
+  });
 
   // ── Status ──
   let _statusTimer;

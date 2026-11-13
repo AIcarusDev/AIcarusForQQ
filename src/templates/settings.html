@@ -721,9 +721,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     white-space: nowrap;
   }
   .btn-primary {
-    border: 1px solid var(--accent);
-    background: var(--accent);
-    color: #fff;
+    border: 1px solid var(--accent-solid);
+    background: var(--accent-solid);
+    color: var(--on-accent);
   }
   .btn-secondary,
   .btn-ghost {
@@ -781,15 +781,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
     font-size: 0.74rem;
   }
-  .mobile-section-picker {
-    display: none;
-    width: 100%;
-    margin-bottom: 12px;
-  }
-  .mobile-section-select {
-    width: 100%;
-    min-width: 0;
-  }
   @media (max-width: 900px) {
     .page-content {
       overflow-y: auto;
@@ -826,9 +817,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     .section-body {
       overflow: visible;
     }
-    .mobile-section-picker {
-      display: grid;
-    }
   }
   @media (max-width: 640px) {
     .settings-shell {
@@ -856,41 +844,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
     .settings-shell > .page-hero .page-actions button {
       min-height: 44px;
-    }
-    .mobile-section-picker {
-      grid-template-columns: auto minmax(0, 1fr);
-      align-items: center;
-      gap: 10px;
-      min-height: 44px;
-      margin-bottom: 10px;
-      padding: 5px 8px 5px 12px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface);
-      color: var(--text);
-      box-shadow: none;
-    }
-    .mobile-section-picker > span {
-      color: var(--text-sec);
-      font-size: 0.76rem;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-    .mobile-section-select {
-      min-height: 34px;
-      padding: 0 4px;
-      border: 0;
-      border-radius: 6px;
-      background: var(--surface2);
-      color: var(--text);
-      font: inherit;
-      font-size: 0.86rem;
-      font-weight: 700;
-      text-align-last: right;
-      outline: none;
-    }
-    .mobile-section-select:focus-visible {
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
     }
     .section-head {
       flex-direction: column;
@@ -996,22 +949,26 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     .workspace-path-row { grid-template-columns: 1fr; }
   }
 </style>
-<link rel="stylesheet" href="/static/css/settings-workbench.css?v=20261102-25">
+<link rel="stylesheet" href="/static/css/settings-workbench.css?v=20261114-3">
 {% endblock %} {% block content %}
 <div class="settings-shell">
 
   <div class="toast" id="toast"></div>
   <label class="mobile-section-picker" for="mobileSectionSelect">
-    <span>设置分类</span>
+    <span class="mobile-section-label">设置分区</span>
+    <span class="mobile-section-control">
     <select
       class="mobile-section-select"
       id="mobileSectionSelect"
+      aria-label="切换设置分区"
       onchange="showSection(this.value)"
     ></select>
+      <span class="mobile-section-action" aria-hidden="true">切换分区<span class="mobile-section-chevron"></span></span>
+    </span>
   </label>
 
   <div class="settings-layout">
-    <nav class="settings-nav" aria-label="设置分区"><h1 class="workbench-nav-title">设置</h1>
+    <nav class="settings-nav" data-scroll-key="sections" aria-label="设置分区"><h1 class="workbench-nav-title">设置</h1>
       <details class="settings-nav-group" open><summary>模型连接</summary><div>
         <button type="button" data-section-button="providers" onclick="showSection('providers')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/database.svg')" aria-hidden="true"></span><span class="settings-nav-label">模型供应商</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
         <button type="button" data-section-button="model" onclick="showSection('model')"><span class="workbench-icon" style="--workbench-icon:url('/static/vendor/tabler/box.svg')" aria-hidden="true"></span><span class="settings-nav-label">主模型</span><span class="draft-marker" aria-label="有未保存修改" hidden></span></button>
@@ -1037,7 +994,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       </div></details>
     </nav>
 
-    <main class="settings-content">
+    <main class="settings-content" data-scroll-key="content">
       <section
         class="settings-section"
         id="section-providers"
@@ -1437,21 +1394,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>视频理解、视觉桥接和工具守门可按需配置；上下文压缩需要模型。底部按钮只保存本分区。</p>
+            <p>专用任务独立配置，不使用的能力可以关闭。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="model-card" id="card-vision-bridge">
             <div
               class="model-card-head"
-              onclick="toggleCard('card-vision-bridge')"
             >
               <div class="model-card-title">
-                <h3>视觉桥接</h3>
+                <h3>图片理解</h3>
                 <span class="card-badge">VLM</span>
-                <span class="card-desc">独立图像描述模型</span>
+                <span class="card-desc">选择关闭、由主模型处理，或使用独立视觉模型。</span>
               </div>
-              <span class="model-card-chevron">&#9660;</span>
             </div>
             <div class="model-card-body" id="card-vision-bridge-body">
               <div class="field">
@@ -1504,7 +1459,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 </div>
                 <div class="row">
                   <div class="field">
-                    <label>Temperature</label>
+                    <label>温度</label>
                     <div class="range-row">
                       <input
                         type="range"
@@ -1517,7 +1472,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     </div>
                   </div>
                   <div class="field">
-                    <label>max_output_tokens</label
+                    <label>最大输出 Token</label
                     ><input
                       id="vision_bridge_max_output_tokens"
                       type="number"
@@ -1564,14 +1519,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="model-card" id="card-video-understanding">
             <div
               class="model-card-head"
-              onclick="toggleCard('card-video-understanding')"
             >
               <div class="model-card-title">
                 <h3>视频理解</h3>
                 <span class="card-badge">VIDEO</span>
-                <span class="card-desc">多模态视频识别与分析专用模型</span>
+                <span class="card-desc">不使用视频理解时，无需配置专用模型。</span>
               </div>
-              <span class="model-card-chevron">&#9660;</span>
             </div>
             <div class="model-card-body" id="card-video-understanding-body">
               <p class="hint">不使用视频理解时可选择“暂不配置”，无需填写模型。保存该状态会移除已保存的视频连接；切换选项会保留本页输入，刷新后不保留。</p>
@@ -1646,14 +1599,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="model-card" id="card-tool-guard">
             <div
               class="model-card-head"
-              onclick="toggleCard('card-tool-guard')"
             >
               <div class="model-card-title">
                 <h3>工具执行前守门</h3>
                 <span class="card-badge">GUARD</span>
-                <span class="card-desc">world 变化后重新判断函数工具</span>
+                <span class="card-desc">执行工具前，重新判断外界变化是否影响原计划。</span>
               </div>
-              <span class="model-card-chevron">&#9660;</span>
             </div>
             <div class="model-card-body" id="card-tool-guard-body">
               <div class="toggle-row">
@@ -1711,7 +1662,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
               <div class="row">
                 <div class="field">
-                  <label>Temperature</label>
+                  <label>温度</label>
                   <div class="range-row">
                     <input
                       type="range"
@@ -1724,7 +1675,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   </div>
                 </div>
                 <div class="field">
-                  <label>max_output_tokens</label
+                  <label>最大输出 Token</label
                   ><input
                     id="guard_max_output_tokens"
                     type="number"
@@ -1738,13 +1689,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           </div>
 
           <div class="model-card" id="card-compression">
-            <div class="model-card-head" onclick="toggleCard('card-compression')">
+            <div class="model-card-head">
               <div class="model-card-title">
                 <h3>上下文压缩</h3>
-                <span class="card-badge">CMP</span>
-                <span class="card-desc">意识流摘要专用模型</span>
+                <span class="card-badge">必需</span>
+                <span class="card-desc">压缩较长的上下文，减少后续输入占用。</span>
               </div>
-              <span class="model-card-chevron">&#9660;</span>
             </div>
             <div class="model-card-body" id="card-compression-body">
               <div class="row">
@@ -1780,7 +1730,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
               <div class="row">
                 <div class="field">
-                  <label>Temperature</label>
+                  <label>温度</label>
                   <div class="range-row">
                     <input
                       type="range"
@@ -1793,7 +1743,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   </div>
                 </div>
                 <div class="field">
-                  <label>max_output_tokens</label
+                  <label>最大输出 Token</label
                   ><input
                     id="compression_max_output_tokens"
                     type="number"
@@ -3204,10 +3154,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         </div>
       </section>
     </main>
-    <aside class="workbench-context" aria-label="状态与帮助">
+    <aside class="workbench-context" data-scroll-key="context" aria-label="状态与帮助">
       <details id="workbenchContextPanel" open>
         <summary>状态与帮助</summary>
-        <div class="workbench-context-content">
+        <div class="workbench-context-content" data-scroll-key="context-details">
           <h2>已保存配置</h2><p class="hint">展示已保存的设置；当前草稿尚未生效。</p>
           <dl id="workbenchSavedSummary"></dl>
           <div class="workbench-recovery" id="workbenchRecovery" role="status"></div>
@@ -3227,7 +3177,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   </footer>
 </div>
 {% endblock %} {% block scripts %}
-<script src="/static/js/settings-workbench.js?v=20261102-25"></script>
+<script src="/static/js/settings-workbench.js?v=20261114-1"></script>
 <script>
   const TYPING_SPEED_STEPS = [0.5, 0.75, 1.0, 1.5, 2.0];
   const SECTION_IDS = [
@@ -3506,10 +3456,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function populateProviderSelect(selectId, selected) {
     const select = $(selectId);
     if (!select) return;
-    select.innerHTML = '<option value="">请选择供应商</option>';
+    select.replaceChildren();
     const names = Object.keys(state.providers || {}).sort((a, b) =>
       providerLabel(a).localeCompare(providerLabel(b), "zh-CN"),
     );
+    if (!selected) {
+      const placeholder = new Option(names.length ? "选择供应商" : "暂无供应商", "");
+      placeholder.disabled = true;
+      placeholder.hidden = names.length > 0;
+      select.appendChild(placeholder);
+    }
     names.forEach((name) => {
       const opt = document.createElement("option");
       opt.value = name;
@@ -3519,10 +3475,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (selected && !names.includes(selected)) {
       const opt = document.createElement("option");
       opt.value = selected;
-      opt.textContent = selected + "（未在模型供应商中定义）";
+      opt.textContent = selected;
       select.appendChild(opt);
     }
     select.value = selected || "";
+    select.disabled = names.length === 0;
+    let manage = document.getElementById(selectId + "_manage");
+    if (!manage) {
+      manage = document.createElement("button");
+      manage.id = selectId + "_manage";
+      manage.type = "button";
+      manage.className = "btn-ghost";
+      manage.addEventListener("click", () => showSection("providers"));
+      select.after(manage);
+    }
+    manage.textContent = names.length ? "管理供应商" : "添加供应商";
   }
   function refreshProviderSelects() {
     closeAllModelPickers();
@@ -3758,6 +3725,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function bindListInput(kind, inputId) {
     $(inputId)?.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         event.preventDefault();
         addListItem(kind);
@@ -3906,6 +3874,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       select.addEventListener("change", chooseModel);
       select.addEventListener("click", chooseModel);
       select.addEventListener("keydown", (event) => {
+        if (event.isComposing || event.keyCode === 229) return;
         if (event.key === "Enter") chooseModel();
       });
       providerSelect.addEventListener("change", () => closeModelPicker(picker));
@@ -5733,7 +5702,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const el = $("toast");
     el.textContent = message;
     el.className = "toast " + type;
-    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       el.className = "toast";

@@ -795,7 +795,7 @@ border: 1px solid var(--mg-line-strong);
   }
 </style>
 {% endblock %} {% block content %}
-<div class="memory-console">
+<div class="memory-console" data-scroll-key="content">
   <aside class="mg-rail mg-left">
     <section class="mg-panel mg-search-panel flex">
       <div class="mg-panel-head">
@@ -813,7 +813,7 @@ border: 1px solid var(--mg-line-strong);
         <span id="searchState">等待检索</span>
         <span id="searchCount">0 命中</span>
       </div>
-      <div class="mg-results" id="searchResults">
+      <div class="mg-results" id="searchResults" data-scroll-key="search">
         <div class="mg-empty">等待检索</div>
       </div>
     </section>
@@ -923,7 +923,7 @@ border: 1px solid var(--mg-line-strong);
       <div class="mg-legend-item"><span class="mg-dot participant"></span>参与者</div>
       <div class="mg-legend-item"><span class="mg-dot value"></span>值</div>
     </div>
-    <div class="mg-graph-stats">
+    <div class="mg-graph-stats" data-scroll-key="graph-stats">
       <div class="mg-stat"><span>节点</span><strong id="statsNodes">0</strong></div>
       <div class="mg-stat"><span>关系</span><strong id="statsEdges">0</strong></div>
       <div class="mg-stat"><span>批次</span><strong id="statsBatches">0</strong></div>
@@ -940,7 +940,7 @@ border: 1px solid var(--mg-line-strong);
         </div>
         <span class="mg-mini" id="detailId">none</span>
       </div>
-      <div class="mg-detail-body" id="detailBody">
+      <div class="mg-detail-body" id="detailBody" data-scroll-key="detail">
         <div class="mg-detail-empty">点击图中节点查看详情</div>
       </div>
     </section>
@@ -3094,9 +3094,13 @@ hidden: edgeShouldHide(edge),
     const input = document.getElementById("searchInput");
     input.addEventListener("input", () => {
       window.clearTimeout(state.searchTimer);
+      ++state.searchSeq;
+      state.searchAbort?.abort();
+      if (!input.value.trim()) { runSearch(''); return; }
       state.searchTimer = window.setTimeout(() => runSearch(input.value), 260);
     });
     input.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         window.clearTimeout(state.searchTimer);
         runSearch(input.value, { focusFirst: true });
@@ -3112,6 +3116,8 @@ hidden: edgeShouldHide(edge),
   async function runSearch(raw, options = {}) {
     const query = String(raw || "").trim();
     const resultsEl = document.getElementById("searchResults");
+    const seq = ++state.searchSeq;
+    state.searchAbort?.abort();
     if (!query) {
       setText("searchState", "等待检索");
       setText("searchCount", "0 命中");
@@ -3119,11 +3125,10 @@ hidden: edgeShouldHide(edge),
       resultsEl.innerHTML = '<div class="mg-empty">等待检索</div>';
       return;
     }
-    const seq = ++state.searchSeq;
-    if (state.searchAbort) state.searchAbort.abort();
     state.searchAbort = new AbortController();
     const started = performance.now();
     setText("searchState", "检索中");
+    setText("searchCount", "— 命中");
     setText("searchLatency", "query");
     resultsEl.innerHTML = '<div class="mg-empty">正在检索真实数据</div>';
     try {
@@ -3141,8 +3146,9 @@ hidden: edgeShouldHide(edge),
         selectNode(data.results[0].node_id, { focus: true, pulse: true });
       }
     } catch (err) {
-      if (err.name === "AbortError") return;
+      if (err.name === "AbortError" || seq !== state.searchSeq) return;
       setText("searchState", "检索失败");
+      setText("searchCount", "— 命中");
       setText("searchLatency", "error");
       resultsEl.innerHTML = `<div class="mg-empty">${esc(err.message)}</div>`;
     }

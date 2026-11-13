@@ -209,18 +209,6 @@ function refreshWorkbench() {
   discard.hidden = !SECTION_PATHS[state.activeSection];
   discard.disabled = state.saving || !sectionHasChanges(state.activeSection);
   const runtime = window.workbenchRuntime || {};
-  for (const [id, flag, positive, negative] of [
-    ['workbenchWebState',runtime.webConnected,'网页已连接','网页连接中断'],
-    ['workbenchCoreState',runtime.coreRunning,'核心运行中','核心未运行'],
-    ['workbenchQQState',runtime.qqConnected,'QQ 已连接','QQ 未连接'],
-  ]) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    const label=flag == null ? positive.split('已')[0].replace('运行中','') + '状态读取中' : flag ? positive : negative;
-    const iconName={workbenchWebState:'world',workbenchCoreState:'settings',workbenchQQState:'bell'}[id];
-    el.replaceChildren(workbenchIcon(iconName),document.createTextNode(label));
-    el.dataset.tone = flag == null ? '' : flag ? 'ok' : 'warn';
-  }
   const context = document.querySelector('.workbench-context');
   const contextual = ['model','providers','submodels','tts'].includes(state.activeSection);
   context.hidden = !contextual;
@@ -274,18 +262,6 @@ function refreshWorkbench() {
   syncWorkbenchModes();
 }
 function initWorkbench() {
-  for (const card of document.querySelectorAll('#section-submodels .model-card')) {
-    const head = card.querySelector('.model-card-head');
-    head.removeAttribute('onclick');
-  }
-  const visionTitle = document.querySelector('#card-vision-bridge h3');
-  visionTitle.textContent = '图片理解';
-  document.querySelector('#card-vision-bridge .card-desc').textContent = '选择关闭、由主模型处理，或使用独立视觉模型。';
-  document.querySelector('#card-video-understanding .card-desc').textContent = '不使用视频理解时，无需配置专用模型。';
-  document.querySelector('#card-tool-guard .card-desc').textContent = '执行工具前，重新判断外界变化是否影响原计划。';
-  document.querySelector('#card-compression .card-desc').textContent = '压缩较长的上下文，减少后续输入占用。';
-  document.querySelector('#card-compression .card-badge').textContent='必需';
-  document.querySelector('#section-submodels .section-head p').textContent='专用任务独立配置，不使用的能力可以关闭。';
   addWorkbenchModes('vision_mode', [['off','关闭'],['native','主模型处理'],['bridge','独立视觉桥']]);
   addWorkbenchModes('video_understanding_connection_mode', [['unconfigured','暂不配置'],['provider','使用供应商'],['explicit','专用连接']]);
   const guardBody = document.getElementById('card-tool-guard-body');
@@ -298,8 +274,6 @@ function initWorkbench() {
   document.querySelectorAll('#section-submodels .field').forEach(field => {
     const label = field.querySelector('label');
     if (!label) return;
-    if (label.textContent.trim() === 'Temperature') label.textContent='温度';
-    if (label.textContent.trim() === 'max_output_tokens') label.textContent='最大输出 Token';
     const control=field.querySelector('input[id],select[id],textarea[id]');
     if(control) label.htmlFor=control.id;
   });

@@ -143,6 +143,7 @@
   .download-history-list {
     max-height: 270px;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-gutter: stable;
   }
 
@@ -203,6 +204,26 @@
     gap: 10px;
   }
 
+  html[data-theme="dark-night"] {
+    --download-progress-fill: linear-gradient(90deg, #566b89, #cbd5e1);
+  }
+
+  html, html[data-theme="dark-deep"] {
+    --download-progress-fill: linear-gradient(90deg, #304878, #697db6 55%, #b1bedf);
+  }
+
+  html[data-theme="dark-soft"] {
+    --download-progress-fill: linear-gradient(90deg, #587c87, #8585ad);
+  }
+
+  html[data-theme="light-blue"] {
+    --download-progress-fill: linear-gradient(90deg, #6352c7, #277ce0 55%, #16b8ce);
+  }
+
+  html[data-theme="light-pink"] {
+    --download-progress-fill: linear-gradient(90deg, var(--cyan), var(--accent));
+  }
+
   .download-progress-track {
     height: 7px;
     overflow: hidden;
@@ -210,12 +231,17 @@
     background: color-mix(in srgb, var(--border) 70%, transparent);
   }
 
+  .download-state-pill.completed {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 12%, transparent);
+  }
+
   .download-progress-track > span {
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, var(--cyan), var(--accent));
+    background: var(--download-progress-fill);
     display: block;
-    transition: width 0.22s ease;
+    transition: width 1s linear;
   }
 
   .download-progress-track.indeterminate > span {
@@ -903,7 +929,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="tool-stats-shell">
+<div class="tool-stats-shell" data-scroll-key="content">
   <div class="page-hero">
     <div class="page-title">
       <h1>工具调用统计</h1>
@@ -915,7 +941,7 @@
         <button type="button" class="active" data-tool-language="en" aria-pressed="true">English</button>
       </div>
       <div class="page-status" id="statsStatus">未加载</div>
-      <button class="btn-ghost" type="button" onclick="loadAllStats()">刷新</button>
+      <button class="btn-ghost" type="button" onclick="withButtonFeedback(this, loadAllStats)">刷新</button>
     </div>
   </div>
 
@@ -1030,7 +1056,7 @@
               <span class="co-tool-pill">暂无</span>
             </div>
           </div>
-          <div class="turn-list" id="detailTurnList">
+          <div class="turn-list" id="detailTurnList" data-scroll-key="tool-detail">
             <div class="empty-state">暂无轮次</div>
           </div>
         </aside>
@@ -1055,7 +1081,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/tool-stats-runtime.js') }}"></script>
-<script src="{{ url_for('static', filename='js/tool-stats-download-monitor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tool-stats-download-monitor.js', v='20261114-6') }}"></script>
 <script>
   const trendState = {
     selectedTools: [],
@@ -1698,7 +1724,14 @@
   });
 
   syncToolNameLanguageButtons();
-  loadAllStats();
+  window.capturePageView = () => ({ selectedTools: [...trendState.selectedTools], granularity: trendState.granularity, range: trendState.range });
+  window.initializePage = saved => {
+    if (!saved) return loadAllStats();
+    Object.assign(trendState, saved);
+    document.getElementById('trendRange').value = saved.range;
+    document.querySelectorAll('#granularityButtons button').forEach(button => button.classList.toggle('active', button.dataset.granularity === saved.granularity));
+    return loadAllStats();
+  };
   loadToolNameGlossary().then(rerenderToolNames);
 </script>
 {% endblock %}

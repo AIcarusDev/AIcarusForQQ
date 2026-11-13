@@ -53,6 +53,7 @@ def _download_monitor_job(job: dict) -> dict:
             ),
         }
     return {
+        "download_id": job.get("download_id"),
         "conversation": job.get("conversation"),
         "original_filename": job.get("original_filename"),
         "status": job.get("status"),

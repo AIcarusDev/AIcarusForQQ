@@ -406,14 +406,24 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     position: fixed;
     inset: 0;
     z-index: 9000;
-    display: none;
+    display: flex;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, visibility 0s linear 160ms;
     align-items: center;
     justify-content: center;
     background: rgba(0, 0, 0, 0.55);
     padding: 20px;
   }
   .maintenance-modal.active {
-    display: flex;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transition-delay: 0s;
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .maintenance-modal { transition:none; }
   }
   .maintenance-dialog {
     width: min(520px, 100%);
@@ -571,7 +581,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   }
 </style>
 {% endblock %} {% block content %}
-<div class="maintenance-shell">
+<div class="maintenance-shell" data-scroll-key="content">
   <div class="maintenance-board">
     <div class="page-hero">
       <div class="page-title">
@@ -580,7 +590,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       </div>
       <div class="page-actions">
         <div class="page-status loading" id="maintenanceStatus">正在读取状态</div>
-        <button class="btn-ghost" type="button" onclick="reloadMaintenance()">刷新</button>
+        <button class="btn-ghost" type="button" onclick="withButtonFeedback(this, reloadMaintenance)">刷新</button>
       </div>
     </div>
 
@@ -635,7 +645,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
               <span class="result-subtitle">最近一次维护操作的摘要会显示在这里。</span>
             </div>
           </div>
-          <div class="result-body" id="maintenanceResult">
+          <div class="result-body" id="maintenanceResult" data-scroll-key="result">
             <div class="result-empty">
               <div>
                 <div class="result-empty-mark"></div>
@@ -664,7 +674,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   </div>
 </div>
 
-<div class="maintenance-modal" id="maintenanceModal" role="dialog" aria-modal="true">
+<div class="maintenance-modal" id="maintenanceModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody" tabindex="-1">
   <div class="maintenance-dialog">
     <div class="dialog-head">
       <div class="dialog-kicker" id="modalRisk">确认操作</div>
@@ -704,6 +714,19 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   let maintenanceActions = INITIAL_ACTIONS || [];
   let selectedMaintenanceAction = null;
   let maintenanceBusy = false;
+  let maintenanceFocusTarget = null;
+
+  function showMaintenanceModal() {
+    maintenanceFocusTarget = document.activeElement;
+    document.getElementById('maintenanceModal').classList.add('active');
+    document.getElementById('modalInput').focus({ preventScroll: true });
+  }
+
+  function hideMaintenanceModal() {
+    document.getElementById('maintenanceModal').classList.remove('active');
+    if (maintenanceFocusTarget?.isConnected) maintenanceFocusTarget.focus({ preventScroll: true });
+    maintenanceFocusTarget = null;
+  }
 
   const dangerLabels = {
     medium: "运行时",
@@ -1050,8 +1073,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     document.getElementById("modalInput").placeholder = action.confirmation;
     document.getElementById("modalStatus").textContent = "";
     document.getElementById("modalConfirm").disabled = true;
-    document.getElementById("maintenanceModal").classList.add("active");
-    setTimeout(() => document.getElementById("modalInput").focus(), 30);
+    showMaintenanceModal();
   }
 
   function renderPendingItems(warnings) {
@@ -1125,13 +1147,12 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     document.getElementById("modalInput").placeholder = action.confirmation;
     document.getElementById("modalStatus").textContent = "";
     document.getElementById("modalConfirm").disabled = true;
-    document.getElementById("maintenanceModal").classList.add("active");
-    setTimeout(() => document.getElementById("modalInput").focus(), 30);
+    showMaintenanceModal();
   }
 
   function closeMaintenanceModal() {
     if (maintenanceBusy) return;
-    document.getElementById("maintenanceModal").classList.remove("active");
+    hideMaintenanceModal();
     selectedMaintenanceAction = null;
   }
 
@@ -1195,14 +1216,14 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       if (isWorkspace) {
         const job = d.job || {};
         setResult(`Agent 电脑任务已启动\n动作: ${selectedMaintenanceAction.label}\n任务: ${job.job_id || "-"}`, "success");
-        document.getElementById("maintenanceModal").classList.remove("active");
+        hideMaintenanceModal();
         selectedMaintenanceAction = null;
         setStatus("Agent 电脑任务执行中", "warn");
         pollWorkspaceMaintenanceJob(job.job_id, 0);
         return;
       }
       setResult(summarizeResult(d), "success");
-      document.getElementById("maintenanceModal").classList.remove("active");
+      hideMaintenanceModal();
       selectedMaintenanceAction = null;
       setStatus("执行完成，正在刷新状态", "ok");
       await reloadMaintenance();
@@ -1245,7 +1266,10 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     if (event.target.id === "maintenanceModal") closeMaintenanceModal();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeMaintenanceModal();
+    const modal = document.getElementById('maintenanceModal');
+    if (!modal.classList.contains('active')) return;
+    if (event.key === 'Escape') { event.preventDefault(); closeMaintenanceModal(); }
+    else trapDialogTab(event, modal);
   });
 
   renderActions();

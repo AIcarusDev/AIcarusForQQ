@@ -1,15 +1,8 @@
-/* Settings workbench: the shared shell is opt-in until the sample is accepted. */
+/* Settings layout and controls within the shared application shell. */
 body:has(.settings-shell) { --sidebar-w: 224px; }
 body:has(.settings-shell) .topbar-desc { display:none; }
 body:has(.settings-shell) .page-content { padding:0; animation:none; }
 .settings-shell { --settings-nav-w:196px; max-width:none; width:100%; padding:0; height:100%; margin:0; }
-.workbench-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; flex-shrink:0; min-height:70px; gap:12px; border-bottom:1px solid var(--border); padding:14px 28px; }
-.workbench-breadcrumb { font-size:14px; font-weight:600; display:flex; gap:12px; }
-.workbench-breadcrumb>span:first-child { color:var(--text-sec); }
-.workbench-runtime { display:flex; gap:10px; flex-wrap:wrap; color:var(--text-sec); font-size:12px; }
-.workbench-runtime span { border:1px solid var(--border); padding:7px 11px; border-radius:7px; white-space:nowrap; }
-.workbench-runtime span[data-tone="ok"] { color:var(--green); }
-.workbench-runtime span[data-tone="warn"] { color:var(--yellow,#d7a63a); }
 .settings-layout { grid-template-columns:196px minmax(0,1fr) 252px; gap:24px; padding:0 24px 0 0; overflow:hidden; }
 .settings-nav { border:0; border-right:1px solid var(--border); border-radius:0; background:transparent; box-shadow:none; padding:22px 12px; scrollbar-gutter:auto; gap:8px; }
 .workbench-nav-title { font-size:20px; margin:0 10px 14px; }
@@ -40,7 +33,6 @@ body:has(.settings-shell) .page-content { padding:0; animation:none; }
 #section-submodels .card-desc { display:block; font-size:13px; line-height:1.7; margin-top:7px; }
 #section-submodels .card-badge { display:none; }
 #section-submodels #card-compression .card-badge { display:inline-block; font-size:11px; vertical-align:middle; margin-left:8px; }
-#section-submodels .model-card-chevron { display:none; }
 #section-submodels .model-card-body { padding:18px 0 0; gap:16px; }
 #section-submodels .model-card-body[hidden],#section-submodels .model-card-body.hidden { display:none!important; }
 #section-submodels .model-card-body>.hint { display:none; }
@@ -95,21 +87,13 @@ body:has(.settings-shell) .page-content { padding:0; animation:none; }
 }
 @media (max-width:900px) {
   .settings-nav { display:none; }
-  .mobile-section-picker { display:flex; margin:0; padding:12px 18px; gap:12px; align-items:center; }
-  .mobile-section-picker>span { flex-shrink:0; font-size:13px; }
   .settings-layout { grid-template-columns:minmax(0,1fr); padding:0 18px; }
   .settings-content,.workbench-context { grid-column:1; }
   .workbench-actions { margin-left:0; padding:12px 18px; flex-wrap:wrap; }
-  .workbench-heading { padding:14px 18px; }
-  .workbench-runtime { gap:5px; }
-  .workbench-runtime span { font-size:11px; padding:5px 7px; }
 }
 @media (max-width:760px) {
-  .workbench-sidebar { display:none; }
   .main { width:100%; }
   .settings-layout { padding:0 14px; }
-  .workbench-heading { min-height:76px; padding:12px 14px; }
-  .workbench-breadcrumb { font-size:13px; }
   .workbench-action-buttons { flex:1; flex-wrap:wrap; }
   .workbench-action-buttons #saveBtn { margin-left:auto; }
   .section-head h2 { font-size:23px; }
@@ -119,15 +103,6 @@ body:has(.settings-shell) .page-content { padding:0; animation:none; }
   .workbench-context { padding-top:4px; }
 }
 
-.mobile-section-picker,.workbench-mobile-menu { display:none; }
-@media (max-width:900px) { .mobile-section-picker { display:flex; } }
-@media (max-width:760px) {
-  .workbench-mobile-menu { display:block; }
-  .workbench-heading { justify-content:flex-start; gap:10px; }
-  .workbench-runtime { flex-basis:100%; }
-  .workbench-sidebar { display:flex; position:fixed; left:0; top:0; height:100dvh; width:76px; transform:translateX(-105%); }
-  body.mobile-nav-open .workbench-sidebar { transform:translateX(0); width:76px; }
-}
 
 #section-submodels .card-desc { font-size:14px; }
 .workbench-context p { font-size:13px; }
@@ -241,8 +216,6 @@ body:has(.settings-shell) .page-content { padding:0; animation:none; }
 .settings-nav .workbench-icon { opacity:.82; }
 .settings-nav button.active .workbench-icon { opacity:1; }
 .settings-nav .draft-marker { margin-left:auto; }
-.workbench-runtime>span { display:inline-flex; align-items:center; gap:7px; }
-.workbench-runtime .workbench-icon { width:17px; height:17px; flex-basis:17px; }
 .workbench-context dt { display:flex; align-items:center; gap:10px; }
 .workbench-context dt .workbench-icon { width:19px; height:19px; flex-basis:19px; }
 .workbench-recovery strong { display:flex; align-items:center; gap:8px; }
@@ -255,10 +228,8 @@ body:has(.settings-shell) .page-content { padding:0; animation:none; }
   animation:none;
 }
 .workbench-save-state #settingsStatus:not(.warn):not(.error)::before { display:none; }
-.workbench-runtime .workbench-icon { padding:0; border:0; border-radius:0; white-space:normal; }
 
 /* Hierarchy comes from type and spacing; color comes from the selected theme. */
-.workbench-sidebar { background:var(--sidebar); }
 .settings-nav { background:transparent; gap:10px; }
 .workbench-nav-title { color:var(--text); font-size:21px; font-weight:700; letter-spacing:0; margin-bottom:18px; }
 .settings-nav-group { padding-bottom:18px; border-color:var(--border); }
@@ -291,10 +262,9 @@ body:has(.settings-shell) .page-content { padding:0; animation:none; }
 .workbench-recovery strong .workbench-icon { color:inherit; }
 
 /* Reuse the original five theme palettes across settings and the rest of WebUI. */
-body:has(.settings-shell) { --workbench-primary-fg:#fff; }
 .settings-shell .btn-primary {
-  background:var(--accent); color:var(--workbench-primary-fg);
-  border:1px solid var(--accent); box-shadow:none;
+  background:var(--accent-solid); color:var(--on-accent);
+  border:1px solid var(--accent-solid); box-shadow:none;
 }
 .settings-shell .btn-primary:hover:not(:disabled) { filter:brightness(1.06); }
 .settings-shell .group,.workbench-context>details { background:var(--surface); border-color:var(--border); }
@@ -465,3 +435,41 @@ body:has(.settings-shell) { --workbench-primary-fg:#fff; }
   position:relative; top:1px; align-self:center; justify-self:start;
 }
 .settings-shell .sampling-field .hint { margin-left:26px; }
+
+/* Settings section navigation on narrow screens. */
+.settings-shell .mobile-section-picker { display:none; width:100%; }
+@media (max-width:900px) {
+  .settings-shell .mobile-section-picker {
+    display:grid; grid-template-columns:minmax(0,1fr); gap:7px;
+    padding:14px 18px 12px; margin:0; border:0; border-radius:0;
+    background:transparent; flex-shrink:0;
+  }
+  .settings-shell .mobile-section-label { color:var(--text-sec); font-size:12px; font-weight:650; }
+  .settings-shell .mobile-section-control { position:relative; display:block; min-width:0; }
+  .settings-shell .mobile-section-select {
+    display:block; width:100%; min-width:0; height:52px; min-height:52px;
+    appearance:none; -webkit-appearance:none; cursor:pointer;
+    padding:0 132px 0 16px; border-radius:10px;
+    border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));
+    background:color-mix(in srgb,var(--accent-dim) 35%,var(--surface));
+    color:var(--text); font:inherit; font-size:16px; font-weight:700;
+    text-align:left; text-align-last:left; box-shadow:0 2px 6px color-mix(in srgb,var(--accent) 8%,transparent);
+  }
+  .settings-shell .mobile-section-select:hover { border-color:var(--accent); }
+  .settings-shell .mobile-section-select:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  .settings-shell .mobile-section-action {
+    pointer-events:none; position:absolute; right:13px; top:50%; transform:translateY(-50%);
+    display:flex; align-items:center; gap:8px; padding-left:14px;
+    border-left:1px solid color-mix(in srgb,var(--accent) 25%,var(--border));
+    color:var(--accent); font-size:13px; font-weight:650; line-height:24px;
+  }
+  .mobile-section-chevron {
+    display:block; width:20px; height:20px; background:currentColor;
+    mask:url('/static/vendor/tabler/chevron-down.svg') center / contain no-repeat;
+    -webkit-mask:url('/static/vendor/tabler/chevron-down.svg') center / contain no-repeat;
+  }
+  .settings-shell .mobile-section-select option { background:var(--surface); color:var(--text); }
+}
+@media (max-width:640px) {
+  .settings-shell .mobile-section-picker { padding:12px 14px; }
+}

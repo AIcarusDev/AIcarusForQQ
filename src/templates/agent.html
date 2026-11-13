@@ -959,7 +959,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
         <span class="rail-title">跳转索引</span>
         <span class="rail-count" id="liveRunCount">0</span>
       </div>
-      <div class="runs-list" id="liveRuns"></div>
+      <div class="runs-list" id="liveRuns" data-scroll-key="runs"></div>
       <div class="rail-header">
         <span class="rail-title">历史</span>
         <button
@@ -998,7 +998,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
           </button>
         </div>
       </div>
-      <div class="agent-timeline" id="agentTimeline">
+      <div class="agent-timeline" id="agentTimeline" data-scroll-key="timeline">
         <div class="timeline-empty">等待下一次运行</div>
       </div>
     </main>
@@ -1008,7 +1008,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
         <span class="inspector-title">检查器</span>
         <span class="rail-count" id="eventSeq">seq 0</span>
       </div>
-      <div class="inspector-body">
+      <div class="inspector-body" data-scroll-key="inspector">
         <section class="side-section">
           <div class="side-section-title">当前焦点</div>
           <div class="side-section-body">

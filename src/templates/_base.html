@@ -41,8 +41,12 @@
       /* Alias: existing templates use --primary → --accent */
       --primary:           var(--accent);
       --primary-light:     var(--accent);
-      --user-bg:           var(--accent);
-      --user-text:         #fff;
+      --accent-text:       var(--accent);
+      --accent-solid:      var(--accent);
+      --on-accent:         #fff;
+      --success-text:      var(--green);
+      --user-bg:           var(--accent-solid);
+      --user-text:         var(--on-accent);
     }
 
     /* ══════════════════════════════════════════════
@@ -106,6 +110,8 @@
       --text:      #e6edf3;
       --text-sec:  #8b949e;
       --accent:    #7c6af7;
+      --accent-text:#b1a6ff;
+      --accent-solid:#6b55de;
       --accent-dim:#2d2660;
       --green:     #3fb950;
       --orange:    #d29922;
@@ -151,8 +157,9 @@
       --surface2:  #2a2b48;
       --border:    #373864;
       --text:      #e2e4f0;
-      --text-sec:  #7a7d96;
+      --text-sec:  #989bb6;
       --accent:    #9d8fff;
+      --on-accent:#17152c;
       --accent-dim:#332d6a;
       --green:     #4ade80;
       --orange:    #fb923c;
@@ -436,10 +443,11 @@
       width: 22px; height: 22px; border-radius: 6px;
       cursor: pointer; border: none;
       box-shadow: 0 0 0 1.5px transparent;
-      transition: transform .14s, box-shadow .15s;
+      transition: outline-color .15s, transform .12s, box-shadow .15s;
       flex-shrink: 0; position: relative;
     }
     .swatch:hover { transform: scale(1.2); }
+    .swatch:active { transform: scale(.9); }
 
     /* ── 状态芯片 ── */
     .status-chip {
@@ -590,7 +598,7 @@
       cursor: pointer; transition: background .1s;
     }
     .wc-dialog-btns button:hover { background: var(--border); }
-    .wc-dialog-btns button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .wc-dialog-btns button.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-accent); }
     .wc-dialog-btns button.primary:hover { filter: brightness(1.1); }
 
     .page-content {
@@ -609,9 +617,9 @@
       transition: background .12s; cursor: pointer;
     }
     .btn:hover { background: var(--border); }
-    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary { background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-accent); }
     .btn.primary:hover { filter: brightness(1.1); }
-    .btn-primary { background: var(--accent); border: 1px solid var(--accent); color: #fff; border-radius: 6px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+    .btn-primary { background: var(--accent-solid); border: 1px solid var(--accent-solid); color: var(--on-accent); border-radius: 6px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; }
     .btn-primary:hover { filter: brightness(1.1); }
     .btn-ghost { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; }
     .btn-ghost:hover { background: var(--border); }
@@ -705,13 +713,6 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--text-sec); }
     * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
-    /* ── 页面内容入场 ── */
-    @keyframes _fade-up {
-      from { opacity: 0; transform: translateY(7px); }
-      to   { opacity: 1; transform: none; }
-    }
-    .page-content { animation: _fade-up .22s ease both; }
-
     /* ── 侧边栏导航激活指示器 ── */
     .nav-item.active::before {
       content: '';
@@ -734,18 +735,16 @@
     .btn, .btn-primary, .btn-ghost {
       transition: background .12s, filter .12s, transform .1s, border-color .12s, box-shadow .12s;
     }
-    .btn:active, .btn-primary:active, .btn-ghost:active { transform: scale(.96); }
+    .btn:active, .btn-primary:active, .btn-ghost:active { transform: scale(.985); }
 
     /* ── 通用卡片悬浮效果 ── */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      transition: transform .22s ease, box-shadow .22s ease, border-color .22s;
+      transition: border-color .22s ease;
     }
     .card:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 8px 28px rgba(0,0,0,.22);
       border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
     }
 
@@ -761,7 +760,6 @@
     .dot.ok { animation: _dot-pulse 2.5s ease-in-out infinite; }
 
     /* ── 主题色块激活边框动效 ── */
-    .swatch { transition: outline-color .15s, transform .12s, box-shadow .15s; }
     .swatch.active {
       box-shadow: 0 0 0 1px var(--accent), 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
       outline: none;
@@ -895,7 +893,14 @@
       background: var(--surface2);
       color: var(--text);
     }
-    .webui-modal-btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .webui-modal-btn.primary { border-color: var(--accent-solid); background: var(--accent-solid); color: var(--on-accent); }
+    .webui-modal-btn { transition: transform .12s ease, filter .12s ease; }
+    .webui-modal-btn:active:not(:disabled) { transform: scale(.96); filter: brightness(.92); }
+    @media (prefers-reduced-motion: reduce) {
+      .theme-swatches .swatch,.webui-modal-btn { transition: none; }
+      .swatch:hover,.swatch:active,.webui-modal-btn:active:not(:disabled) { transform: none; }
+      .swatch:active { filter: brightness(.8); }
+    }
     .webui-modal-btn.danger { border-color: var(--red); color: var(--red); background: transparent; }
     .webui-update-entry {
       border: 1px solid var(--border);
@@ -942,7 +947,7 @@
     }
     .webui-modal-tab:hover { color: var(--text); }
     .webui-modal-tab.active {
-      color: var(--accent);
+      color: var(--accent-text);
       background: transparent;
     }
     .webui-modal-tab.active::after { background: var(--accent); }
@@ -1341,7 +1346,7 @@
       }
     }
   </style>
-  <link rel="stylesheet" href="/static/css/layout-shell.css?v=20261102-7">
+  <link rel="stylesheet" href="/static/css/layout-shell.css?v=20261114-3">
   {% if content_page %}{% block head_extra %}{% endblock %}{% endif %}
 </head>
 <body data-page="{{ active_page|default('') }}" {% if content_page %}data-content-page{% else %}data-shell-page{% endif %}>
@@ -1546,7 +1551,7 @@
         <span id="appQQState"><span class="shell-icon" style="--shell-icon:url('/static/vendor/tabler/bell.svg')" aria-hidden="true"></span><span data-status-label>QQ 状态读取中</span></span>
       </div>
     </div>
-    <div class="page-content">
+    <div class="page-content" data-scroll-key="page">
       {% if content_page %}
         {% block content %}{% endblock %}
       {% else %}
@@ -1583,7 +1588,7 @@
 
     function openMobileNavigation() {
       if (!breakpoint.matches) return;
-      restoreFocusTo = document.querySelector('.workbench-mobile-menu') || toggle;
+      restoreFocusTo = toggle;
       document.body.classList.add('mobile-nav-open');
       syncAccessibilityState();
       const target = sidebar.querySelector('.nav-item.active, .nav-item');
@@ -1679,6 +1684,38 @@
     }
   }
 
+  function trapDialogTab(event, dialog) {
+    if (event.key !== 'Tab') return;
+    const controls = Array.from(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]'))
+      .filter(control => control.getClientRects().length && getComputedStyle(control).visibility !== 'hidden');
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (!first) { event.preventDefault(); dialog.focus(); return; }
+    if (!dialog.contains(document.activeElement) || (event.shiftKey && document.activeElement === first)) {
+      event.preventDefault(); (event.shiftKey ? last : first).focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault(); first.focus();
+    }
+  }
+
+  async function withButtonFeedback(button, action) {
+    if (!button || button.disabled) return;
+    const previousLabel = button.getAttribute('aria-label');
+    button.disabled = true;
+    button.classList.add('is-busy');
+    button.setAttribute('aria-busy', 'true');
+    button.setAttribute('aria-label', `${button.textContent.trim()}，处理中`);
+    try {
+      return await action();
+    } finally {
+      button.disabled = false;
+      button.classList.remove('is-busy');
+      button.removeAttribute('aria-busy');
+      if (previousLabel === null) button.removeAttribute('aria-label');
+      else button.setAttribute('aria-label', previousLabel);
+    }
+  }
+
   function setTheme(name, el) {
     name = normalizeThemeName(name);
     document.documentElement.setAttribute('data-theme', name);
@@ -1708,13 +1745,13 @@
   function renderAppRuntimeStatus() {
     const runtime = window.workbenchRuntime || {};
     for (const [id, flag, yes, no] of [
-      ['appWebState',runtime.webConnected,'网页已连接','网页连接中断'],
+      ['appWebState',runtime.webConnected,'网页已连接','网页连接异常'],
       ['appCoreState',runtime.coreRunning,'核心运行中','核心未运行'],
       ['appQQState',runtime.qqConnected,'QQ 已连接','QQ 未连接'],
     ]) {
       const target=document.getElementById(id);
       if (!target) continue;
-      target.querySelector('[data-status-label]').textContent=flag == null ? (id==='appWebState'?'网页':id==='appCoreState'?'核心':'QQ')+'状态读取中' : flag ? yes : no;
+      target.querySelector('[data-status-label]').textContent=flag == null ? (id==='appCoreState' && runtime.webConnected === false ? '核心状态不可用' : (id==='appWebState'?'网页':id==='appCoreState'?'核心':'QQ')+'状态读取中') : flag ? yes : no;
       target.dataset.tone=flag == null ? '' : flag ? 'ok' : 'warn';
     }
   }
@@ -2019,15 +2056,37 @@
       if (!force && !data.needs_popup) return;
       _webuiUpdateTab = 'latest';
       renderWebUIUpdates(data, { tab: _webuiUpdateTab });
-      document.getElementById('webui-update-overlay')?.classList.add('active');
+      openWebUIUpdates();
     } catch(e) {
       // update checks are non-critical
     }
   }
 
+  let webuiUpdateFocusTarget = null;
+  function openWebUIUpdates() {
+    const overlay = document.getElementById('webui-update-overlay');
+    if (!overlay) return;
+    if (!overlay.classList.contains('active')) webuiUpdateFocusTarget = document.activeElement;
+    overlay.classList.add('active');
+    overlay.querySelector('.webui-modal-tab.active')?.focus();
+  }
+
   function hideWebUIUpdates() {
     document.getElementById('webui-update-overlay')?.classList.remove('active');
+    webuiUpdateFocusTarget?.focus();
+    webuiUpdateFocusTarget = null;
   }
+
+  document.addEventListener('keydown', function(event) {
+    const overlay = document.getElementById('webui-update-overlay');
+    if (!overlay?.classList.contains('active')) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideWebUIUpdates();
+    } else if (event.key === 'Tab') {
+      trapDialogTab(event, overlay);
+    }
+  });
 
   async function ackWebUIUpdates() {
     if (!_webuiUpdateVersion) {
@@ -2057,7 +2116,7 @@
       if (data.needs_popup) {
         _webuiUpdateTab = 'latest';
         renderWebUIUpdates(data, { tab: 'latest' });
-        document.getElementById('webui-update-overlay')?.classList.add('active');
+        openWebUIUpdates();
         return;
       }
     } catch(e) {
@@ -2204,7 +2263,7 @@
   async function pollCoreStatus() {
     try {
       const r = await fetch('/api/core/status');
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       window.workbenchRuntime = {...window.workbenchRuntime, webConnected: true, coreRunning: !d.webui_only, launcherMode: !!d.launcher_mode};
       window.dispatchEvent(new Event('workbench-status'));
@@ -2216,6 +2275,7 @@
       const dot = document.getElementById('core-dot');
       const txt = document.getElementById('core-text');
       const btn = document.getElementById('core-toggle-btn');
+      btn.disabled = false;
       if (d.webui_only) {
         dot.className = 'dot warn';
         txt.textContent = '核心未运行';
@@ -2230,6 +2290,10 @@
     } catch(e) {
       window.workbenchRuntime = {...window.workbenchRuntime, webConnected: false, coreRunning: null};
       window.dispatchEvent(new Event('workbench-status'));
+      const btn = document.getElementById('core-toggle-btn');
+      btn.disabled = true;
+      document.getElementById('core-text').textContent = '核心状态不可用';
+      document.getElementById('core-dot').className = 'dot warn';
     }
   }
 
@@ -2409,7 +2473,7 @@
   });
 </script>
 {% if content_page %}{% block scripts %}{% endblock %}{% endif %}
-<script src="/static/js/shell-navigation.js?v=20261102-2"></script>
+<script src="/static/js/shell-navigation.js?v=20261114-9"></script>
 </body>
 </html>
 
